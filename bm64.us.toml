@@ -30,6 +30,11 @@ ignored = [
 # Observed at the following game-loop boundary; the marker is part of checkpoints.
 [[patches.hook]]
 func = "func_ovl3_3_8004386C"
+before_vram = 0x80043E9C
+text = "{ extern void bm64_online_player_layout(uint8_t*); bm64_online_player_layout(rdram); }"
+
+[[patches.hook]]
+func = "func_ovl3_3_8004386C"
 before_vram = 0x8004386C
 text = "{ extern void bm64_player_select_ready(int); bm64_player_select_ready(0); }"
 

@@ -20,11 +20,13 @@ capture = bool(int(os.environ.get('BM64_HOLD_FRAME', '0')))
 helper = scratch / 'capture-game-window'
 if capture:
     subprocess.run(['swiftc', str(root/'tests/capture_game_window.swift'), '-o', str(helper)], check=True, timeout=60)
-with tempfile.TemporaryDirectory(prefix='checkpoint-', dir=scratch) as settings:
+with tempfile.TemporaryDirectory(prefix='checkpoint-', dir=scratch) as temporary:
+    settings = str(Path(temporary) / 'settings')
+    Path(settings).mkdir()
     shutil.copyfile(root.parent / 'Bomberman 64 (USA).z64', Path(settings) / 'bm64_us.z64')
     environment = dict(os.environ, APP_FOLDER_PATH=settings)
     if environment.get('BM64_INPUT_EXTRA'):
-        combined = Path(settings) / 'combined-inputs.txt'
+        combined = Path(temporary) / 'combined-inputs.txt'
         combined.write_text(Path(environment['BM64_INPUT_SCRIPT']).read_text() + '\n' +
                             Path(environment['BM64_INPUT_EXTRA']).read_text())
         environment['BM64_INPUT_SCRIPT'] = str(combined)

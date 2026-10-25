@@ -143,6 +143,7 @@ decltype(fibers) saved_fibers;
 decltype(fiber_fenv) saved_fenv;
 size_t saved_fiber_count;
 int32_t saved_next, saved_yield, saved_resume;
+int32_t saved_players, saved_player_stride, saved_overlay;
 uint64_t saved_frame, saved_ticks;
 uint64_t saved_boot_frame;
 bool saved_fast_boot, saved_player_select_ready;
@@ -179,6 +180,7 @@ static double save(size_t index = 0, bool quiet = false) {
     trace.mark("stacks");
     s.saved_slots = g_slots; s.saved_fibers = fibers; s.saved_fiber_count = fiber_count; s.saved_fenv = fiber_fenv;
     s.saved_next = next_thread; s.saved_frame = frame; s.saved_ticks = ticks;
+    s.saved_players = players; s.saved_player_stride = player_stride; s.saved_overlay = overlay;
     s.saved_boot_frame = boot_frame.load(); s.saved_fast_boot = fast_boot.load();
     s.saved_player_select_ready = player_select_ready;
     s.saved_yield = g_yield_reason; s.saved_resume = g_resume_value;
@@ -206,6 +208,7 @@ static double restore(size_t index = 0, bool quiet = false) {
     g_entry_rdram = s.saved_entry_rdram; g_initialized = s.saved_initialized;
     g_slots = s.saved_slots; fibers = s.saved_fibers; fiber_count = s.saved_fiber_count; fiber_fenv = s.saved_fenv;
     next_thread = s.saved_next; frame = s.saved_frame; ticks = s.saved_ticks;
+    players = s.saved_players; player_stride = s.saved_player_stride; overlay = s.saved_overlay;
     boot_frame = s.saved_boot_frame; fast_boot = s.saved_fast_boot;
     player_select_ready = s.saved_player_select_ready;
     g_yield_reason = s.saved_yield; g_resume_value = s.saved_resume;
@@ -464,6 +467,16 @@ void switch_thread(int32_t thread) {
 }
 extern "C" void bm64_player_select_ready(int ready) {
     checkpoint::player_select_ready = ready != 0;
+}
+
+extern "C" void bm64_online_player_layout(uint8_t* rdram) {
+    if (!online::match_settings_locked) return;
+    // The menu reads these settings before creating the MAN/COM and costume rows.
+    constexpr int32_t settings = int32_t(0x802ac660);
+    for (int port = 0; port < 4; ++port) {
+        MEM_W(4 + 4 * port, settings) = unsigned(port) < online::human_players ? 1 : 2;
+        MEM_W(0x40 + 4 * port, settings) = 0;
+    }
 }
 
 extern "C" void recomp_checkpoint_frame(uint8_t*, recomp_context* ctx) {

@@ -31,7 +31,8 @@ public:
     void start(uint64_t match, const std::filesystem::path& executable,
                const std::filesystem::path& rom, const std::filesystem::path& log,
                const std::vector<std::string>& arguments,
-               const std::map<std::string, std::string>& diagnostic_environment = {});
+               const std::map<std::string, std::string>& diagnostic_environment = {},
+               unsigned human_players = 4);
     bool playing(uint64_t match);
     bool cancel(uint64_t match);
     std::optional<Exit> poll(std::chrono::steady_clock::time_point now = std::chrono::steady_clock::now());

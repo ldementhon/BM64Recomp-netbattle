@@ -32,6 +32,8 @@ static online::GameSession::Exit wait_exit(online::GameSession& session) {
 int main(int argc, char** argv) {
     if (argc == 2 && std::string(argv[1]).starts_with("--child-")) {
         assert(!std::getenv("BM64_NEGATIVE_INPUT"));
+        if (std::string(argv[1]) == "--child-seats-2")
+            assert(std::string(std::getenv("BM64_ONLINE_HUMANS")) == "2");
         fs::path settings = std::getenv("APP_FOLDER_PATH");
         assert(fs::exists(settings / "bm64_us.z64"));
         assert(!fs::exists(settings / "personal-marker"));
@@ -177,6 +179,17 @@ int main(int argc, char** argv) {
             auto exit = wait_exit(session);
             assert(!exit.error.empty() && !exit.completed_frame && session.state() == online::GameSession::State::Lobby);
         }
+        for (unsigned count : {0, 1, 5}) {
+            try {
+                session.start(15, executable, rom, scratch / "invalid-seats.log", {}, {}, count);
+                assert(false);
+            } catch (const std::invalid_argument&) {}
+        }
+        session.start(15, executable, rom, scratch / "two-seats.log", {"--child-seats-2"},
+                      {{"BM64_ONLINE_HUMANS", "999"}}, 2);
+        wait_ready(session);
+        assert(session.playing(15));
+        assert(wait_exit(session).completed_frame);
     }
     close(connection[0]); close(connection[1]);
     std::string marker;

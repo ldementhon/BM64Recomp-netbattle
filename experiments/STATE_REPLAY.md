@@ -116,6 +116,11 @@ The local owner socket survives; no real server connection is tested yet.
 It locks cheats and guest music/effects/voice balance while allowing host Main
 Volume. The match-settings check compares online settings-change attempts and
 uses an offline sound-change run as a negative control.
+`BM64_ONLINE_HUMANS=2|3|4` fixes the human/CPU layout before menu creation.
+`python3 tests/run_match_layouts.py` compares each layout with forbidden menu
+inputs, rewinds through entry and round transitions, and includes an offline
+negative control. P1 can confirm the fixed menus; other menu inputs and CPU pad
+inputs are neutral. The normal offline policy remains unchanged.
 The old update-1600 boot handoff reaches Stage Select, not Player Select.
 Use `BM64_BOOT_TO_PLAYER_SELECT=1` with the checkpoint runner (automatic with
 `--online-test`) to stop scripted boot at the actual menu input loop. The hook

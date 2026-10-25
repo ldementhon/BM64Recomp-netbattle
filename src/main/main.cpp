@@ -597,6 +597,13 @@ int main(int argc, char** argv) {
         return EXIT_FAILURE;
     }
     if (online::match_settings_locked) {
+        if (const char* humans = std::getenv("BM64_ONLINE_HUMANS")) {
+            try { online::human_players = online::parse_human_players(humans); }
+            catch (const std::invalid_argument& error) {
+                fprintf(stderr, "%s\n", error.what());
+                return EXIT_FAILURE;
+            }
+        }
         // A match starts with only the verified ROM, never personal saves/mods/config.
         std::error_code error;
         auto directory = std::filesystem::directory_iterator(std::getenv("APP_FOLDER_PATH"), error);

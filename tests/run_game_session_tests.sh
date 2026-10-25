@@ -9,6 +9,9 @@ for optimization in 0 2; do
     clang++ -std=c++20 -Wall -Wextra -Werror -O"$optimization" \
         tests/match_channel.cpp -o build/experiments/match-channel-test
     build/experiments/match-channel-test
+    clang++ -std=c++20 -Wall -Wextra -Werror -O"$optimization" \
+        tests/match_input.cpp -o build/experiments/match-input-test
+    build/experiments/match-input-test
 done
 if [ "${BM64_SESSION_REAL_GAME:-0}" = 1 ]; then
     game=build/BM64Recompiled.app/Contents/MacOS/BM64Recompiled

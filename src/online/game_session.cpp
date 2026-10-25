@@ -39,9 +39,11 @@ int GameSession::reap() {
 void GameSession::start(uint64_t match, const std::filesystem::path& executable,
                         const std::filesystem::path& rom, const std::filesystem::path& log,
                         const std::vector<std::string>& arguments,
-                        const std::map<std::string, std::string>& diagnostic_environment) {
+                        const std::map<std::string, std::string>& diagnostic_environment,
+                        unsigned human_players) {
     if (state_ != State::Lobby || child_ >= 0) throw std::logic_error("match already running");
     if (!match || match <= match_) throw std::invalid_argument("match ID must increase");
+    if (human_players < 2 || human_players > 4) throw std::invalid_argument("online match requires 2, 3, or 4 humans");
     // Consume IDs even on failed launches: queued events must never become valid later.
     match_ = match;
     auto pattern = (std::filesystem::temp_directory_path() / "bm64-match-XXXXXX").string();
@@ -71,6 +73,7 @@ void GameSession::start(uint64_t match, const std::filesystem::path& executable,
         }
         environment["APP_FOLDER_PATH"] = settings_.string();
         environment["BM64_OWNER_MATCH"] = std::to_string(match);
+        environment["BM64_ONLINE_HUMANS"] = std::to_string(human_players);
         std::vector<std::string> env_strings;
         for (auto& [key, value] : environment) env_strings.push_back(key + "=" + value);
         std::vector<char*> env;

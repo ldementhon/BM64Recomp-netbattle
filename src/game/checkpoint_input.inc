@@ -59,5 +59,6 @@ bool input(int controller, uint16_t* buttons, float* x, float* y) {
     auto sampled_frame=input_frame(controller);
     for (auto i:inputs) if (controller == i.controller && sampled_frame>=i.begin && sampled_frame<i.end) { *buttons=i.buttons; *x=i.x; *y=i.y; }
     if (controller == 0 && replay_pass && std::getenv("BM64_NEGATIVE_INPUT")) { *buttons ^= 0x8000; *x = std::clamp(-*x + 0.1f, -1.0f, 1.0f); }
+    if (online::match_settings_locked) online::filter_match_input(controller, overlay, *buttons, *x, *y);
     return true;
 }

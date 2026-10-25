@@ -8,12 +8,14 @@
 #include <sstream>
 #include <stdexcept>
 #include <vector>
+#include "../src/online/match_settings.hpp"
 
 namespace checkpoint {
 bool enabled = true;
 std::atomic<bool> fast_boot = false;
 std::atomic<uint64_t> boot_frame = 0;
 static uint64_t frame = 0;
+static int overlay = 86;
 static unsigned replay_pass = 0;
 static void require(bool ok, const char* message) {
     if (!ok) throw std::runtime_error(message);

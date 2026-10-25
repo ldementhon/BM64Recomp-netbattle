@@ -8,7 +8,8 @@ Status: step 1 in progress, 2026-10-25. No server has been rented or deployed.
   per match. `src/online/game_session.{hpp,cpp}` implements POSIX process ownership,
   isolated settings/ROM copies, cleanup, loading deadline, cancellation, exit/crash
   recovery, and monotonically increasing match IDs. No native checkpoint crosses
-  a process boundary. The lobby UI and game acknowledgment channel are not built.
+  a process boundary. The private game acknowledgment channel is tested; the
+  lobby UI and real network connection are not built.
 - `sh tests/run_game_session_tests.sh` passes at `-O0` and `-O2`: loading cancel
   before/after readiness, acknowledged start/finish, crash, failed launch,
   repeated launch, stale event rejection, malformed/duplicate events, loading
@@ -28,7 +29,7 @@ Status: step 1 in progress, 2026-10-25. No server has been rented or deployed.
   existing independent runs. macOS game probes require audio/graphics access;
   the restricted invocation failed opening CoreAudio before simulation.
 - Step 1 remaining: independent native continuation/runtime-state coverage;
-  human/CPU assignment and P1-only menu enforcement; remaining configuration/UI
+  remaining configuration/UI
   audit; two-machine comparison. The timed update-1600 marker
   is not accepted as proof of character selection. The current process owner is
   exercised by tests, not yet wired into the application or a network lobby.
@@ -144,8 +145,19 @@ Status: step 1 in progress, 2026-10-25. No server has been rented or deployed.
   This build also passes the complete `sh tests/run_battle_replay.sh` suite:
   1/4/8/12-update restores, 400-update lifecycle, boot and battle entry, both
   negative controls, independent overlapping RAM hashes, and rolling history.
-- Step 2 onward remains pending these correctness gates. Preserve concurrent
-  renderer/runtime experiments; no dependency edits are included in this work.
+- Fixed colors and human/CPU seats now apply before Player Select builds its rows.
+  `BM64_ONLINE_HUMANS=2|3|4` is validated, and the owner supplies the agreed count.
+  P1 alone can confirm shared menus/results; directions, seat/costume edits, and
+  the ROM pause menu are blocked online. CPU pads stay neutral. Offline controls
+  are unchanged. Checkpoints now restore the overlay used by this input policy.
+  The layout checks pass all six 2/3/4-human baseline/interference runs, two round
+  transition runs, and an offline negative control (first divergence 1401), each
+  with full-state restores. A held two-human capture visibly shows MAN/MAN/COM/COM.
+  O0/O2 input-policy and owner checks, two complete real owned matches, and a
+  400-update rolling-history check pass on unchanged executable SHA-256
+  `379c51898ff87054a26f05275bab2b0bad22fe234aaf795518aa851546ce1e85`.
+- Step 2 server preparation has begun while the remaining step 1 gates stay open;
+  no playable-network claim is made. Preserve concurrent renderer/runtime experiments.
 
 ## Goal and boundary
 
