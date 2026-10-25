@@ -64,6 +64,11 @@ endif()
 
 # Post-build steps for macOS bundle
 add_custom_command(TARGET BM64Recompiled POST_BUILD
+    # Refresh SDL before fixup_bundle searches the existing Frameworks directory;
+    # otherwise an incremental build can keep an older library with the same name.
+    COMMAND ${CMAKE_COMMAND} -E make_directory $<TARGET_BUNDLE_DIR:BM64Recompiled>/Contents/Frameworks
+    COMMAND ${CMAKE_COMMAND} -E copy_if_different $<TARGET_FILE:SDL2::SDL2>
+        $<TARGET_BUNDLE_DIR:BM64Recompiled>/Contents/Frameworks/$<TARGET_FILE_NAME:SDL2::SDL2>
     # Copy and fix frameworks first
     COMMAND ${CMAKE_COMMAND} -D CMAKE_BUILD_TYPE=$<CONFIG> -D CMAKE_GENERATOR=${CMAKE_GENERATOR} -P ${CMAKE_SOURCE_DIR}/.github/macos/fixup_bundle.cmake
 
