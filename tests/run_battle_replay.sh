@@ -14,6 +14,7 @@ done
 BM64_CHECKPOINT_FRAME=1945 BM64_REPLAY_LENGTH=400 BM64_RESULT_NAME=four-player-lifecycle python3 tests/run_checkpoint_probe.py
 BM64_CHECKPOINT_FRAME=1980 BM64_REPLAY_LENGTH=12 BM64_NEGATIVE_INPUT=1 BM64_RESULT_NAME=four-player-negative-input python3 tests/run_checkpoint_probe.py
 unset BM64_REQUIRE_BATTLE
+BM64_CHECKPOINT_FRAME=1598 BM64_REPLAY_LENGTH=6 BM64_SINGLE_BATTLE=1 BM64_RESULT_NAME=boot-input-handoff python3 tests/run_checkpoint_probe.py
 BM64_CHECKPOINT_FRAME=1810 BM64_REPLAY_LENGTH=120 BM64_RESULT_NAME=four-player-entry-transition python3 tests/run_checkpoint_probe.py
 BM64_CHECKPOINT_FRAME=1810 BM64_REPLAY_LENGTH=120 BM64_NEGATIVE_STACKS=1 BM64_RESULT_NAME=four-player-transition-negative-stacks python3 tests/run_checkpoint_probe.py
 python3 - <<'PY'

@@ -1,25 +1,7 @@
 // A deterministic delayed-input fixture, paced at 60 Hz without per-frame GPU drains.
-static unsigned loop_length, loop_buffer;
-static uint64_t loop_at, loop_frontier;
-static bool loop_oracle, loop_verifying;
-static constexpr unsigned loop_warmup=120, loop_lead=17;
-static unsigned loop_spacing=60;
+static uint64_t loop_frontier;
+static bool loop_verifying;
 struct LoopCycle { unsigned index; uint64_t release,wake,execute,finish; double capture,restore; bool rollback, hidden; };
-static uint64_t pending_begin(uint64_t f) {
-    uint64_t first=loop_at+loop_warmup+loop_lead;
-    if (f<first || !loop_length) return 0;
-    uint64_t start=first+(f-first)/loop_spacing*loop_spacing;
-    return f<start+loop_length ? start : 0;
-}
-static uint64_t input_frame(int controller) {
-    if (!loop_at || frame<loop_at) return frame;
-    auto sample=frame-loop_buffer;
-    if (controller==1 && !loop_oracle && !replay_pass) {
-        auto begin=pending_begin(frame);
-        if (begin) sample=begin-loop_buffer-1; // Hold the last received remote input.
-    }
-    return sample;
-}
 static bool running_loop(unsigned at) {
     const unsigned count=setting("BM64_LOOP_FRAMES",0);
     if (!count) return false;
@@ -40,6 +22,7 @@ static bool running_loop(unsigned at) {
     if (!loop_at) {
         if(std::getenv("BM64_PRESENT_TRACE")) Probe::present_trace=present_trace;
         loop_at=at;
+        loop_end=loop_at+count;
         loop_buffer=setting("BM64_INPUT_BUFFER",2);
         loop_length=setting("BM64_ROLLBACK_LENGTH",4);
         loop_spacing=setting("BM64_ROLLBACK_SPACING",60);

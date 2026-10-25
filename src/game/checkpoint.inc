@@ -40,15 +40,6 @@ std::atomic<bool> suppress_render = false;
 std::atomic<bool> catchup_active = false;
 std::atomic<uint64_t> presentation_wait_ns = 0;
 
-bool boot_input(int controller, uint16_t* buttons, float* x, float* y) {
-    *buttons = 0; *x = *y = 0;
-    if (controller != 0) return enabled;
-    auto f = boot_frame.load();
-    if (f == 500 || f == 800 || f == 1000) *buttons = 0x1000;
-    if (f >= 1102 && f < 1110) *y = -0.7f;
-    if (f == 1120 || f == 1320 || f == 1500) *buttons = 0x8000;
-    return true;
-}
 size_t state_slot = 0;
 uint64_t ticks = 0;
 static uint8_t* ram;
@@ -68,6 +59,8 @@ static size_t retained_bytes;
 static void require(bool ok, const char* message) {
     if (!ok) { fprintf(stderr, "CHECKPOINT FAIL: %s\n", message); fflush(stderr); std::_Exit(2); }
 }
+#include "checkpoint_input.inc"
+
 static std::unordered_map<void*, std::shared_ptr<void>> live_allocations;
 static void* allocate_native(size_t size, void*) {
     require(retained_bytes + size < 512 * 1024 * 1024, "native history allocation limit reached");
@@ -143,6 +136,8 @@ decltype(fiber_fenv) saved_fenv;
 size_t saved_fiber_count;
 int32_t saved_next, saved_yield, saved_resume;
 uint64_t saved_frame, saved_ticks;
+uint64_t saved_boot_frame;
+bool saved_fast_boot;
 bool saved_initialized;
 uint8_t* saved_entry_rdram;
 CheckpointMemory saved_ram;
@@ -176,6 +171,7 @@ static double save(size_t index = 0, bool quiet = false) {
     trace.mark("stacks");
     s.saved_slots = g_slots; s.saved_fibers = fibers; s.saved_fiber_count = fiber_count; s.saved_fenv = fiber_fenv;
     s.saved_next = next_thread; s.saved_frame = frame; s.saved_ticks = ticks;
+    s.saved_boot_frame = boot_frame.load(); s.saved_fast_boot = fast_boot.load();
     s.saved_yield = g_yield_reason; s.saved_resume = g_resume_value;
     s.saved_initialized = g_initialized; s.saved_entry_rdram = g_entry_rdram;
     trace.mark("metadata");
@@ -201,6 +197,7 @@ static double restore(size_t index = 0, bool quiet = false) {
     g_entry_rdram = s.saved_entry_rdram; g_initialized = s.saved_initialized;
     g_slots = s.saved_slots; fibers = s.saved_fibers; fiber_count = s.saved_fiber_count; fiber_fenv = s.saved_fenv;
     next_thread = s.saved_next; frame = s.saved_frame; ticks = s.saved_ticks;
+    boot_frame = s.saved_boot_frame; fast_boot = s.saved_fast_boot;
     g_yield_reason = s.saved_yield; g_resume_value = s.saved_resume;
     trace.mark("metadata");
     runtime_state(true); trace.mark("runtime");
@@ -297,6 +294,7 @@ static bool benchmark(unsigned at) {
 #include "catchup.inc"
 
 static void on_boundary() {
+    // Boundary N precedes input N; its resulting state is checked at boundary N+1.
     ++frame;
     if (!replay_pass && frame % 60 == 0) { fprintf(stderr,"CHECKPOINT: frame=%llu vi=%llu threads=%zu\n",frame,ticks,fiber_count); report_process_probe(); }
     if (frame == setting("BM64_HOLD_FRAME", 0)) { fprintf(stderr,"CHECKPOINT: holding frame %llu for inspection\n", frame); std::this_thread::sleep_for(std::chrono::seconds(3)); }
@@ -385,34 +383,6 @@ void switch_thread(int32_t thread) {
         fesetenv(&host_fenv);
         if (boundary) { boundary = false; on_boundary(); }
     }
-}
-struct Input { unsigned begin, end; uint16_t buttons; float x,y; int controller = 0; };
-bool input(int controller, uint16_t* buttons, float* x, float* y) {
-    if (fast_boot) return boot_input(controller, buttons, x, y);
-    if (controller < 0 || controller >= 4) return false;
-    static std::vector<Input> inputs = [] {
-        std::vector<Input> result;
-        if (const char* path = std::getenv("BM64_INPUT_SCRIPT")) {
-            std::ifstream in(path); require(in.good(), "input script missing");
-            std::string line;
-            while (std::getline(in,line)) {
-                if (line.empty() || line[0]=='#') continue;
-                Input i{}; unsigned b;
-                std::istringstream s(line); require(bool(s >> i.begin >> i.end >> std::hex >> b >> std::dec >> i.x >> i.y), "bad input script");
-                s >> std::ws;
-                if (!s.eof()) require(bool(s >> i.controller), "invalid controller field");
-                s >> std::ws; require(s.eof(), "extra input fields");
-                require(i.controller >= 0 && i.controller < 4 && b <= 0xffff && i.begin < i.end && i.x >= -1 && i.x <= 1 && i.y >= -1 && i.y <= 1, "input outside valid range");
-                i.buttons = b; result.push_back(i);
-            }
-        }
-        return result;
-    }();
-    *buttons=0; *x=*y=0;
-    auto sampled_frame=input_frame(controller);
-    for (auto i:inputs) if (controller == i.controller && sampled_frame>=i.begin && sampled_frame<i.end) { *buttons=i.buttons; *x=i.x; *y=i.y; }
-    if (controller == 0 && replay_pass && std::getenv("BM64_NEGATIVE_INPUT")) { *buttons ^= 0x8000; *x = std::clamp(-*x + 0.1f, -1.0f, 1.0f); }
-    return true;
 }
 }
 extern "C" void recomp_checkpoint_frame(uint8_t*, recomp_context* ctx) {

@@ -42,6 +42,7 @@ Run from the repository root after applying the dependency patches:
 
 ```sh
 python3 tests/run_controller_tests.py
+sh tests/run_replay_input_tests.sh
 sh tests/run_coroutine_replay.sh
 mkdir -p build/experiments
 for test in checkpoint_memory changed_writeback presentation_recovery; do
@@ -52,6 +53,18 @@ done
 
 The controller runner uses `build/compile_commands.json`, which the Mac build
 recipe enables. Coroutine checks run at both `-O0` and `-O2`.
+
+Replay input checks also run at both optimization levels. Boundary N is the start
+of simulation update N: every controller read during that update uses input N,
+and boundary N+1 checks the resulting state. Rendering and controller reads do not
+advance this counter. Restoring a checkpoint restores the frame and fast-boot
+input clock; replay reads historical scripted inputs, never live controllers.
+The delayed-input fixture treats player 1 as local and players 2–4 as remote,
+holding each remote pad's last input during a simulated delivery gap, then
+replaying the corrected inputs. It simulates a shared delivery gap, not a network
+transport or independent packet arrival times.
+Delivery gaps that cannot be corrected before the run ends are skipped, so a
+successful verification also checks the final state after all corrections.
 
 Real-game probes require a built app and `../Bomberman 64 (USA).z64`. They use
 temporary settings and saves and write disposable logs to `experiments/results/`:
