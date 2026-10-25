@@ -62,6 +62,12 @@ If you're interested in making texture packs, check out [the RT64 documentation]
 #### Additional Control Options
 Customize your experience by setting your stick deadzone to your liking, as well as adjusting the Y axis inversion for aiming.
 
+For local multiplayer, open **Controls**, select **P1–P4**, and choose **Controller**, **Keyboard**, or **Off** for each player before starting the game. Enabling a controller player assigns the next unused gamepad; the dropdown lets you change it explicitly. Bindings, sensitivity, and calibration are saved separately for each player. P1 defaults to keyboard and P2–P4 default to off. Existing single-player bindings are retained on P1.
+
+If releasing a stick makes your player turn around, select **Calibrate Stick** for that player. Leave the stick centered, circle its full range, then follow the eight release prompts (twice in each direction) and save. Calibration measures the rebound and adds a safety margin to the deadzone. The global deadzone remains a minimum; the two deadzones are not added together. Recalibrate after changing controllers or movement-axis bindings. Controller assignment follows connection order on startup, so check the player assignments before playing.
+
+Four-player controls and stick calibration were adapted from [pmaccamp's fork](https://github.com/pmaccamp/BM64Recomp/commit/9c7d7e9b215797492982a2216baf95f9f3ccc8d1). Local fixes preserve diagonal stick direction, avoid taking another player's controller when enabling a port, handle disconnects safely, and limit binding resets to the selected player. Controller Pak costume storage is not emulated; Battle character select uses the built-in characters.
+
 #### Low Input Lag
 This project has been optimized to have as little input lag as possible, making the game feel more responsive than ever!
 
@@ -97,6 +103,8 @@ Yes, if you place a file named `portable.txt` in the same folder as the executab
 
 ## Building
 Building instructions on how to build this project can be found in the [BUILDING.md](BUILDING.md) file.
+
+Controller regression checks on macOS/Linux: after configuring a build with `CMAKE_EXPORT_COMPILE_COMMANDS=ON`, run `python3 tests/run_controller_tests.py build` (replace `build` with your build directory). The tests use SDL virtual gamepads and temporary settings; no physical controllers or ROM are required. Set `SDL2_CONFIG` if `sdl2-config` is installed outside the configured SDL2 prefix.
 
 ## Libraries Used and Projects Referenced
 * [RT64](https://github.com/rt64/rt64) for the project's rendering engine

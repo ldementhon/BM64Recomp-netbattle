@@ -583,6 +583,14 @@ void draw_hook(plume::RenderCommandList* command_list, plume::RenderFramebuffer*
     static int latest_controller_key_pressed = SDLK_UNKNOWN;
 
     while (recompui::try_deque_event(cur_event)) {
+        // Sweeping the stick during calibration must not navigate the menus.
+        if (recompui::is_stick_calibration_active() && cur_event.type == SDL_CONTROLLERAXISMOTION) {
+            recompui::sample_control_calibration(cur_event.caxis);
+            latest_controller_key_pressed = SDLK_UNKNOWN;
+            ui_state->await_stick_return_x = true;
+            ui_state->await_stick_return_y = true;
+            continue;
+        }
         bool context_capturing_input = recompui::is_context_capturing_input();
         bool context_capturing_mouse = recompui::is_context_capturing_mouse();
 
@@ -730,7 +738,11 @@ void draw_hook(plume::RenderCommandList* command_list, plume::RenderFramebuffer*
         }
     } // end dequeue event loop
 
+    // Consume every axis event before sampling the current state, so a brief
+    // rebound between rendered frames is not lost or processed out of order.
+    recompui::update_control_calibration();
     // Handle controller key repeats.
+    if (recompui::is_stick_calibration_active()) latest_controller_key_pressed = SDLK_UNKNOWN;
     if (latest_controller_key_pressed != SDLK_UNKNOWN) {
         clock::time_point now = clock::now();
         if (now >= next_repeat_time) {

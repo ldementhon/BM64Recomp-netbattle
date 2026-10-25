@@ -811,7 +811,7 @@ enum GenericOffOnOption {
 
 extern u32 D_80027060[];
 
-static OSContPad tempPad;
+static OSContPad tempPads[MAXCONTROLLERS];
 
 typedef struct LevelClass
 {
@@ -891,7 +891,7 @@ extern u32 D_802AC624; // lives
 extern u32 D_802AC628; // credits
 
 RECOMP_EXPORT void Recomp_ProcessCheats() {
-    osContGetReadData(&tempPad);
+    osContGetReadData(tempPads);
 
     /* Moonjump (Hold L to Moonjump) */
     switch (recomp_get_moonjump()) {
@@ -900,7 +900,7 @@ RECOMP_EXPORT void Recomp_ProcessCheats() {
             break;
         case (enum GenericOffOnOption)ON:
             // is the player holding L?
-            if (tempPad.button & 0x2000) {
+            if (tempPads[0].button & 0x2000) {
                 if (g_Players[0].PlayerLevelClass) {
                     g_Players[0].PlayerLevelClass->yVel = -32.0f;
                 }

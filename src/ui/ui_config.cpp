@@ -12,7 +12,6 @@
 #include "RmlUi/Core.h"
 
 #include "core/ui_context.h"
-
 #include <algorithm>
 
 ultramodern::renderer::GraphicsConfig new_options;
@@ -101,6 +100,37 @@ static int scanned_binding_index = -1;
 static int scanned_input_index = -1;
 static int focused_input_index = -1;
 static int focused_config_option_index = -1;
+static int selected_port = 0;
+static int port_mode_index = 0; // 0=Off, 1=Keyboard, 2=Controller
+static int port_controller_index = -1;
+static std::vector<std::string> connected_controller_names;
+static recomp::StickCalibrationSession stick_calibration_session;
+static int calibration_port = -1;
+static int32_t calibration_controller_id = -1;
+static std::array<float, SDL_CONTROLLER_AXIS_MAX> calibration_axes{};
+static uint32_t calibration_started_ticks = 0;
+static std::string calibration_message;
+
+static void dirty_calibration_variables() {
+    if (!controls_model_handle) return;
+    for (const char* name : {"calibrating_stick", "calibration_ready", "calibration_status", "stick_calibrated"}) {
+        controls_model_handle.DirtyVariable(name);
+    }
+}
+
+static void cancel_stick_calibration(const std::string& message = "") {
+    if (scanned_input_index >= 0) recomp::cancel_scanning_input();
+    stick_calibration_session.cancel();
+    calibration_port = -1;
+    calibration_controller_id = -1;
+    calibration_message = message;
+    dirty_calibration_variables();
+}
+
+static void refresh_controller_list() {
+    connected_controller_names = recomp::get_connected_controller_names();
+    port_controller_index = recomp::get_port_controller_index(selected_port);
+}
 
 static bool msaa2x_supported = false;
 static bool msaa4x_supported = false;
@@ -116,7 +146,8 @@ int recomp::get_scanned_input_index() {
 }
 
 void recomp::finish_scanning_input(recomp::InputField scanned_field) {
-    recomp::set_input_binding(static_cast<recomp::GameInput>(scanned_input_index), scanned_binding_index, cur_device, scanned_field);
+    if (scanned_input_index < 0 || scanned_binding_index < 0) return;
+    recomp::set_input_binding(static_cast<recomp::GameInput>(scanned_input_index), scanned_binding_index, cur_device, scanned_field, selected_port);
     scanned_input_index = -1;
     scanned_binding_index = -1;
     controls_model_handle.DirtyVariable("inputs");
@@ -190,6 +221,7 @@ void apply_graphics_config(void) {
 }
 
 void close_config_menu() {
+    cancel_stick_calibration();
     if (ultramodern::renderer::get_graphics_config() != new_options) {
         recompui::open_choice_prompt(
             "Graphics options have changed",
@@ -485,6 +517,7 @@ recompui::ContextId config_context;
 recompui::ContextId recompui::get_config_context_id() {
 	return config_context;
 }
+
 // ---------------------------------------
 // CHEATS
 // ---------------------------------------
@@ -599,6 +632,61 @@ void zelda64::set_infinite_lives(zelda64::GenericOnOffOption mode) {
     }
 }
 
+bool recompui::is_stick_calibration_active() {
+    return stick_calibration_session.active();
+}
+
+static void sample_stick_calibration(float x, float y, double now) {
+    auto old_stage = stick_calibration_session.stage();
+    int old_directions = stick_calibration_session.directions_recorded();
+    int old_flicks = stick_calibration_session.flicks_recorded();
+    bool old_ready = stick_calibration_session.ready();
+    stick_calibration_session.sample(x, y, now);
+    if (old_stage != stick_calibration_session.stage()
+        || old_directions != stick_calibration_session.directions_recorded()
+        || old_flicks != stick_calibration_session.flicks_recorded()
+        || old_ready != stick_calibration_session.ready()) dirty_calibration_variables();
+}
+
+void recompui::sample_control_calibration(const SDL_ControllerAxisEvent& event) {
+    if (!stick_calibration_session.active() || event.which != calibration_controller_id
+        || event.axis >= calibration_axes.size()) return;
+    int32_t elapsed = static_cast<int32_t>(event.timestamp - calibration_started_ticks);
+    if (elapsed < 0) return; // Discard events queued before the user started calibration.
+    calibration_axes[event.axis] = event.value / 32768.0f;
+    float x, y;
+    if (recomp::map_controller_stick(calibration_port, calibration_axes, &x, &y)) {
+        sample_stick_calibration(x, y, elapsed / 1000.0);
+    }
+}
+
+void recompui::update_control_calibration() {
+    if (controls_model_handle && recompui::is_context_shown(config_context)) {
+        auto previous_names = connected_controller_names;
+        int previous_index = port_controller_index;
+        refresh_controller_list();
+        if (previous_names != connected_controller_names || previous_index != port_controller_index) {
+            controls_model_handle.DirtyVariable("connected_controller_names");
+            controls_model_handle.DirtyVariable("port_controller_index");
+            controls_model_handle.DirtyVariable("assigned_controller_name");
+        }
+    }
+    if (!stick_calibration_session.active()) return;
+    if (!recompui::is_context_shown(config_context) || recompui::is_prompt_open()
+        || calibration_port != selected_port) {
+        cancel_stick_calibration();
+        return;
+    }
+    float x, y;
+    int32_t controller_id;
+    if (!recomp::get_raw_controller_stick(calibration_port, &x, &y, &controller_id)
+        || controller_id != calibration_controller_id) {
+        cancel_stick_calibration("Calibration canceled: controller changed or disconnected. Previous settings kept.");
+        return;
+    }
+    sample_stick_calibration(x, y, (SDL_GetTicks() - calibration_started_ticks) / 1000.0);
+}
+
 // Helper copied from RmlUi to get a named child.
 Rml::Element* recompui::get_child_by_tag(Rml::Element* parent, const std::string& tag)
 {
@@ -616,7 +704,14 @@ Rml::Element* recompui::get_child_by_tag(Rml::Element* parent, const std::string
 class ConfigTabsetListener : public Rml::EventListener {
     void ProcessEvent(Rml::Event& event) override {
         if (event.GetId() == Rml::EventId::Tabchange) {
+            cancel_stick_calibration();
             int tab_index = event.GetParameter<int>("tab_index", 0);
+            // Refresh controller list when switching to controls tab
+            if (tab_index == recompui::config_tab_to_index(recompui::ConfigTab::Controls)) {
+                refresh_controller_list();
+                controls_model_handle.DirtyVariable("connected_controller_names");
+                controls_model_handle.DirtyVariable("port_controller_index");
+            }
             bool in_mod_tab = (tab_index == recompui::config_tab_to_index(recompui::ConfigTab::Mods));
             if (in_mod_tab) {
                 recompui::set_config_tabset_mod_nav();
@@ -688,15 +783,17 @@ public:
                 zelda64::open_quit_game_prompt();
             });
 
-        recompui::register_event(listener, "toggle_input_device",
+        recompui::register_event(listener, "port_controller_changed",
             [](const std::string& param, Rml::Event& event) {
-                cur_device = cur_device == recomp::InputDevice::Controller
-                    ? recomp::InputDevice::Keyboard
-                    : recomp::InputDevice::Controller;
-                controls_model_handle.DirtyVariable("input_device_is_keyboard");
-                controls_model_handle.DirtyVariable("inputs");
+                cancel_stick_calibration();
+                int value = event.GetParameter<int>("value", -1);
+                recomp::assign_controller_to_port(selected_port, value);
+                port_controller_index = value;
+                controls_model_handle.DirtyVariable("port_controller_index");
+                controls_model_handle.DirtyVariable("assigned_controller_name");
+                zelda64::save_config();
             });
-            
+
         recompui::register_event(listener, "area_index_changed",
             [](const std::string& param, Rml::Event& event) {
                 debug_context.area_index = event.GetParameter<int>("value", 0);
@@ -865,8 +962,10 @@ public:
             return Rml::Variant{recomp::get_input_enum_name(static_cast<recomp::GameInput>(inputs.at(0).Get<size_t>()))};
         });
 
+
         constructor.BindEventCallback("set_input_binding",
             [](Rml::DataModelHandle model_handle, Rml::Event& event, const Rml::VariantList& inputs) {
+                cancel_stick_calibration();
                 scanned_input_index = inputs.at(0).Get<size_t>();
                 scanned_binding_index = inputs.at(1).Get<size_t>();
                 recomp::start_scanning_input(cur_device);
@@ -876,11 +975,16 @@ public:
 
         constructor.BindEventCallback("reset_input_bindings_to_defaults",
             [](Rml::DataModelHandle model_handle, Rml::Event& event, const Rml::VariantList& inputs) {
+                cancel_stick_calibration();
                 if (cur_device == recomp::InputDevice::Controller) {
-                    zelda64::reset_cont_input_bindings();
+                    zelda64::reset_cont_input_bindings(selected_port);
+                    recomp::set_stick_sensitivity(selected_port, 100);
+                    recomp::set_stick_calibration(selected_port, {});
                 } else {
-                    zelda64::reset_kb_input_bindings();
+                    zelda64::reset_kb_input_bindings(selected_port);
                 }
+                refresh_controller_list();
+                zelda64::save_config();
                 model_handle.DirtyAllVariables();
                 nav_help_model_handle.DirtyVariable("nav_help__accept");
                 nav_help_model_handle.DirtyVariable("nav_help__exit");
@@ -889,9 +993,10 @@ public:
 
         constructor.BindEventCallback("clear_input_bindings",
             [](Rml::DataModelHandle model_handle, Rml::Event& event, const Rml::VariantList& inputs) {
+                cancel_stick_calibration();
                 recomp::GameInput input = static_cast<recomp::GameInput>(inputs.at(0).Get<size_t>());
                 for (size_t binding_index = 0; binding_index < recomp::bindings_per_input; binding_index++) {
-                    recomp::set_input_binding(input, binding_index, cur_device, recomp::InputField{});
+                    recomp::set_input_binding(input, binding_index, cur_device, recomp::InputField{}, selected_port);
                 }
                 model_handle.DirtyVariable("inputs");
                 graphics_model_handle.DirtyVariable("gfx_help__apply");
@@ -899,11 +1004,48 @@ public:
 
         constructor.BindEventCallback("reset_single_input_binding_to_default",
             [](Rml::DataModelHandle model_handle, Rml::Event& event, const Rml::VariantList& inputs) {
+                cancel_stick_calibration();
                 recomp::GameInput input = static_cast<recomp::GameInput>(inputs.at(0).Get<size_t>());
-                zelda64::reset_single_input_binding(cur_device, input);
+                zelda64::reset_single_input_binding(cur_device, input, selected_port);
                 model_handle.DirtyVariable("inputs");
                 nav_help_model_handle.DirtyVariable("nav_help__accept");
                 nav_help_model_handle.DirtyVariable("nav_help__exit");
+            });
+
+        constructor.BindEventCallback("select_port",
+            [](Rml::DataModelHandle model_handle, Rml::Event& event, const Rml::VariantList& inputs) {
+                cancel_stick_calibration();
+                selected_port = inputs.at(0).Get<int>();
+                recomp::ControllerPortMode mode = recomp::get_port_mode(selected_port);
+                port_mode_index = static_cast<int>(mode);
+                // Sync cur_device with the selected port's mode
+                if (mode == recomp::ControllerPortMode::Controller) {
+                    cur_device = recomp::InputDevice::Controller;
+                } else {
+                    cur_device = recomp::InputDevice::Keyboard;
+                }
+                refresh_controller_list();
+                model_handle.DirtyAllVariables();
+            });
+
+        constructor.BindEventCallback("set_port_mode",
+            [](Rml::DataModelHandle model_handle, Rml::Event& event, const Rml::VariantList& inputs) {
+                cancel_stick_calibration();
+                std::string mode_str = inputs.at(0).Get<std::string>();
+                recomp::ControllerPortMode mode = recomp::ControllerPortMode::Off;
+                if (mode_str == "Keyboard") mode = recomp::ControllerPortMode::Keyboard;
+                else if (mode_str == "Controller") mode = recomp::ControllerPortMode::Controller;
+                recomp::set_port_mode(selected_port, mode);
+                port_mode_index = static_cast<int>(mode);
+                // Sync cur_device with the new mode
+                if (mode == recomp::ControllerPortMode::Controller) {
+                    cur_device = recomp::InputDevice::Controller;
+                } else {
+                    cur_device = recomp::InputDevice::Keyboard;
+                }
+                refresh_controller_list();
+                model_handle.DirtyAllVariables();
+                zelda64::save_config();
             });
 
         constructor.BindEventCallback("set_input_row_focus",
@@ -937,7 +1079,7 @@ public:
             virtual int Size(void* ptr) override { return recomp::bindings_per_input; }
             virtual Rml::DataVariable Child(void* ptr, const Rml::DataAddressEntry& address) override {
                 recomp::GameInput input = static_cast<recomp::GameInput>((uintptr_t)ptr);
-                return Rml::DataVariable{&input_field_definition_instance, &recomp::get_input_binding(input, address.index, cur_device)};
+                return Rml::DataVariable{&input_field_definition_instance, &recomp::get_input_binding(input, address.index, cur_device, selected_port)};
             }
         };
         // Static instance of the InputField array variable definition to have a fixed pointer to return to RmlUi.
@@ -1007,9 +1149,122 @@ public:
             }
         });
 
-        constructor.Bind<int>("active_binding_slot", &scanned_binding_index);
+        constructor.BindEventCallback("calibrate_stick",
+            [](Rml::DataModelHandle model_handle, Rml::Event&, const Rml::VariantList&) {
+                recomp::cancel_scanning_input();
+                float x, y;
+                int32_t controller_id;
+                if (!recomp::get_raw_controller_stick(selected_port, &x, &y, &controller_id, calibration_axes)) {
+                    cancel_stick_calibration("Connect a controller and map its stick to Up, Down, Left, and Right before calibrating.");
+                    return;
+                }
+                calibration_port = selected_port;
+                calibration_controller_id = controller_id;
+                calibration_message.clear();
+                calibration_started_ticks = SDL_GetTicks();
+                stick_calibration_session.begin();
+                stick_calibration_session.sample(x, y, 0.0);
+                dirty_calibration_variables();
+            });
+        constructor.BindEventCallback("save_stick_calibration",
+            [](Rml::DataModelHandle model_handle, Rml::Event&, const Rml::VariantList&) {
+                recompui::update_control_calibration();
+                recomp::StickCalibration calibration;
+                if (!stick_calibration_session.finish(calibration)) return;
+                recomp::set_stick_calibration(selected_port, calibration);
+                recomp::set_stick_sensitivity(selected_port, 100);
+                cancel_stick_calibration("Calibration saved for P" + std::to_string(selected_port + 1)
+                    + ". Snapback deadzone: " + std::to_string(static_cast<int>(std::lround(calibration.deadzone * 100)))
+                    + "%. Sensitivity is now 100%; fine-tune it below if needed.");
+                controls_model_handle.DirtyVariable("stick_sensitivity");
+                zelda64::save_config();
+            });
+        constructor.BindEventCallback("cancel_stick_calibration",
+            [](Rml::DataModelHandle, Rml::Event&, const Rml::VariantList&) {
+                cancel_stick_calibration("Calibration canceled. Previous settings kept.");
+            });
+        constructor.BindEventCallback("reset_stick_calibration",
+            [](Rml::DataModelHandle, Rml::Event&, const Rml::VariantList&) {
+                recomp::set_stick_calibration(selected_port, {});
+                cancel_stick_calibration("Calibration cleared for this player.");
+                zelda64::save_config();
+            });
+        constructor.BindFunc("calibrating_stick", [](Rml::Variant& out) { out = stick_calibration_session.active(); });
+        constructor.BindFunc("calibration_ready", [](Rml::Variant& out) { out = stick_calibration_session.ready(); });
+        constructor.BindFunc("stick_calibrated", [](Rml::Variant& out) { out = recomp::get_stick_calibration(selected_port).enabled; });
+        constructor.BindFunc("calibration_status", [](Rml::Variant& out) {
+            if (stick_calibration_session.stage() == recomp::StickCalibrationSession::Stage::Center) {
+                out = "Step 1: Release the stick and leave it centered for one second.";
+            } else if (stick_calibration_session.stage() == recomp::StickCalibrationSession::Stage::Snapback) {
+                out = stick_calibration_session.flicks_recorded() == 8
+                    ? std::string("Deadzone measured. Leave the stick centered and choose Save Calibration.")
+                    : "Step 3: Push fully " + std::string(stick_calibration_session.flick_direction())
+                        + " briefly, then let go completely. Wait for it to settle; do not guide it back. Releases: "
+                        + std::to_string(stick_calibration_session.flicks_recorded()) + "/8 (twice per direction).";
+            } else if (stick_calibration_session.active()) {
+                int directions = stick_calibration_session.directions_recorded();
+                out = directions == 8
+                    ? "All 8 directions recorded. Release the stick to measure snapback next."
+                    : "Step 2: Push the stick fully to the edge and slowly circle it twice, including diagonals. Directions recorded: " + std::to_string(directions) + "/8.";
+            } else if (!calibration_message.empty()) {
+                out = calibration_message;
+            } else {
+                auto calibration = recomp::get_stick_calibration(selected_port);
+                out = calibration.enabled
+                    ? "Calibrated for this player. Snapback deadzone: "
+                        + std::to_string(static_cast<int>(std::lround(calibration.deadzone * 100)))
+                        + "%. Recalibrate after changing controllers."
+                    : std::string("Calibrate stick range and snapback deadzone. Settings are saved separately for each player.");
+            }
+        });
 
+        constructor.Bind<int>("active_binding_slot", &scanned_binding_index);
+        constructor.Bind<int>("selected_port", &selected_port);
+        constructor.Bind<int>("port_mode_index", &port_mode_index);
+        constructor.Bind<int>("port_controller_index", &port_controller_index);
+        constructor.BindFunc("stick_sensitivity",
+            [](Rml::Variant& out) { out = recomp::get_stick_sensitivity(selected_port); },
+            [](const Rml::Variant& in) {
+                recomp::set_stick_sensitivity(selected_port, in.Get<int>());
+                controls_model_handle.DirtyVariable("stick_sensitivity");
+                zelda64::save_config();
+            });
+        constructor.RegisterArray<std::vector<std::string>>();
+        constructor.Bind("connected_controller_names", &connected_controller_names);
+
+        constructor.BindFunc("port_mode", [](Rml::Variant& out) {
+            recomp::ControllerPortMode mode = recomp::get_port_mode(selected_port);
+            switch (mode) {
+                case recomp::ControllerPortMode::Off: out = "Off"; break;
+                case recomp::ControllerPortMode::Keyboard: out = "Keyboard"; break;
+                case recomp::ControllerPortMode::Controller: out = "Controller"; break;
+                default: out = "Off"; break;
+            }
+        });
+
+        constructor.BindFunc("assigned_controller_name", [](Rml::Variant& out) {
+            out = recomp::get_port_controller_name(selected_port);
+        });
+
+        auto make_port_style = [](int port) -> std::string {
+            bool is_selected = (selected_port == port);
+            bool is_active = recomp::get_port_mode(port) != recomp::ControllerPortMode::Off;
+            if (is_selected) {
+                return "min-width: 48dp; opacity: 1.0;";
+            } else if (is_active) {
+                return "min-width: 48dp; opacity: 0.7;";
+            } else {
+                return "min-width: 48dp; opacity: 0.3;";
+            }
+        };
+        constructor.BindFunc("port_0_style", [make_port_style](Rml::Variant& out) { out = make_port_style(0); });
+        constructor.BindFunc("port_1_style", [make_port_style](Rml::Variant& out) { out = make_port_style(1); });
+        constructor.BindFunc("port_2_style", [make_port_style](Rml::Variant& out) { out = make_port_style(2); });
+        constructor.BindFunc("port_3_style", [make_port_style](Rml::Variant& out) { out = make_port_style(3); });
         controls_model_handle = constructor.GetModelHandle();
+        cur_device = recomp::get_port_mode(selected_port) == recomp::ControllerPortMode::Controller
+            ? recomp::InputDevice::Controller : recomp::InputDevice::Keyboard;
+        refresh_controller_list();
     }
 
     void make_nav_help_bindings(Rml::Context* context) {
