@@ -9,7 +9,7 @@ Status: step 1 in progress, 2026-10-25. No server has been rented or deployed.
   isolated settings/ROM copies, cleanup, loading deadline, cancellation, exit/crash
   recovery, and monotonically increasing match IDs. No native checkpoint crosses
   a process boundary. The private game acknowledgment channel is tested; the
-  lobby UI and real network connection are not built.
+  lobby UI is not built. A separate ENet connection owner is now tested below.
 - `sh tests/run_game_session_tests.sh` passes at `-O0` and `-O2`: loading cancel
   before/after readiness, acknowledged start/finish, crash, failed launch,
   repeated launch, stale event rejection, malformed/duplicate events, loading
@@ -166,9 +166,24 @@ Status: step 1 in progress, 2026-10-25. No server has been rented or deployed.
   Release CTest passes pure room/protocol checks and real loopback UDP tests with
   2/3/4 clients, repeat matches retaining identities, load failure, full-room and
   incompatible joins, stale Ready, and disconnects. Local UDP tests require socket
-  permission. This is control-plane evidence only: fingerprint generation, clock
-  mapping, persistent game-owner connection, lobby UI, input relay/history, and
+  permission. This is control-plane evidence only: fingerprint generation,
+  lobby UI, input relay/history, and
   confirmed-frame termination remain unimplemented. There is no deployment.
+- `LobbyClient` now owns the persistent ENet connection, validates roster identity,
+  tracks bounded clock probes, and rejects late starts while keeping the room
+  connection. Three fresh samples are required before acknowledging loading;
+  offset estimates use the lowest RTT in an eight-sample window. POSIX UDP
+  sockets are close-on-exec so disposable games cannot inherit the connection.
+  Four Release CTest targets pass, including fixture game children completing
+  repeat matches over real connections and explicit late-start cancellation.
+  Protocol/room tests also pass AddressSanitizer/UndefinedBehaviorSanitizer;
+  clock arithmetic passes O0 and Release checks. The optional real-game variant
+  launches **two simultaneous real clients with two humans/two CPUs**: identical
+  initial state across clients and restarts, start/cancel twice, then rejection
+  of a deliberately late third start, with connection identities retained and
+  settings cleaned. This does not prove a completed two-human/CPU match or live
+  inputs. The current bridge is an integration test, not a user-facing lobby.
+  Cross-machine clock mapping and game-state agreement remain untested.
 
 ## Goal and boundary
 

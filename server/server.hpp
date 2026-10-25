@@ -1,26 +1,15 @@
 #pragma once
 #include "../src/online/lobby_room.hpp"
-#include <enet/enet.h>
-#include <chrono>
+#include "../src/online/enet_host.hpp"
 #include <deque>
 #include <memory>
 
 namespace online::lobby {
-inline uint64_t monotonic_ms() {
-    return std::chrono::duration_cast<std::chrono::milliseconds>(
-        std::chrono::steady_clock::now().time_since_epoch()).count();
-}
-using Host = std::unique_ptr<ENetHost, decltype(&enet_host_destroy)>;
-
 // One serialized room. Pending handshakes have their own bounded transport slots.
 class Server {
 public:
     Server(const ENetAddress& address, Fingerprint fingerprint)
-        : host_(enet_host_create(&address, 8, channel_count, 0, 0), enet_host_destroy), room_(fingerprint) {
-        if (!host_) throw std::runtime_error("cannot bind lobby UDP port");
-        host_->maximumPacketSize = packet_limit;
-        host_->maximumWaitingData = 64 * 1024;
-    }
+        : host_(make_host(&address, 8)), room_(fingerprint) {}
     unsigned port() const { return host_->address.port; }
     const Room& room() const { return room_; }
     void service(unsigned wait_ms = 0) {

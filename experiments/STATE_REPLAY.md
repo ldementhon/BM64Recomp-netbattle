@@ -111,7 +111,10 @@ or cross-platform state. The session-owner checks use disposable child processes
 With `BM64_SESSION_REAL_GAME=1`, they cancel loading and complete two real
 first-to-three matches, requiring identical Ready digests and normal Finished
 events. Each child waits at Player Select until its owner acknowledges the state.
-The local owner socket survives; no real server connection is tested yet.
+The local owner socket survives. `BM64_LOBBY_REAL_GAME=1 sh tests/run_lobby_tests.sh`
+also checks two simultaneous real games starting/cancelling through persistent
+ENet connections, retaining identities across restarts and rejecting a late start.
+That two-human/CPU fixture does not prove normal completion or live inputs.
 `--online-test` is an isolated settings diagnostic, not a playable online mode.
 It locks cheats and guest music/effects/voice balance while allowing host Main
 Volume. The match-settings check compares online settings-change attempts and

@@ -21,8 +21,11 @@ revisions change on membership changes and return to Lobby; Ready flag updates
 keep the revision so simultaneous Ready requests for the same members remain
 valid. A failed or disconnected player aborts loading/play for everyone. An
 ordinary completed match keeps connections and clears Ready. Every match gets a
-new ID. The start epoch is server monotonic milliseconds; client clock mapping
-and late-start handling must be implemented before actual gameplay.
+new ID. The start epoch is server monotonic milliseconds. The connection client
+uses the lowest-RTT estimate among eight recent clock samples, requires at least
+three fresh samples before acknowledging loading, and cancels a late start. Frame
+numbers and bounded simulation lead still need the input protocol; clock estimates
+alone cannot synchronize gameplay over asymmetric routes.
 
 Control messages use reliable ordered channel 0, explicit big-endian fields,
 protocol version 1, and a 1,199-byte maximum. Channels 1–4 are reserved for player
@@ -37,6 +40,16 @@ joins, full-room and incompatible-build rejection, stale readiness, repeated
 start/finish, load failure, and loading disconnect. Pure room tests additionally
 cover timeout, digest mismatch, stale matches, P1 permissions, and playing
 disconnect. Test programs keep assertions enabled in Release builds.
+
+`sh tests/run_lobby_tests.sh` runs all checks. On macOS,
+`BM64_LOBBY_REAL_GAME=1 sh tests/run_lobby_tests.sh` additionally launches two
+real games through separate persistent connections. It compares their initial
+states, starts/cancels twice, and deliberately delivers a third start too late.
+Both owners retain identities and clean up settings. This two-human/two-CPU
+fixture proves startup/cancel, not normal match completion or live inputs.
+The ordinary test uses disposable fixture children to verify finish agreement
+and that no UDP sockets are inherited by game processes. Windows game-process
+ownership remains unimplemented; its tests are excluded on that platform.
 
 This is not yet a playable client or input relay. No ROM, checkpoint, or native
 pointer is sent. Match completion currently checks client frame agreement; it
