@@ -2,6 +2,7 @@
 #include <algorithm>
 #include <array>
 #include <cstdint>
+#include <cmath>
 #include <limits>
 #include <optional>
 #include <stdexcept>
@@ -19,6 +20,16 @@ struct Pad {
     bool valid() const { return !(buttons & 0x00c0) && x != -128 && y != -128; }
 };
 using Pads = std::array<Pad, 4>;
+inline Pad quantize_pad(uint16_t buttons, float x, float y) {
+    if (!std::isfinite(x) || !std::isfinite(y)) throw std::invalid_argument("nonfinite controller axis");
+    return {uint16_t(buttons & 0xff3f), int8_t(127 * std::clamp(x, -1.0f, 1.0f)), int8_t(127 * std::clamp(y, -1.0f, 1.0f))};
+}
+inline float pad_axis(int8_t axis) {
+    // The runtime truncates 127*x. Stay inside the integer's bin after float
+    // rounding instead of occasionally turning (axis/127)*127 into axis-1.
+    if (!axis) return 0;
+    return std::clamp((float(axis) + (axis > 0 ? 0.25f : -0.25f)) / 127.0f, -1.0f, 1.0f);
+}
 struct InputBatch {
     uint64_t match = 0, first = input_delay;
     uint8_t slot = 0, count = 0;
@@ -124,6 +135,7 @@ public:
     uint64_t confirmed() const { return confirmed_; }
     uint64_t received(unsigned slot) const { return streams_.at(slot).contiguous(); }
     bool can_advance() const { return !correction_ && head_ < confirmed_ + prediction_limit && head_ < last_input_frame - input_delay; }
+    bool needs_sample() const { return !streams_[local_].get(head_ + input_delay); }
     bool sample(Pad pad) {
         if (!pad.valid()) throw std::invalid_argument("invalid sampled input");
         if (head_ >= last_input_frame - input_delay) throw std::runtime_error("input frame limit reached");

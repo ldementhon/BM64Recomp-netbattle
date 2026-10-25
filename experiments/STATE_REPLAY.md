@@ -2,7 +2,8 @@
 
 This branch contains four-player controller support and an opt-in, same-process
 state replay experiment developed on Apple Silicon macOS. Normal play uses the
-threaded runtime. The experiment does not yet provide network multiplayer.
+threaded runtime. Four scripted processes now complete a rollback battle through
+the local relay; a user-facing online mode is not yet available.
 
 ## Dependency changes and building
 
@@ -115,9 +116,13 @@ The local owner socket survives. `BM64_LOBBY_REAL_GAME=1 sh tests/run_lobby_test
 also checks two simultaneous real games starting/cancelling through persistent
 ENet connections, retaining identities across restarts and rejecting a late start.
 That two-human/CPU fixture does not prove normal completion or live inputs.
-The private owner/game channel carries bounded input records in both directions;
-fixture children exercise IPC → ENet relay → IPC with their assigned slots. The
-actual game still needs to connect those inputs to its checkpoint/controller path.
+The private owner/game channel carries bounded input records in both directions.
+`python3 tests/run_network_game.py all` exercises four real ROMs through
+IPC → ENet relay → IPC, bounded native rollback, and verified state comparisons.
+`python3 tests/run_network_game.py match` completes a three-round match, including
+confirmed completion discovered during replay. These explicit tests use scripted
+inputs and muted audio on one Mac; the native lobby UI and live-player validation
+remain unfinished.
 `--online-test` is an isolated settings diagnostic, not a playable online mode.
 It locks cheats and guest music/effects/voice balance while allowing host Main
 Volume. The match-settings check compares online settings-change attempts and

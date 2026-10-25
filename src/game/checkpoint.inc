@@ -31,6 +31,7 @@
 #include <charconv>
 #include "zelda_cheats.h"
 #include "zelda_sound.h"
+#include "recomp_input.h"
 
 extern uint8_t dmem[0x1000];
 extern thread_local PTR(OSThread) thread_self;
@@ -321,7 +322,7 @@ static online::BattleState battle_state() {
 static void on_boundary() {
     // Boundary N precedes input N; its resulting state is checked at boundary N+1.
     ++frame;
-    owned_match_boundary();
+    if (owned_match_boundary()) return;
     if (!replay_pass && std::getenv("BM64_TRACE_MENU")) {
         static bool last_ready = false;
         if (last_ready != player_select_ready) {

@@ -66,8 +66,17 @@ and conflicting replacements. See [input frame rules](INPUT_PROTOCOL.md).
 
 This is not yet a playable game client. No ROM, checkpoint, or native pointer is
 sent. The server checks finish-frame agreement and requires that frame to be
-confirmed by every human receiver. The game adapter must still detect completion
-after correcting its actual simulation to that confirmed boundary.
+confirmed by every human receiver. The game adapter now detects completion at
+the first confirmed winning boundary, including one discovered during replay.
+
+After building the native game and this server's test targets, run
+`python3 tests/run_network_game.py all` to compare four real ROM clients under
+normal delivery, independent delay/loss, and a changed-input negative control.
+`python3 tests/run_network_game.py match` completes a full first-to-three match
+with delayed delivery. These explicit macOS tests require a local ROM and open
+four game processes. They hash full RAM at verification boundaries, use recorded
+controller inputs through the actual relay/checkpoint path, and keep audio muted;
+they do not establish live-player feel or timing performance.
 No deployment has been performed. For remote private tests, bind the chosen
 interface and restrict its UDP port to testers' public IPs as required by the
 implementation plan. ENet provides neither authentication nor encryption.

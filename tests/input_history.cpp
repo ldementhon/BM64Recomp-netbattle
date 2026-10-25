@@ -214,6 +214,9 @@ static void independent_delivery(unsigned humans) {
 }
 
 int main() {
+    for (int axis = -127; axis <= 127; ++axis) assert(int8_t(127 * pad_axis(int8_t(axis))) == axis);
+    assert((quantize_pad(0xffff, 2, -2) == Pad{0xff3f, 127, -127}));
+    fails([] { quantize_pad(0, std::numeric_limits<float>::quiet_NaN(), 0); });
     hostile_inputs();
     arrival_during_replay();
     stalled_retransmission();

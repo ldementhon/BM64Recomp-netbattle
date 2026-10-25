@@ -9,6 +9,7 @@
 #include <stdexcept>
 #include <vector>
 #include "../src/online/match_settings.hpp"
+#include "../src/online/input_history.hpp"
 
 namespace checkpoint {
 bool enabled = true;
@@ -118,7 +119,21 @@ int main(int argc, char** argv) {
                 check(!input(port, &b, &x, &y), "invalid port responded");
             }
         }
-        std::printf("PASS: %u replay input timing checks (four ports, repeated reads, delays, rewinds, boot)\n", checks);
+        fast_boot = false; network_input_active = true; frame = 7777; boot_frame = 999;
+        online::match_settings_locked = true; online::human_players = 4;
+        for (int port = 0; port < 4; ++port) network_pads[port] = {uint16_t(0x8000 | (1 << port)), int8_t(port * 31 - 60), int8_t(50 - port * 29)};
+        for (int scene : {86, 13, 17}) for (int pass : {0, 1}) for (int repeat = 0; repeat < 3; ++repeat) {
+            overlay = scene; replay_pass = unsigned(pass);
+            for (int port = 0; port < 4; ++port) {
+                uint16_t buttons; float x, y;
+                check(input(port, &buttons, &x, &y), "latched network port disconnected");
+                auto expected = scene == 86 ? network_pads[port] : online::Pad{uint16_t(port ? 0 : 0x8000), 0, 0};
+                check(buttons == expected.buttons && int8_t(127 * x) == expected.x && int8_t(127 * y) == expected.y,
+                      "network read mixed slots, changed quantization, or bypassed menu policy");
+            }
+            check(frame == 7777 && boot_frame == 999, "network controller read advanced a clock");
+        }
+        std::printf("PASS: %u replay input timing checks (four ports, repeated reads, delays, rewinds, boot, network latches)\n", checks);
     } catch (const std::exception& error) {
         std::fprintf(stderr, "FAIL: %s\n", error.what());
         return 1;

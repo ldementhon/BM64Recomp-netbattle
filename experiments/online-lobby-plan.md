@@ -1,6 +1,8 @@
 # Minimal dedicated-server lobby and player assignment
 
-Status: step 1 in progress, 2026-10-25. No server has been rented or deployed.
+Status: local four-process scripted rollback battle passes, 2026-10-25. Step 1's
+cross-machine gate and the user-facing parts of steps 2–3 remain open. No server
+has been rented or deployed.
 
 ## Implementation record
 
@@ -28,10 +30,10 @@ Status: step 1 in progress, 2026-10-25. No server has been rented or deployed.
   400-frame replay, and the rolling history. Full-RAM baselines match across the
   existing independent runs. macOS game probes require audio/graphics access;
   the restricted invocation failed opening CoreAudio before simulation.
-- Step 1 remaining: independent native continuation/runtime-state coverage;
-  remaining configuration/UI
-  audit; two-machine comparison. The timed update-1600 marker
-  is not accepted as proof of character selection. The current process owner is
+- Step 1 remaining: configuration/UI audit and two-machine comparison. Native
+  continuation/runtime rollback is now exercised through the local full-match
+  network test below; its comparable digest still does not certify portable native
+  state across machines. The current process owner is
   exercised through a network integration test, not yet wired into the user-facing application.
 - Comparable diagnostic: `python3 tests/run_independent_clients.py` passes on
   build `a0ee1058f277c7d23dc921ee4e8a4272b0947462fa5845efc52129bc75ed4eae`.
@@ -67,7 +69,7 @@ Status: step 1 in progress, 2026-10-25. No server has been rented or deployed.
   menu process for investigation, not as a certified scene predicate.
   Source inspection shows overlay 3/3 helpers at `0x800432A0` and `0x800432F0`
   OR all four controllers together. The accepted P1-only shared-menu behavior
-  therefore still needs explicit input filtering; controller routing alone is insufficient.
+  therefore required the explicit input filtering implemented below; routing alone is insufficient.
 - `--online-test` now requires a fresh isolated folder containing only the ROM,
   so existing saves, settings, and gameplay mods cannot enter startup. It forces
   all seven cheats off, refuses their setters, hides the cheat form, and keeps
@@ -139,7 +141,7 @@ Status: step 1 in progress, 2026-10-25. No server has been rented or deployed.
   IPC is private to one process pair, separate from a future network protocol,
   and never sends native checkpoints. The owned path currently accepts scripted
   diagnostic inputs and refuses diagnostic restores; live rollback completion
-  still needs the network's confirmed frontier. No online UI is wired yet.
+  now uses the confirmed frontier in network mode, as tested below. No online UI is wired yet.
   Real lifecycle proof used unchanged build
   `ef1b91d0ac4c8f2bb64b7289ababf94ad806ae1e5d850fd291f298a0ee96d3da`.
   This build also passes the complete `sh tests/run_battle_replay.sh` suite:
@@ -209,8 +211,8 @@ Status: step 1 in progress, 2026-10-25. No server has been rented or deployed.
   by OS packet shaping. Raw connection tests reject slot impersonation and
   conflicting replacements. Real-game startup/cancel integration still passes on
   unchanged executable `379c51898ff87054a26f05275bab2b0bad22fe234aaf795518aa851546ce1e85`.
-  The actual ROM still uses recorded inputs: game input remapping, checkpoint
-  integration, presentation/audio handling, and the lobby UI remain required.
+  At this stage the ROM still used recorded inputs directly; the next record
+  connects the private channel, followed by the actual checkpoint adapter.
 - Private owner/game IPC is now version 2 with bounded input-upload/relay records.
   The owner validates the assigned local slot, supplies it through the isolated
   launch environment, drains a bounded incoming queue, and rejects stale-match
@@ -222,8 +224,45 @@ Status: step 1 in progress, 2026-10-25. No server has been rented or deployed.
   channel tests pass. Rebuilt game SHA-256
   `91b58d8b6fe7dedb29fd5f11886462ca88694fcc36a97c02b9959c4d06b4a24a`
   passes two normal real first-to-three matches and the real two-client startup/
-  cancel checks; all six lobby CTest targets pass. The real game callback has not
-  yet consumed network inputs or driven its checkpoint ring from this history.
+  cancel checks; all six lobby CTest targets pass. This prepared the real game
+  callback and checkpoint integration recorded next.
+- `BM64_NETWORK_INPUT=1` now connects the actual game scheduler to the private
+  input channel and `RollbackInputs`. Each physical sample is quantized once and
+  scheduled two updates ahead in its assigned online slot; diagnostic recordings
+  use that same path. Repeated controller reads use latched pads. The owner/game
+  connection keeps polling and retransmitting while pacing, replaying, or stalled.
+  Corrections restore the earliest required native checkpoint, refresh the ring,
+  and suppress intermediate presentation. Network history never rewinds with the
+  game. Input callback tests now pass 7,047 checks at both optimization levels,
+  including exact N64 axis round trips, slot isolation, and shared-menu policy.
+- `python3 tests/run_network_game.py all` passes four actual game processes in
+  baseline, independent-delay/loss, and changed-input runs. Full 512-MiB RAM and
+  canonical-register digests agree at every verified boundary from Player Select
+  through battle and round results. The baseline has no corrections; delayed
+  clients perform 17/28/30/29 corrections and match it. Reversing P1's movement
+  first changes the verified state at relative frame 600 while all clients still
+  agree. Loss is injected at the owner delivery boundary, including a half-second
+  server-to-P3 outage, not by OS packet shaping. Verification pauses at fixed
+  boundaries and hashes full RAM, so this run is not a performance measurement.
+- `python3 tests/run_network_game.py match` now completes a real four-human,
+  first-to-three battle over the same delayed relay: 24/40/38/40 corrections,
+  matching states through all rounds, and normal completion at guest frame 5403
+  (relative boundary 4029). All connections return to Lobby and private settings
+  are removed. The initial run exposed a real bug: discovering the winner during
+  replay reported a later predicted head. Completion now stops at the **first
+  confirmed winning boundary**, including inside replay; the regression requires
+  that path. These checks use game SHA-256
+  `6b5dc17b6d7dee536c0bcfe875e4efcb4c692fb833f234bf0236f15890a29414`.
+  The same build also passes the complete `run_battle_replay.sh` suite (full RAM
+  and register restores, both negative controls, independent-process overlap,
+  boot/entry transitions, and rolling history) and two normal real matches in
+  the earlier scripted process-owner test. Normal offline input timing remains
+  covered by the existing checks alongside the new network latch assertions.
+  This remains scripted input on one Mac, with audio/rumble muted. Live controller
+  configuration, the lobby UI, compatibility fingerprint generation, visual-history
+  inspection, real audio/rumble, cross-machine validation, and the remote human
+  playtest remain required. The physical input branch exists but is not yet tested
+  with live players.
 
 ## Goal and boundary
 

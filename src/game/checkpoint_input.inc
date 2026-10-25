@@ -34,9 +34,9 @@ static uint64_t input_frame(int controller) {
     return sample;
 }
 struct Input { unsigned begin, end; uint16_t buttons; float x,y; int controller = 0; };
-bool input(int controller, uint16_t* buttons, float* x, float* y) {
-    if (fast_boot) return boot_input(controller, buttons, x, y);
-    if (controller < 0 || controller >= 4) return false;
+static bool network_input_active = false;
+static online::Pads network_pads{};
+static void recorded_input(int controller, uint64_t sampled_frame, uint16_t* buttons, float* x, float* y) {
     static std::vector<Input> inputs = [] {
         std::vector<Input> result;
         if (const char* path = std::getenv("BM64_INPUT_SCRIPT")) {
@@ -56,8 +56,15 @@ bool input(int controller, uint16_t* buttons, float* x, float* y) {
         return result;
     }();
     *buttons=0; *x=*y=0;
-    auto sampled_frame=input_frame(controller);
     for (auto i:inputs) if (controller == i.controller && sampled_frame>=i.begin && sampled_frame<i.end) { *buttons=i.buttons; *x=i.x; *y=i.y; }
+}
+bool input(int controller, uint16_t* buttons, float* x, float* y) {
+    if (fast_boot) return boot_input(controller, buttons, x, y);
+    if (controller < 0 || controller >= 4) return false;
+    if (network_input_active) {
+        auto pad = network_pads[controller];
+        *buttons = pad.buttons; *x = online::pad_axis(pad.x); *y = online::pad_axis(pad.y);
+    } else recorded_input(controller, input_frame(controller), buttons, x, y);
     if (controller == 0 && replay_pass && std::getenv("BM64_NEGATIVE_INPUT")) { *buttons ^= 0x8000; *x = std::clamp(-*x + 0.1f, -1.0f, 1.0f); }
     if (online::match_settings_locked) online::filter_match_input(controller, overlay, *buttons, *x, *y);
     return true;

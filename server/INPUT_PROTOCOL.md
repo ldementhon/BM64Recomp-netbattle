@@ -40,5 +40,17 @@ The server and connection client now send these packets on actual ENet channels.
 The server aborts after five seconds without confirmed progress, keeps connections
 in the lobby, and rejects completion beyond C. Client owners must service the
 connection and drain its bounded input-event queue during loading/replay/stalls.
-The game's checkpoint adapter is not yet wired to this history. `input_history`
-and `input_network` exercise deterministic simulation oracles, not ROM rollback.
+The game's checkpoint adapter consumes this history when its owner enables
+`BM64_NETWORK_INPUT=1`. It samples one chosen physical port into the assigned
+online slot, latches pads for repeated reads, captures the 16-slot native ring,
+and polls/retransmits during pacing, replay, and stalls. Diagnostic recordings
+go through the same scheduled-input path. The network counter remains outside
+checkpoints. A terminal state discovered during replay must stop at its first
+confirmed boundary, not continue to the old predicted head before reporting it.
+
+`input_history` and `input_network` use simulation oracles. The separate
+`run_network_game.py` tests run four real ROM processes, compare verified full
+RAM/register states, and finish a three-round match with independent delays and
+loss. They use scripted input and muted audio on one Mac, not a remote human
+playtest. The application still needs its lobby UI and live presentation/audio
+integration.
