@@ -44,6 +44,8 @@ Run from the repository root after applying the dependency patches:
 python3 tests/run_controller_tests.py
 sh tests/run_replay_input_tests.sh
 sh tests/run_coroutine_replay.sh
+sh tests/run_game_session_tests.sh
+sh tests/run_comparable_context_tests.sh
 mkdir -p build/experiments
 for test in checkpoint_memory changed_writeback presentation_recovery; do
     clang++ -std=c++20 -O2 -pthread "tests/$test.cpp" -o "build/experiments/$test"
@@ -75,6 +77,9 @@ python3 tests/run_single_battle_probe.py
 sh tests/run_battle_replay.sh
 sh tests/run_catchup.sh verify
 sh tests/run_simplified_validation.sh verify
+BM64_SESSION_REAL_GAME=1 sh tests/run_game_session_tests.sh
+python3 tests/run_independent_clients.py
+python3 tests/run_match_settings.py
 ```
 
 The checked-in text fixtures are scripted inputs, not generated results. Keep
@@ -94,3 +99,12 @@ unmet target.
 Some scripted battle timings were developed before the controller changes.
 Rerun the real-game checks on the combined build before relying on their results;
 archived measurements from earlier executables do not validate this combination.
+
+The online lobby work is tracked in `online-lobby-plan.md`. Its separate
+`COMPARABLE_V1` diagnostic hashes all RAM and canonical guest registers across
+fresh processes; it preserves the existing same-process checks and rejects unknown
+register pointers. Matching it does not certify native continuation/runtime queue
+or cross-platform state. The session-owner checks use disposable child processes;
+they do not yet detect normal game completion or retain a real server connection.
+`--online-test` is an isolated settings diagnostic, not a playable online mode.
+The old update-1600 boot handoff reaches Stage Select, not Player Select.

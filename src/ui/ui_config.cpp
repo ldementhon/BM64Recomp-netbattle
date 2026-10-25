@@ -13,6 +13,7 @@
 
 #include "core/ui_context.h"
 #include <algorithm>
+#include "../online/match_settings.hpp"
 
 ultramodern::renderer::GraphicsConfig new_options;
 Rml::DataModelHandle nav_help_model_handle;
@@ -556,10 +557,12 @@ void zelda64::reset_cheats_settings() {
 }
 
 zelda64::GenericOnOffOption zelda64::get_moonjump() {
+    if (online::match_settings_locked) return zelda64::GenericOnOffOption::Off;
     return cheats_context.moonjump;
 }
 
 void zelda64::set_moonjump(zelda64::GenericOnOffOption mode) {
+    if (online::match_settings_locked) return;
     cheats_context.moonjump = mode;
     if (cheats_model_handle) {
         cheats_model_handle.DirtyVariable("moonjump");
@@ -567,10 +570,12 @@ void zelda64::set_moonjump(zelda64::GenericOnOffOption mode) {
 }
 
 zelda64::GenericOnOffOption zelda64::get_always_max_bomb() {
+    if (online::match_settings_locked) return zelda64::GenericOnOffOption::Off;
     return cheats_context.always_max_bomb;
 }
 
 void zelda64::set_always_max_bomb(zelda64::GenericOnOffOption mode) {
+    if (online::match_settings_locked) return;
     cheats_context.always_max_bomb = mode;
     if (cheats_model_handle) {
         cheats_model_handle.DirtyVariable("always_max_bomb");
@@ -578,10 +583,12 @@ void zelda64::set_always_max_bomb(zelda64::GenericOnOffOption mode) {
 }
 
 zelda64::GenericOnOffOption zelda64::get_always_max_fire() {
+    if (online::match_settings_locked) return zelda64::GenericOnOffOption::Off;
     return cheats_context.always_max_fire;
 }
 
 void zelda64::set_always_max_fire(zelda64::GenericOnOffOption mode) {
+    if (online::match_settings_locked) return;
     cheats_context.always_max_fire = mode;
     if (cheats_model_handle) {
         cheats_model_handle.DirtyVariable("always_max_fire");
@@ -589,10 +596,12 @@ void zelda64::set_always_max_fire(zelda64::GenericOnOffOption mode) {
 }
 
 zelda64::GenericOnOffOption zelda64::get_always_have_remote_bombs() {
+    if (online::match_settings_locked) return zelda64::GenericOnOffOption::Off;
     return cheats_context.always_have_remote_bombs;
 }
 
 void zelda64::set_always_have_remote_bombs(zelda64::GenericOnOffOption mode) {
+    if (online::match_settings_locked) return;
     cheats_context.always_have_remote_bombs = mode;
     if (cheats_model_handle) {
         cheats_model_handle.DirtyVariable("always_have_remote_bombs");
@@ -600,10 +609,12 @@ void zelda64::set_always_have_remote_bombs(zelda64::GenericOnOffOption mode) {
 }
 
 zelda64::GenericOnOffOption zelda64::get_always_have_red_bombs() {
+    if (online::match_settings_locked) return zelda64::GenericOnOffOption::Off;
     return cheats_context.always_have_red_bombs;
 }
 
 void zelda64::set_always_have_red_bombs(zelda64::GenericOnOffOption mode) {
+    if (online::match_settings_locked) return;
     cheats_context.always_have_red_bombs = mode;
     if (cheats_model_handle) {
         cheats_model_handle.DirtyVariable("always_have_red_bombs");
@@ -611,10 +622,12 @@ void zelda64::set_always_have_red_bombs(zelda64::GenericOnOffOption mode) {
 }
 
 zelda64::GenericOnOffOption zelda64::get_infinite_credits() {
+    if (online::match_settings_locked) return zelda64::GenericOnOffOption::Off;
     return cheats_context.infinite_credits;
 }
 
 void zelda64::set_infinite_credits(zelda64::GenericOnOffOption mode) {
+    if (online::match_settings_locked) return;
     cheats_context.infinite_credits = mode;
     if (cheats_model_handle) {
         cheats_model_handle.DirtyVariable("infinite_credits");
@@ -622,10 +635,12 @@ void zelda64::set_infinite_credits(zelda64::GenericOnOffOption mode) {
 }
 
 zelda64::GenericOnOffOption zelda64::get_infinite_lives() {
+    if (online::match_settings_locked) return zelda64::GenericOnOffOption::Off;
     return cheats_context.infinite_lives;
 }
 
 void zelda64::set_infinite_lives(zelda64::GenericOnOffOption mode) {
+    if (online::match_settings_locked) return;
     cheats_context.infinite_lives = mode;
     if (cheats_model_handle) {
         cheats_model_handle.DirtyVariable("infinite_lives");
@@ -1383,6 +1398,7 @@ public:
         bind_config_list_events(constructor);
 
         cheats_model_handle = constructor.GetModelHandle();
+        constructor.Bind("match_settings_locked", &online::match_settings_locked);
 
         bind_option(constructor, "moonjump", &cheats_context.moonjump);
         bind_option(constructor, "always_max_bomb", &cheats_context.always_max_bomb);

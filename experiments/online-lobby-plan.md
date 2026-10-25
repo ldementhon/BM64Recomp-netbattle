@@ -24,8 +24,8 @@ Status: step 1 in progress, 2026-10-25. No server has been rented or deployed.
   existing independent runs. macOS game probes require audio/graphics access;
   the restricted invocation failed opening CoreAudio before simulation.
 - Step 1 remaining: define and verify the true character-selection boundary;
-  comparable register/native-state diagnostic with divergence controls; immutable
-  gameplay settings/mod exclusion; actual normal round/match completion; repeated
+  independent native continuation/runtime-state coverage; audit the remaining
+  simulation-facing configuration; actual normal round/match completion; repeated
   game-aware lifecycle and two-machine comparison. The timed update-1600 marker
   is not accepted as proof of character selection. The current process owner is
   exercised by tests, not yet wired into the application or a network lobby.
@@ -46,8 +46,33 @@ Status: step 1 in progress, 2026-10-25. No server has been rented or deployed.
   the scene. Disposable captures are under `build/experiments/`; a scene predicate
   and character-selection input check are still required before synchronized start.
 - Loading timeout and owner-destruction cleanup now have focused regressions at
-  both optimization levels. An available second Apple Silicon test machine has
-  been requested; no two-machine result is claimed.
+  both optimization levels. The only available second machine is Windows (user
+  confirmed); matching Mac/Windows determinism and a Windows process backend are
+  unproven. This does not satisfy the plan's same-platform two-machine gate.
+- `BM64_BOOT_HANDOFF_FRAME=1400 BM64_CAPTURE=1 python3 tests/run_single_battle_probe.py`
+  visibly reaches **Player Select**, before the scripted A press at 1500. The
+  default update-1600 handoff is preserved for existing fixtures; its log now
+  correctly says the scene is unverified. `BM64_TRACE_MENU=1` records the active
+  menu process for investigation, not as a certified scene predicate.
+  Source inspection shows overlay 3/3 helpers at `0x800432A0` and `0x800432F0`
+  OR all four controllers together. Per-player menu selection therefore requires
+  explicit integration; controller routing alone cannot satisfy that requirement.
+- `--online-test` now requires a fresh isolated folder containing only the ROM,
+  so existing saves, settings, and gameplay mods cannot enter startup. It forces
+  all seven cheats off, refuses their setters, hides the cheat form, and keeps
+  game-facing aspect-ratio queries at the original ratio. Ordinary offline mode
+  does not enable these overrides. `python3 tests/run_match_settings.py` passes:
+  attempts to enable all cheats at boundary 1940 leave the subsequent full-RAM
+  and canonical-register hashes unchanged; personal settings remain byte-identical.
+  Real-process lifecycle tests pass with this mode enabled. Remaining configuration
+  paths and the visual disabled-cheat UI still need review; this is not a complete
+  immutable-settings or playable-client claim.
+  Updated build `aeb55dcf653455ebed1800eff36e3b0136dd4e033eacffa595088601f62dfa64`
+  also passes the complete `run_battle_replay.sh` suite and both optimization levels
+  of the input timing and comparable-context unit checks.
+- The recorded battle eliminates three players by 2220 and enters overlay 17
+  by 2340, remaining there through a no-input run to 6000. This narrows the result
+  transition investigation, but is not yet a confirmed round/match-end detector.
 - Step 2 onward remains pending these correctness gates. Preserve concurrent
   renderer/runtime experiments; no dependency edits are included in this work.
 

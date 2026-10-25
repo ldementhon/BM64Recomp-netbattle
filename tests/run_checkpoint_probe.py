@@ -31,6 +31,7 @@ with tempfile.TemporaryDirectory(prefix='checkpoint-', dir=scratch) as settings:
     with log_path.open('w') as log:
         arguments = [os.environ.get('BM64_EXECUTABLE', str(root/'build/BM64Recompiled.app/Contents/MacOS/BM64Recompiled')), '--checkpoint-test']
         if os.environ.get('BM64_SINGLE_BATTLE') == '1': arguments.append('--single-battle')
+        if os.environ.get('BM64_ONLINE_TEST') == '1': arguments.append('--online-test')
         image_path = Path(arguments[0]).resolve()
         image_sha = hashlib.sha256(image_path.read_bytes()).hexdigest()
         expected_sha = environment.get('BM64_EXPECTED_EXECUTABLE_SHA')

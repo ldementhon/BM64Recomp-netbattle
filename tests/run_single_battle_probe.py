@@ -28,7 +28,7 @@ with tempfile.TemporaryDirectory(prefix='single-battle-', dir=scratch) as settin
             for line in process.stdout:
                 log.write(line)
                 log.flush()
-                if 'SINGLE_BATTLE: character-select boot complete' in line:
+                if 'SINGLE_BATTLE: scripted boot handoff' in line:
                     reached = True
                     log.write(f'RESULT: boot_seconds={time.monotonic()-start:.3f}\n')
                     time.sleep(2) # Verify the shortcut stops injecting input.

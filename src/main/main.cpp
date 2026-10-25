@@ -43,6 +43,7 @@
 #include "librecomp/game.hpp"
 #include "librecomp/mods.hpp"
 #include "librecomp/helpers.hpp"
+#include "../online/match_settings.hpp"
 
 #include "../../patches/graphics.h"
 #include "../../patches/input.h"
@@ -585,10 +586,31 @@ int main(int argc, char** argv) {
         if (arg == "--checkpoint-test") checkpoint::enabled = true;
         else if (arg == "--single-battle") checkpoint::fast_boot = true;
         else if (arg == "--smoke-test") startup_probe = true;
+        else if (arg == "--online-test") online::match_settings_locked = true;
         else { fprintf(stderr, "Unknown option: %s\n", argv[i]); return EXIT_FAILURE; }
     }
     const bool smoke_test = checkpoint::enabled || startup_probe;
     const bool auto_start = smoke_test || checkpoint::fast_boot.load();
+    if (online::match_settings_locked && (!checkpoint::enabled || !checkpoint::fast_boot ||
+                                        !std::getenv("APP_FOLDER_PATH"))) {
+        fprintf(stderr, "--online-test requires --checkpoint-test, --single-battle and isolated APP_FOLDER_PATH\n");
+        return EXIT_FAILURE;
+    }
+    if (online::match_settings_locked) {
+        // A match starts with only the verified ROM, never personal saves/mods/config.
+        std::error_code error;
+        auto directory = std::filesystem::directory_iterator(std::getenv("APP_FOLDER_PATH"), error);
+        if (error) {
+            fprintf(stderr, "--online-test cannot open isolated settings: %s\n", error.message().c_str());
+            return EXIT_FAILURE;
+        }
+        for (const auto& entry : directory) {
+            if (entry.path().filename() != "bm64_us.z64" || !entry.is_regular_file()) {
+                fprintf(stderr, "--online-test requires fresh settings containing only bm64_us.z64\n");
+                return EXIT_FAILURE;
+            }
+        }
+    }
     if (smoke_test && std::getenv("APP_FOLDER_PATH") == nullptr) {
         fprintf(stderr, "--smoke-test requires APP_FOLDER_PATH pointing to isolated test settings/saves\n");
         return EXIT_FAILURE;

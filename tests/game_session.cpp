@@ -51,7 +51,7 @@ int main(int argc, char** argv) {
     online::GameSession session;
     auto start = [&](uint64_t match, const char* child_mode) {
         session.start(match, executable, rom, scratch / ("match-" + std::to_string(match) + ".log"),
-            real_game ? std::vector<std::string>{"--checkpoint-test", "--single-battle"} :
+            real_game ? std::vector<std::string>{"--checkpoint-test", "--single-battle", "--online-test"} :
                         std::vector<std::string>{child_mode},
             real_game ? std::map<std::string, std::string>{{"BM64_STOP_FRAME", "1650"}} :
                         std::map<std::string, std::string>{});

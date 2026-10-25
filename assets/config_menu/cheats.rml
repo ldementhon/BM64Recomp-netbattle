@@ -2,7 +2,8 @@
     <head>
     </head>
     <body>
-        <form class="config__form" id="conf-general__form">
+        <p data-if="match_settings_locked">Cheats are disabled for this online match.</p>
+        <form class="config__form" id="conf-general__form" data-if="!match_settings_locked">
             <div class="config__hz-wrapper" id="conf-general__hz-wrapper">
                 <!-- Options -->
                 <div class="config__wrapper" data-event-mouseout="set_cur_config_index(-1)" id="conf-general__wrapper">

@@ -25,6 +25,8 @@
 #include "checkpoint_stack.hpp"
 #include "checkpoint_trace.hpp"
 #include "comparable_context.hpp"
+#include "../online/match_settings.hpp"
+#include "zelda_cheats.h"
 
 extern uint8_t dmem[0x1000];
 extern thread_local PTR(OSThread) thread_self;
@@ -298,6 +300,26 @@ static bool benchmark(unsigned at) {
 static void on_boundary() {
     // Boundary N precedes input N; its resulting state is checked at boundary N+1.
     ++frame;
+    if (!replay_pass && std::getenv("BM64_TRACE_MENU") && overlay == 13 && frame % 20 == 0) {
+        for (const auto& slot : g_slots) if (slot.state == ProcessState::Suspended && slot.entry_func == 0x8004386c) {
+            fprintf(stderr, "MENU: frame=%llu process=%u entry=%08x s3=%lld s4=%lld sp=%08x\n",
+                    frame, slot.process_id, slot.entry_func, slot.ctx.r19, slot.ctx.r20, uint32_t(slot.ctx.r29));
+        }
+    }
+    if (!replay_pass && frame == 1940 && std::getenv("BM64_TRY_CHEATS")) {
+        require(online::match_settings_locked, "cheat-change probe requires --online-test");
+        const auto setters = std::array{zelda64::set_moonjump, zelda64::set_always_max_bomb,
+            zelda64::set_always_max_fire, zelda64::set_always_have_remote_bombs,
+            zelda64::set_always_have_red_bombs, zelda64::set_infinite_credits, zelda64::set_infinite_lives};
+        const auto getters = std::array{zelda64::get_moonjump, zelda64::get_always_max_bomb,
+            zelda64::get_always_max_fire, zelda64::get_always_have_remote_bombs,
+            zelda64::get_always_have_red_bombs, zelda64::get_infinite_credits, zelda64::get_infinite_lives};
+        for (size_t i = 0; i < setters.size(); ++i) {
+            setters[i](zelda64::GenericOnOffOption::On);
+            require(getters[i]() == zelda64::GenericOnOffOption::Off, "match cheat override changed");
+        }
+        fprintf(stderr, "PASS: all seven attempted mid-match cheat changes refused\n");
+    }
     if (!replay_pass && frame % 60 == 0) { fprintf(stderr,"CHECKPOINT: frame=%llu vi=%llu threads=%zu\n",frame,ticks,fiber_count); report_process_probe(); }
     if (frame == setting("BM64_HOLD_FRAME", 0)) { fprintf(stderr,"CHECKPOINT: holding frame %llu for inspection\n", frame); std::this_thread::sleep_for(std::chrono::seconds(3)); }
     const unsigned at = setting("BM64_CHECKPOINT_FRAME", 0);
@@ -392,9 +414,10 @@ void switch_thread(int32_t thread) {
 }
 }
 extern "C" void recomp_checkpoint_frame(uint8_t*, recomp_context* ctx) {
-    if (checkpoint::fast_boot && ++checkpoint::boot_frame >= 1600) {
+    static const unsigned handoff = checkpoint::setting("BM64_BOOT_HANDOFF_FRAME", 1600);
+    if (checkpoint::fast_boot && ++checkpoint::boot_frame >= handoff) {
         checkpoint::fast_boot = false;
-        fprintf(stderr, "SINGLE_BATTLE: character-select boot complete at update 1600\n");
+        fprintf(stderr, "SINGLE_BATTLE: scripted boot handoff at update %u (scene not verified)\n", handoff);
     }
     checkpoint::players = int32_t(ctx->r4);
     checkpoint::player_stride = int32_t(ctx->r5);

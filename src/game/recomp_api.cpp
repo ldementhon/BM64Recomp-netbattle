@@ -14,6 +14,7 @@
 // #include "../patches/sound.h"
 #include "ultramodern/ultramodern.hpp"
 #include "ultramodern/config.hpp"
+#include "../online/match_settings.hpp"
 
 // Stubs
 
@@ -91,6 +92,7 @@ extern "C" void recomp_get_window_resolution(uint8_t* rdram, recomp_context* ctx
 }
 
 extern "C" void recomp_get_target_aspect_ratio(uint8_t* rdram, recomp_context* ctx) {
+    if (online::match_settings_locked) { _return(ctx, _arg<0, float>(rdram, ctx)); return; }
     ultramodern::renderer::GraphicsConfig graphics_config = ultramodern::renderer::get_graphics_config();
     float original = _arg<0, float>(rdram, ctx);
     int width, height;
@@ -108,6 +110,7 @@ extern "C" void recomp_get_target_aspect_ratio(uint8_t* rdram, recomp_context* c
 }
 
 extern "C" void recomp_get_target_hud_aspect_ratio(uint8_t* rdram, recomp_context* ctx) {
+    if (online::match_settings_locked) { _return(ctx, _arg<0, float>(rdram, ctx)); return; }
     ultramodern::renderer::GraphicsConfig graphics_config = ultramodern::renderer::get_graphics_config();
     float original = _arg<0, float>(rdram, ctx);
     float current;
