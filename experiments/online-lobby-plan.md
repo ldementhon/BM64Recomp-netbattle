@@ -184,6 +184,21 @@ Status: step 1 in progress, 2026-10-25. No server has been rented or deployed.
   settings cleaned. This does not prove a completed two-human/CPU match or live
   inputs. The current bridge is an integration test, not a user-facing lobby.
   Cross-machine clock mapping and game-state agreement remain untested.
+- Input-history model and bounded input codec are implemented independently of
+  game checkpoints. Boundary F precedes input F; inputs 0/1 are neutral and a
+  physical sample at F belongs to F+2. Repeated sampling while stalled cannot
+  replace it. The server tracks every human receiver's contiguous frontier for
+  every human stream; CPU seats do not participate. Progress stops 12 updates
+  beyond their shared minimum, fitting the 16-checkpoint and 32-input rings.
+  Identical uploads are forwarded again even after server receipt. Tests cover
+  conflicting/forged inputs, bounded packets, independent P2 delay/P4 reorder and
+  duplicates, 400 updates through ring wraparound, and comparisons to an
+  order-sensitive all-inputs-known oracle. A focused test loses only server-to-P3
+  traffic, stalls all clients, then recovers solely by resending already-accepted
+  inputs without advancing any simulation. Another injects P3 during P2 replay
+  and requires a second restore from the earliest affected frame. O0/O2 and
+  address/undefined-behavior sanitizer checks pass. These are model tests, not
+  ROM rollback or live ENet-input integration; that wiring remains next.
 
 ## Goal and boundary
 
