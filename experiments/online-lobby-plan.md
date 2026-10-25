@@ -6,6 +6,16 @@ has been rented or deployed.
 
 ## Implementation record
 
+- `src/online/lobby_session.hpp` now combines the persistent connection with the
+  disposable game owner for application use. Its regular poll handles Prepare,
+  exact-ready acknowledgment, local start epoch, uploads/relays, confirmed finish,
+  cancellation, disconnect, and child failure. Missing the local start deadline
+  aborts rather than starting behind the other players. A failed child preserves
+  the lobby connection for retry. All six Release lobby CTests pass; the expanded
+  application-owner fixture covers input transfer, local-preference handoff,
+  repeated normal completion, loading cancellation, leave cleanup, missed start,
+  failed launch, and crash. This owner has not yet been attached to a rendered
+  Online Battle screen; its new orchestration tests use fixture children.
 - The process owner now accepts a bounded local-input snapshot and an explicit
   physical port independent of the assigned online slot. The child imports only
   port modes, keyboard/controller bindings, sensitivity, calibration, and global

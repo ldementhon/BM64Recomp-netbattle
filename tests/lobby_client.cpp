@@ -1,6 +1,7 @@
 #include "../server/server.hpp"
 #include "../src/online/lobby_client.hpp"
 #include "../src/online/game_session.hpp"
+#include "../src/online/lobby_session.hpp"
 #include <cassert>
 #include <fstream>
 #include <functional>
@@ -9,6 +10,7 @@
 
 using namespace online::lobby;
 int main(int argc, char** argv) {
+    if (argc == 2 && std::string(argv[1]) == "--crash-child") return 1;
     if (argc == 2 && std::string(argv[1]) == "--child") {
         // ENet itself does not set CLOEXEC. Verify the owner helper does.
         for (int fd = 4; fd < 1024; ++fd) {
@@ -161,6 +163,73 @@ int main(int argc, char** argv) {
             auto settings = game.settings(); assert(game.cancel(a.roster().match));
             assert(!fs::exists(settings));
         }
+    }
+    if (!real) {
+        ENetAddress address{}; assert(enet_address_set_host(&address, "127.0.0.1") == 0);
+        Fingerprint fingerprint{42};
+        Server server(address, fingerprint);
+        LobbySession::Launch launch{executable, rom, scratch / "session-a.log", {"--child"}, {}};
+        LobbySession a("127.0.0.1", uint16_t(server.port()), "Alice", fingerprint, launch);
+        launch.log = scratch / "session-b.log";
+        auto b = std::make_unique<LobbySession>("127.0.0.1", uint16_t(server.port()), "Bob", fingerprint, launch);
+        auto until = [&](const std::function<bool()>& done) {
+            auto deadline = monotonic_ms() + 7000;
+            do {
+                server.service(); a.poll(); if (b) b->poll();
+                if (done()) return;
+                std::this_thread::sleep_for(std::chrono::milliseconds(1));
+            } while (monotonic_ms() < deadline);
+            throw std::runtime_error("session test deadline exceeded: " + a.error() + "; " + (b ? b->error() : ""));
+        };
+        until([&] { return a.connection().roster().count == 2 && b->connection().roster().count == 2; });
+        auto a_id = a.connection().roster().identity, b_id = b->connection().roster().identity;
+        auto prepare = [&](bool wait_for_loading = true) {
+            a.ready(true, {3, R"({"controls":{},"joystick_deadzone":17})"}); b->ready(true);
+            until([&] { return a.connection().roster().players[0].ready && a.connection().roster().players[1].ready &&
+                               b->connection().roster().players[0].ready && b->connection().roster().players[1].ready; });
+            (a.connection().slot() == 0 ? a : *b).start();
+            if (wait_for_loading)
+                until([&] { return a.game().state() == online::GameSession::State::Loading &&
+                                   b->game().state() == online::GameSession::State::Loading; });
+        };
+        for (unsigned match = 1; match <= 3; ++match) {
+            prepare();
+            auto settings_a = a.game().settings(), settings_b = b->game().settings();
+            assert(fs::exists(settings_a / "online-input.json"));
+            if (match == 2) a.cancel();
+            until([&] { return a.connection().roster().phase == Phase::Lobby && b->connection().roster().phase == Phase::Lobby; });
+            assert(a.game().state() == online::GameSession::State::Lobby && b->game().state() == online::GameSession::State::Lobby);
+            assert(!fs::exists(settings_a) && !fs::exists(settings_b));
+            assert(a.connection().roster().identity == a_id && b->connection().roster().identity == b_id);
+            if (match != 2) assert(a.error().empty() && b->error().empty());
+        }
+        prepare();
+        until([&] { return a.connection().start_at() && b->connection().start_at(); });
+        std::this_thread::sleep_for(std::chrono::milliseconds(1200));
+        until([&] { return a.connection().roster().phase == Phase::Lobby && b->connection().roster().phase == Phase::Lobby; });
+        assert(a.error() == "local match start missed its deadline" && b->error() == a.error());
+        assert(a.game().state() == online::GameSession::State::Lobby && b->game().state() == online::GameSession::State::Lobby);
+        prepare();
+        auto settings_a = a.game().settings(), settings_b = b->game().settings();
+        b.reset();
+        until([&] { return a.connection().roster().phase == Phase::Lobby && a.connection().roster().count == 1; });
+        assert(a.game().state() == online::GameSession::State::Lobby);
+        assert(!fs::exists(settings_a) && !fs::exists(settings_b));
+        for (bool crash : {false, true}) {
+            launch.executable = crash ? executable : scratch / "missing-game";
+            launch.arguments = {"--crash-child"};
+            b = std::make_unique<LobbySession>("127.0.0.1", uint16_t(server.port()), "Bob", fingerprint, launch);
+            until([&] { return a.connection().roster().count == 2 && b->connection().roster().count == 2; });
+            auto previous_match = a.connection().roster().match;
+            prepare(false);
+            until([&] { return a.connection().roster().match > previous_match &&
+                a.connection().roster().phase == Phase::Lobby && b->connection().roster().phase == Phase::Lobby; });
+            assert(!b->error().empty() && a.connection().joined() && b->connection().joined());
+            assert(a.game().settings().empty() && b->game().settings().empty());
+            b.reset();
+            until([&] { return a.connection().roster().count == 1; });
+        }
+        std::cout << "PASS: application session owns prepare/start/finish, input transfer, preference handoff, cancel/restart/leave, missed epoch and failed launch/crash cleanup\n";
     }
     enet_deinitialize();
     std::cout << "PASS: production client clocks, owned " << (real ? "real game startup/cancel" : "fixture child completion and IPC/ENet input transfer")
