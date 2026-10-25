@@ -10,12 +10,19 @@
 #include <string>
 #include <vector>
 #include <sys/types.h>
+#include "match_channel.hpp"
 
 namespace online {
 class GameSession {
 public:
     enum class State { Lobby, Loading, Playing };
-    struct Exit { uint64_t match; int status; bool loading_timeout; };
+    struct Exit {
+        uint64_t match;
+        int status;
+        bool loading_timeout;
+        std::optional<uint64_t> completed_frame = {};
+        std::string error;
+    };
     GameSession() = default;
     ~GameSession();
     GameSession(const GameSession&) = delete;
@@ -29,15 +36,18 @@ public:
     bool cancel(uint64_t match);
     std::optional<Exit> poll(std::chrono::steady_clock::time_point now = std::chrono::steady_clock::now());
     State state() const { return state_; }
+    const std::optional<MatchMessage>& ready() const { return ready_; }
     const std::filesystem::path& settings() const { return settings_; }
 
 private:
-    void reap();
+    int reap();
     void cleanup();
     pid_t child_ = -1;
     uint64_t match_ = 0;
     State state_ = State::Lobby;
     std::filesystem::path settings_;
     std::chrono::steady_clock::time_point loading_deadline_;
+    MatchChannel channel_;
+    std::optional<MatchMessage> ready_;
 };
 }

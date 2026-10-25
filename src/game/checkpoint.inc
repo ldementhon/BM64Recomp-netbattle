@@ -27,6 +27,8 @@
 #include "comparable_context.hpp"
 #include "../online/match_settings.hpp"
 #include "../online/battle_state.hpp"
+#include "../online/match_channel.hpp"
+#include <charconv>
 #include "zelda_cheats.h"
 #include "zelda_sound.h"
 
@@ -311,9 +313,12 @@ static online::BattleState battle_state() {
             {MEM_W(0xa4, settings), MEM_W(0xa8, settings), MEM_W(0xac, settings), MEM_W(0xb0, settings)}};
 }
 
+#include "owned_match.inc"
+
 static void on_boundary() {
     // Boundary N precedes input N; its resulting state is checked at boundary N+1.
     ++frame;
+    owned_match_boundary();
     if (!replay_pass && std::getenv("BM64_TRACE_MENU")) {
         static bool last_ready = false;
         if (last_ready != player_select_ready) {

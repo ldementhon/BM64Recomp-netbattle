@@ -9,12 +9,16 @@ Status: step 1 in progress, 2026-10-25. No server has been rented or deployed.
   isolated settings/ROM copies, cleanup, loading deadline, cancellation, exit/crash
   recovery, and monotonically increasing match IDs. No native checkpoint crosses
   a process boundary. The lobby UI and game acknowledgment channel are not built.
-- `sh tests/run_game_session_tests.sh` passes at `-O0` and `-O2`: loading cancel,
-  completion, crash, failed launch, repeated launch, stale event rejection,
-  private settings cleanup, and a surviving local socket endpoint. With
-  `BM64_SESSION_REAL_GAME=1`, the same owner cancels a real game load and runs two
-  fresh real-game diagnostics to exit. This proves process ownership, **not**
-  normal battle completion or a network connection; those remain acceptance work.
+- `sh tests/run_game_session_tests.sh` passes at `-O0` and `-O2`: loading cancel
+  before/after readiness, acknowledged start/finish, crash, failed launch,
+  repeated launch, stale event rejection, malformed/duplicate events, loading
+  timeout before/after readiness, cleanup, and a surviving local socket endpoint.
+  The private channel handles fragmented/coalesced messages and peer closure
+  without killing the owner. `BM64_SESSION_REAL_GAME=1` now cancels a real load,
+  then completes **two real first-to-three matches** through the same owner. Both
+  stop at Player Select boundary 1374 until Start, have identical initial guest
+  digests, finish at 5401, and clean up their private settings. This is scripted
+  lifecycle evidence, not a live-input, real-server, or cross-machine claim.
 - Existing combined build (SHA-256
   `b6c4fec93b37134470f15fc56f6c8a94d1086fea05e9544fe6d1d21879d72326`): controller
   checks (44 calibration, 67 routing/config), 6,885 input timing checks at each
@@ -24,8 +28,8 @@ Status: step 1 in progress, 2026-10-25. No server has been rented or deployed.
   existing independent runs. macOS game probes require audio/graphics access;
   the restricted invocation failed opening CoreAudio before simulation.
 - Step 1 remaining: independent native continuation/runtime-state coverage;
-  audit remaining simulation-facing configuration; wire the verified selection and
-  completion boundaries into repeated game-aware lifecycle; two-machine comparison. The timed update-1600 marker
+  human/CPU assignment and P1-only menu enforcement; remaining configuration/UI
+  audit; two-machine comparison. The timed update-1600 marker
   is not accepted as proof of character selection. The current process owner is
   exercised by tests, not yet wired into the application or a network lobby.
 - Comparable diagnostic: `python3 tests/run_independent_clients.py` passes on
@@ -125,6 +129,21 @@ Status: step 1 in progress, 2026-10-25. No server has been rented or deployed.
   sound-change negative control diverges. Main Volume remains adjustable in both
   modes and personal settings remain untouched. The disabled sound UI still needs
   visual inspection; live audio output/replay deduplication remains step 3 work.
+- The session owner now receives a bounded Ready message with match ID, actual
+  frame, and comparable state digest. Start must acknowledge that exact state;
+  the child stays suspended at the game-loop boundary while waiting. A valid
+  Finished event ends the disposable child and returns the owner to Lobby.
+  Wrong-match, duplicate, out-of-order, or disconnected-channel events abort and
+  clean up. Ordinary child exit cannot be mistaken for normal match completion.
+  IPC is private to one process pair, separate from a future network protocol,
+  and never sends native checkpoints. The owned path currently accepts scripted
+  diagnostic inputs and refuses diagnostic restores; live rollback completion
+  still needs the network's confirmed frontier. No online UI is wired yet.
+  Real lifecycle proof used unchanged build
+  `ef1b91d0ac4c8f2bb64b7289ababf94ad806ae1e5d850fd291f298a0ee96d3da`.
+  This build also passes the complete `sh tests/run_battle_replay.sh` suite:
+  1/4/8/12-update restores, 400-update lifecycle, boot and battle entry, both
+  negative controls, independent overlapping RAM hashes, and rolling history.
 - Step 2 onward remains pending these correctness gates. Preserve concurrent
   renderer/runtime experiments; no dependency edits are included in this work.
 

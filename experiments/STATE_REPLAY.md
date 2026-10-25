@@ -107,8 +107,11 @@ The online lobby work is tracked in `online-lobby-plan.md`. Its separate
 `COMPARABLE_V1` diagnostic hashes all RAM and canonical guest registers across
 fresh processes; it preserves the existing same-process checks and rejects unknown
 register pointers. Matching it does not certify native continuation/runtime queue
-or cross-platform state. The session-owner checks use disposable child processes;
-they do not yet detect normal game completion or retain a real server connection.
+or cross-platform state. The session-owner checks use disposable child processes.
+With `BM64_SESSION_REAL_GAME=1`, they cancel loading and complete two real
+first-to-three matches, requiring identical Ready digests and normal Finished
+events. Each child waits at Player Select until its owner acknowledges the state.
+The local owner socket survives; no real server connection is tested yet.
 `--online-test` is an isolated settings diagnostic, not a playable online mode.
 It locks cheats and guest music/effects/voice balance while allowing host Main
 Volume. The match-settings check compares online settings-change attempts and
@@ -128,4 +131,5 @@ regression uses only controller inputs to win three rounds, then crosses from
 scene 20 to scene 21 at boundary 5401 after acknowledging the third star. The
 completion predicate supports only this tested first-to-three single-battle
 preset. It must eventually be acted on only at a confirmed simulation boundary;
-no live network confirmation or return-to-lobby path is implemented yet.
+the scripted session-owner test exercises finish → cleanup → Lobby → start again,
+but live network confirmation and a lobby UI are not implemented yet.

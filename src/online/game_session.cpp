@@ -15,6 +15,8 @@ namespace online {
 GameSession::~GameSession() { reap(); cleanup(); }
 
 void GameSession::cleanup() {
+    channel_ = MatchChannel{};
+    ready_.reset();
     if (!settings_.empty()) {
         std::error_code ignored;
         std::filesystem::remove_all(settings_, ignored);
@@ -23,13 +25,15 @@ void GameSession::cleanup() {
     state_ = State::Lobby;
 }
 
-void GameSession::reap() {
-    if (child_ < 0) return;
+int GameSession::reap() {
+    if (child_ < 0) return 0;
     // A disposable game has no personal save to flush; do not block the lobby
     // on the runtime's unsupported shutdown path.
     kill(child_, SIGKILL);
-    while (waitpid(child_, nullptr, 0) < 0 && errno == EINTR) {}
+    int status = 0;
+    while (waitpid(child_, &status, 0) < 0 && errno == EINTR) {}
     child_ = -1;
+    return status;
 }
 
 void GameSession::start(uint64_t match, const std::filesystem::path& executable,
@@ -44,6 +48,12 @@ void GameSession::start(uint64_t match, const std::filesystem::path& executable,
     if (!mkdtemp(pattern.data())) throw std::system_error(errno, std::generic_category(), "match settings");
     settings_ = pattern;
     try {
+        auto [owner, child] = MatchChannel::pair();
+        channel_ = std::move(owner);
+        // Keep the source above fd 3, which is the child's fixed IPC descriptor.
+        int inherited = fcntl(child.fd(), F_DUPFD_CLOEXEC, 4);
+        if (inherited < 0) throw std::system_error(errno, std::generic_category(), "inherit match socket");
+        MatchChannel inherited_channel(inherited);
         std::filesystem::copy_file(rom, settings_ / "bm64_us.z64");
         std::map<std::string, std::string> environment;
         for (char** e = environ; *e; ++e) {
@@ -60,6 +70,7 @@ void GameSession::start(uint64_t match, const std::filesystem::path& executable,
             environment[key] = value;
         }
         environment["APP_FOLDER_PATH"] = settings_.string();
+        environment["BM64_OWNER_MATCH"] = std::to_string(match);
         std::vector<std::string> env_strings;
         for (auto& [key, value] : environment) env_strings.push_back(key + "=" + value);
         std::vector<char*> env;
@@ -76,7 +87,8 @@ void GameSession::start(uint64_t match, const std::filesystem::path& executable,
         posix_spawn_file_actions_t actions;
         int error = posix_spawn_file_actions_init(&actions);
         if (error) throw std::system_error(error, std::generic_category(), "spawn actions");
-        error = posix_spawn_file_actions_addopen(&actions, STDOUT_FILENO, log.c_str(),
+        error = posix_spawn_file_actions_adddup2(&actions, inherited_channel.fd(), 3);
+        if (!error) error = posix_spawn_file_actions_addopen(&actions, STDOUT_FILENO, log.c_str(),
                                                 O_WRONLY | O_CREAT | O_TRUNC, 0600);
         if (!error) error = posix_spawn_file_actions_adddup2(&actions, STDOUT_FILENO, STDERR_FILENO);
         if (!error) error = posix_spawn_file_actions_addopen(&actions, STDIN_FILENO, "/dev/null", O_RDONLY, 0);
@@ -89,8 +101,11 @@ void GameSession::start(uint64_t match, const std::filesystem::path& executable,
 }
 
 bool GameSession::playing(uint64_t match) {
-    if (match != match_ || state_ != State::Loading) return false;
-    // The caller must validate the scene/configuration acknowledgment first.
+    if (match != match_ || state_ != State::Loading || !ready_) return false;
+    // A network lobby must compare all clients' Ready digests before calling this.
+    auto message = *ready_;
+    message.event = MatchEvent::Start;
+    channel_.send(message);
     state_ = State::Playing;
     return true;
 }
@@ -103,17 +118,36 @@ bool GameSession::cancel(uint64_t match) {
 
 std::optional<GameSession::Exit> GameSession::poll(std::chrono::steady_clock::time_point now) {
     if (child_ < 0) return std::nullopt;
+    try {
+        if (auto message = channel_.receive()) {
+            if (message->match != match_) throw std::runtime_error("wrong-match child event");
+            if (message->event == MatchEvent::Ready && state_ == State::Loading && !ready_) {
+                ready_ = *message;
+            } else if (message->event == MatchEvent::Finished && state_ == State::Playing &&
+                       ready_ && message->frame > ready_->frame) {
+                auto status = reap();
+                cleanup();
+                return Exit{match_, status, false, message->frame, {}};
+            } else {
+                throw std::runtime_error("unexpected child event");
+            }
+        }
+    } catch (const std::exception& error) {
+        auto status = reap();
+        cleanup();
+        return Exit{match_, status, false, {}, error.what()};
+    }
     int status;
     pid_t result;
     do { result = waitpid(child_, &status, WNOHANG); } while (result < 0 && errno == EINTR);
     if (result < 0) throw std::system_error(errno, std::generic_category(), "poll game");
     if (result == child_) {
         child_ = -1; cleanup();
-        return Exit{match_, status, false};
+        return Exit{match_, status, false, {}, "game exited before match completion"};
     }
     if (state_ == State::Loading && now >= loading_deadline_) {
         reap(); cleanup();
-        return Exit{match_, 0, true};
+        return Exit{match_, 0, true, {}, "game loading timed out"};
     }
     return std::nullopt;
 }
