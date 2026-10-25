@@ -24,6 +24,7 @@
 #include "checkpoint_memory.hpp"
 #include "checkpoint_stack.hpp"
 #include "checkpoint_trace.hpp"
+#include "comparable_context.hpp"
 
 extern uint8_t dmem[0x1000];
 extern thread_local PTR(OSThread) thread_self;
@@ -251,6 +252,7 @@ static Digest digest() {
     auto context_hash = XXH3_64bits_digest(&state);
     return {XXH3_64bits(ram, recomp::mem_size), context_hash};
 }
+#include "comparable_state.inc"
 static bool benchmark(unsigned at) {
     const unsigned count = setting("BM64_BENCHMARK_FRAMES", 0);
     if (!count) return false;
@@ -328,6 +330,10 @@ static void on_boundary() {
     if (at && frame > at && frame <= at + length) {
         if (catchup_active && frame == at + length) finish_presentation();
         auto state_hash = digest();
+        if (!pass && std::getenv("BM64_COMPARE_STATE")) {
+            fprintf(stderr, "COMPARABLE_V1: frame=%llu ram=%016llx registers=%016llx\n",
+                    frame, state_hash.ram, comparable_registers());
+        }
         uint64_t hash = state_hash.ram;
         size_t index = frame-at-1;
         auto context_hash = state_hash.registers;

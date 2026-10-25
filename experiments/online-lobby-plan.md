@@ -29,6 +29,25 @@ Status: step 1 in progress, 2026-10-25. No server has been rented or deployed.
   game-aware lifecycle and two-machine comparison. The timed update-1600 marker
   is not accepted as proof of character selection. The current process owner is
   exercised by tests, not yet wired into the application or a network lobby.
+- Comparable diagnostic: `python3 tests/run_independent_clients.py` passes on
+  build `a0ee1058f277c7d23dc921ee4e8a4272b0947462fa5845efc52129bc75ed4eae`.
+  Two fresh processes match all 747 boundaries (1599–2345), covering the menu
+  handoff, battle entry, and active battle. A third fresh process changes P1's
+  recorded input at 1950 and first diverges at 1951. Each also passes three
+  same-process full-RAM/register restores across the entire 747-update window.
+  `COMPARABLE_V1` retains all 512 MiB of RAM and every architectural register;
+  only the understood `f_odd` self-reference is encoded by logical identity.
+  Unsupported references fail. The separate diagnostic also records logical
+  process/thread identity and clocks; it does **not** certify native continuation,
+  runtime queue, or GPU state across machines. No arbitrary RAM range is excluded.
+- Scene inspection exposed a real blocker: the normal threaded `--single-battle`
+  handoff at update 1600 displays **Stage Select / Rock Garden**, not character
+  selection. The checkpoint-mode held-frame capture was black and cannot verify
+  the scene. Disposable captures are under `build/experiments/`; a scene predicate
+  and character-selection input check are still required before synchronized start.
+- Loading timeout and owner-destruction cleanup now have focused regressions at
+  both optimization levels. An available second Apple Silicon test machine has
+  been requested; no two-machine result is claimed.
 - Step 2 onward remains pending these correctness gates. Preserve concurrent
   renderer/runtime experiments; no dependency edits are included in this work.
 
