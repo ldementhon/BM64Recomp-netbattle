@@ -101,7 +101,7 @@ bool GameSession::cancel(uint64_t match) {
     return true;
 }
 
-std::optional<GameSession::Exit> GameSession::poll() {
+std::optional<GameSession::Exit> GameSession::poll(std::chrono::steady_clock::time_point now) {
     if (child_ < 0) return std::nullopt;
     int status;
     pid_t result;
@@ -111,7 +111,7 @@ std::optional<GameSession::Exit> GameSession::poll() {
         child_ = -1; cleanup();
         return Exit{match_, status, false};
     }
-    if (state_ == State::Loading && std::chrono::steady_clock::now() >= loading_deadline_) {
+    if (state_ == State::Loading && now >= loading_deadline_) {
         reap(); cleanup();
         return Exit{match_, 0, true};
     }

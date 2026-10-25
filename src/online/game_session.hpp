@@ -27,7 +27,7 @@ public:
                const std::map<std::string, std::string>& diagnostic_environment = {});
     bool playing(uint64_t match);
     bool cancel(uint64_t match);
-    std::optional<Exit> poll();
+    std::optional<Exit> poll(std::chrono::steady_clock::time_point now = std::chrono::steady_clock::now());
     State state() const { return state_; }
     const std::filesystem::path& settings() const { return settings_; }
 

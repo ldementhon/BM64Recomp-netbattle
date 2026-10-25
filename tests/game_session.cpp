@@ -92,6 +92,22 @@ int main(int argc, char** argv) {
         start(7, "--child-finish");
         result = wait_exit(session);
         assert(WIFEXITED(result.status));
+        start(8, "--child-hold");
+        auto timed_out_settings = session.settings();
+        auto timeout = session.poll(std::chrono::steady_clock::now() + 31s);
+        assert(timeout && timeout->match == 8 && timeout->loading_timeout);
+        assert(session.state() == online::GameSession::State::Lobby && !fs::exists(timed_out_settings));
+        start(9, "--child-hold");
+        assert(session.playing(9));
+        assert(!session.poll(std::chrono::steady_clock::now() + 31s));
+        assert(session.cancel(9));
+        fs::path abandoned_settings;
+        {
+            online::GameSession abandoned;
+            abandoned.start(1, executable, rom, scratch / "abandoned.log", {"--child-hold"});
+            abandoned_settings = abandoned.settings();
+        }
+        assert(!fs::exists(abandoned_settings));
     }
     close(connection[0]); close(connection[1]);
     std::string marker;
