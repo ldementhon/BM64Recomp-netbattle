@@ -16,6 +16,12 @@ public:
     uint64_t start_epoch() const { return start_epoch_; }
     unsigned count() const { return count_; }
     const std::array<Player, 4>& players() const { return players_; }
+    uint64_t initial_frame() const { return loaded_[0] ? loaded_[0]->frame : 0; }
+    std::vector<Delivery> abort(Reason reason) {
+        std::vector<Delivery> out;
+        if (phase_ != Phase::Lobby) end(out, reason);
+        return out;
+    }
 
     std::vector<Delivery> handle(uint64_t peer, const Packet& p, uint64_t now) {
         std::vector<Delivery> out;

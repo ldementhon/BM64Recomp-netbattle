@@ -1,6 +1,7 @@
 #pragma once
 #include "../src/online/lobby_room.hpp"
 #include "../src/online/enet_host.hpp"
+#include "../src/online/input_protocol.hpp"
 #include <deque>
 #include <memory>
 
@@ -12,6 +13,7 @@ public:
         : host_(make_host(&address, 8)), room_(fingerprint) {}
     unsigned port() const { return host_->address.port; }
     const Room& room() const { return room_; }
+    uint64_t input_confirmed() const { return inputs_ ? inputs_->confirmed() : 0; }
     void service(unsigned wait_ms = 0) {
         ENetEvent event{};
         // Bound one service pass so a busy peer cannot starve deadlines.
@@ -31,15 +33,27 @@ public:
                 std::unique_ptr<ENetPacket, decltype(&enet_packet_destroy)> packet(event.packet, enet_packet_destroy);
                 if (connection.closing || !connection.identity) continue;
                 if (now - connection.rate_window >= 1000) { connection.rate_window = now; connection.received = 0; }
-                if (++connection.received > 120 || event.channelID != control_channel ||
-                    !(packet->flags & ENET_PACKET_FLAG_RELIABLE)) {
+                if (++connection.received > 120) {
                     reject(event.peer, Reason::Protocol); continue;
                 }
                 try {
-                    auto decoded = decode({packet->data, packet->dataLength});
-                    deliver(room_.handle(connection.identity, decoded, now));
+                    if (event.channelID == control_channel) {
+                        if (!(packet->flags & ENET_PACKET_FLAG_RELIABLE)) throw std::invalid_argument("unreliable control message");
+                        auto decoded = decode({packet->data, packet->dataLength});
+                        if (decoded.op == Op::Finished && room_.phase() == Phase::Playing && decoded.match == room_.match() &&
+                            decoded.frame > room_.initial_frame() && decoded.frame - room_.initial_frame() > input_confirmed())
+                            deliver(room_.abort(Reason::Mismatch));
+                        else deliver(room_.handle(connection.identity, decoded, now));
+                    } else {
+                        if (packet->flags & (ENET_PACKET_FLAG_RELIABLE | ENET_PACKET_FLAG_UNSEQUENCED))
+                            throw std::invalid_argument("input must use an unreliable sequenced channel");
+                        auto decoded = decode_input({packet->data, packet->dataLength}, false);
+                        if (event.channelID != decoded.slot + 1) throw std::invalid_argument("wrong input stream channel");
+                        receive_inputs(connection.identity, decoded, now);
+                    }
                 } catch (const std::invalid_argument&) { reject(event.peer, Reason::Protocol); }
             }
+            sync_inputs();
         }
         auto now = monotonic_ms();
         for (size_t i = 0; i < connections_.size(); ++i) {
@@ -53,6 +67,10 @@ public:
                 reject(&host_->peers[i], Reason::Timeout);
         }
         deliver(room_.tick(now));
+        sync_inputs();
+        if (inputs_ && now >= last_progress_ && now - last_progress_ >= 5000) {
+            deliver(room_.abort(Reason::Timeout)); sync_inputs();
+        }
         enet_host_flush(host_.get());
     }
 private:
@@ -65,6 +83,36 @@ private:
     Room room_;
     std::array<Connection, 8> connections_{};
     uint64_t next_identity_ = 0;
+    std::optional<InputRelay> inputs_;
+    uint64_t last_progress_ = 0;
+
+    void sync_inputs() {
+        if (room_.phase() != Phase::Playing) inputs_.reset();
+        else if (!inputs_ || inputs_->match() != room_.match()) {
+            inputs_.emplace(room_.match(), room_.count()); last_progress_ = room_.start_epoch();
+        }
+    }
+    void receive_inputs(uint64_t identity, const InputBatch& batch, uint64_t now) {
+        if (room_.phase() != Phase::Playing || batch.match != room_.match()) return;
+        unsigned slot = 0;
+        while (slot < room_.count() && room_.players()[slot].id != identity) ++slot;
+        if (slot == room_.count()) throw std::invalid_argument("unassigned input sender");
+        sync_inputs();
+        auto before = inputs_->confirmed();
+        auto relayed = inputs_->accept(slot, batch);
+        if (inputs_->confirmed() > before) last_progress_ = std::max(now, room_.start_epoch());
+        if (!relayed) return;
+        auto bytes = encode_input(*relayed, true);
+        for (size_t i = 0; i < connections_.size(); ++i) {
+            auto& connection = connections_[i];
+            bool joined = false;
+            for (const auto& player : room_.players()) joined |= player.id && player.id == connection.identity;
+            if (!joined || connection.closing) continue;
+            if (!send_packet(&host_->peers[i], uint8_t(batch.slot + 1), bytes, 0)) {
+                reject(&host_->peers[i], Reason::Timeout); break;
+            }
+        }
+    }
 
     void reject(ENetPeer* peer, Reason reason) {
         Packet packet{Op::Reject}; packet.reason = reason;
@@ -78,15 +126,7 @@ private:
                 auto& connection = connections_[i];
                 if (!connection.identity || connection.identity != message.peer || connection.closing) continue;
                 auto* peer = &host_->peers[i];
-                auto queued = enet_list_size(&peer->outgoingCommands) + enet_list_size(&peer->outgoingSendReliableCommands) +
-                              enet_list_size(&peer->sentReliableCommands);
-                bool failed = queued >= 128;
-                if (!failed) {
-                    auto bytes = encode(message.packet);
-                    auto* packet = enet_packet_create(bytes.data(), bytes.size(), ENET_PACKET_FLAG_RELIABLE);
-                    failed = !packet || enet_peer_send(peer, control_channel, packet) < 0;
-                    if (failed && packet) enet_packet_destroy(packet);
-                }
+                bool failed = !send_packet(peer, control_channel, encode(message.packet), ENET_PACKET_FLAG_RELIABLE);
                 if (failed || message.disconnect) {
                     connection.closing = true; connection.connected = monotonic_ms();
                     auto departures = room_.disconnect(connection.identity);

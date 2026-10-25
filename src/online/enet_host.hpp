@@ -26,4 +26,13 @@ inline Host make_host(const ENetAddress* address, size_t peers) {
 #endif
     return host;
 }
+inline bool send_packet(ENetPeer* peer, uint8_t channel, std::span<const uint8_t> bytes, enet_uint32 flags) {
+    auto queued = enet_list_size(&peer->outgoingCommands) + enet_list_size(&peer->outgoingSendReliableCommands) +
+                  enet_list_size(&peer->sentReliableCommands);
+    if (bytes.size() > packet_limit || queued >= 128) return false;
+    auto* packet = enet_packet_create(bytes.data(), bytes.size(), flags);
+    if (!packet) return false;
+    if (enet_peer_send(peer, channel, packet) < 0) { enet_packet_destroy(packet); return false; }
+    return true;
+}
 }

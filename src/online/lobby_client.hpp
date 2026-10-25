@@ -2,6 +2,7 @@
 #include "lobby_protocol.hpp"
 #include "server_clock.hpp"
 #include "enet_host.hpp"
+#include "input_protocol.hpp"
 #include <deque>
 #include <memory>
 
@@ -30,6 +31,20 @@ public:
     const std::string& error() const { return error_; }
     std::optional<ServerClock::Estimate> clock() const { return clock_.estimate(now()); }
     std::optional<uint64_t> start_at() const { return start_at_; }
+    unsigned slot() const {
+        if (joined()) for (unsigned i = 0; i < roster_.count; ++i)
+            if (roster_.players[i].id == roster_.identity) return i;
+        throw std::logic_error("client has no player slot");
+    }
+    void send_inputs(const InputBatch& batch) {
+        require_phase(Phase::Playing);
+        if (batch.match != roster_.match || batch.slot != slot()) throw std::invalid_argument("input does not match assigned player");
+        if (!send_packet(peer_, uint8_t(batch.slot + 1), encode_input(batch, false), 0))
+            throw std::runtime_error("server input queue is full");
+    }
+    std::vector<InputBatch> take_inputs() {
+        auto result = std::move(input_events_); input_events_.clear(); return result;
+    }
     static uint64_t now() { return monotonic_ms(); }
 
     void ready(bool value) {
@@ -63,12 +78,23 @@ public:
                 if (!result) break;
                 if (event.type == ENET_EVENT_TYPE_CONNECT) { connected_ = true; send(hello_); }
                 else if (event.type == ENET_EVENT_TYPE_DISCONNECT) {
-                    disconnected_ = true; start_at_.reset();
+                    disconnected_ = true; start_at_.reset(); input_events_.clear();
                     if (error_.empty()) error_ = "Server disconnected.";
                     break;
                 } else if (event.type == ENET_EVENT_TYPE_RECEIVE) {
                     std::unique_ptr<ENetPacket, decltype(&enet_packet_destroy)> wire(event.packet, enet_packet_destroy);
-                    if (event.channelID != control_channel || !(wire->flags & ENET_PACKET_FLAG_RELIABLE))
+                    if (event.channelID != control_channel) {
+                        if (wire->flags & (ENET_PACKET_FLAG_RELIABLE | ENET_PACKET_FLAG_UNSEQUENCED))
+                            throw std::runtime_error("invalid server input channel flags");
+                        auto input = decode_input({wire->data, wire->dataLength}, true);
+                        if (event.channelID != input.slot + 1) throw std::runtime_error("wrong server input channel");
+                        if (!joined() || roster_.phase == Phase::Lobby || input.match != roster_.match) continue;
+                        if (input.slot >= roster_.count || input_events_.size() >= 128)
+                            throw std::runtime_error("invalid or excessive relayed input");
+                        input_events_.push_back(input);
+                        continue;
+                    }
+                    if (!(wire->flags & ENET_PACKET_FLAG_RELIABLE))
                         throw std::runtime_error("invalid server control channel");
                     auto p = decode({wire->data, wire->dataLength});
                     if (p.op == Op::Pong) {
@@ -91,7 +117,7 @@ public:
                         require_phase(Phase::Loading);
                         if (p.match != roster_.match || p.revision != roster_.revision || p.count != roster_.count)
                             throw std::runtime_error("match preparation differs from locked roster");
-                        start_at_.reset(); error_.clear();
+                        start_at_.reset(); error_.clear(); input_events_.clear();
                     } else if (p.op == Op::Commit) {
                         require_phase(Phase::Playing);
                         if (p.match != roster_.match || start_at_) throw std::runtime_error("unexpected match start");
@@ -99,7 +125,7 @@ public:
                         catch (const std::runtime_error& e) { error_ = e.what(); cancel(Reason::LoadFailed); continue; }
                     } else if (p.op == Op::End) {
                         if (p.match != roster_.match) throw std::runtime_error("unexpected match termination");
-                        start_at_.reset();
+                        start_at_.reset(); input_events_.clear();
                         if (p.reason != Reason::None && error_.empty()) error_ = reason_text(p.reason);
                     } else if (p.op == Op::Reject) error_ = reason_text(p.reason);
                     else throw std::runtime_error("unexpected server message");
@@ -116,7 +142,7 @@ public:
             }
             enet_host_flush(host_.get());
         } catch (const std::exception& e) {
-            error_ = e.what(); disconnected_ = true; start_at_.reset();
+            error_ = e.what(); disconnected_ = true; start_at_.reset(); input_events_.clear();
             enet_peer_disconnect_now(peer_, 0);
         }
         return events;
@@ -132,6 +158,7 @@ private:
     bool connected_ = false, disconnected_ = false;
     std::string error_;
     std::optional<uint64_t> start_at_;
+    std::vector<InputBatch> input_events_;
     Packet command(Op op) const {
         Packet p{op}; p.revision = roster_.revision; p.match = roster_.match; return p;
     }
@@ -140,13 +167,7 @@ private:
     }
     void send(const Packet& p) {
         if (disconnected_) throw std::runtime_error("server disconnected");
-        auto queued = enet_list_size(&peer_->outgoingCommands) + enet_list_size(&peer_->outgoingSendReliableCommands) +
-                      enet_list_size(&peer_->sentReliableCommands);
-        if (queued >= 128) throw std::runtime_error("server connection queue is full");
-        auto bytes = encode(p);
-        auto* packet = enet_packet_create(bytes.data(), bytes.size(), ENET_PACKET_FLAG_RELIABLE);
-        if (!packet || enet_peer_send(peer_, control_channel, packet) < 0) {
-            if (packet) enet_packet_destroy(packet);
+        if (!send_packet(peer_, control_channel, encode(p), ENET_PACKET_FLAG_RELIABLE)) {
             throw std::runtime_error("cannot send server message");
         }
     }

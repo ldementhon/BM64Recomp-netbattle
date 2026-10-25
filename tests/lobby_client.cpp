@@ -21,7 +21,7 @@ int main(int argc, char** argv) {
         for (;;) {
             if (auto command = channel.receive()) {
                 assert(command->event == online::MatchEvent::Start && command->match == match);
-                channel.send({1, online::MatchEvent::Finished, match, 2000});
+                channel.send({1, online::MatchEvent::Finished, match, 1376});
                 return 0;
             }
             std::this_thread::sleep_for(std::chrono::milliseconds(1));
@@ -108,7 +108,7 @@ int main(int argc, char** argv) {
                     for (unsigned i = 0; i < games.size(); ++i) if (!exits[i]) exits[i] = games[i].poll();
                     return exits[0] && exits[1];
                 });
-                for (const auto& exit : exits) assert(exit->error.empty() && exit->completed_frame == 2000);
+                for (const auto& exit : exits) assert(exit->error.empty() && exit->completed_frame == 1376);
                 a.finished(*exits[0]->completed_frame); b.finished(*exits[1]->completed_frame);
             }
             until([&] { return a.roster().phase == Phase::Lobby && b.roster().phase == Phase::Lobby; });

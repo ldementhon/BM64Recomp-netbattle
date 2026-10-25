@@ -13,7 +13,7 @@ ENet 1.3.18 is pinned to upstream commit
 `2662c0de09e36f2a2030ccc2c528a3e4c9e8138a`. CMake fetches it during configuration.
 The final argument must be 64 hexadecimal digits identifying the accepted client
 build. The server compares the complete 32-byte value before allocating a seat.
-Release fingerprint generation and the game client connection are still pending;
+Release fingerprint generation and the user-facing game client are still pending;
 the test value is only a fixture, not a compatibility certification.
 
 The server owns one room and serializes membership, Ready, and Start. Roster
@@ -28,12 +28,14 @@ numbers and bounded simulation lead still need the input protocol; clock estimat
 alone cannot synchronize gameplay over asymmetric routes.
 
 Control messages use reliable ordered channel 0, explicit big-endian fields,
-protocol version 1, and a 1,199-byte maximum. Channels 1–4 are reserved for player
-input streams and are currently rejected. There are eight transport slots (four
+protocol version 1, and a 1,199-byte maximum. Channels 1–4 carry separate unreliable
+sequenced input streams, with 32 recent inputs per upload. There are eight transport slots (four
 playable seats plus pending/rejected joins), a five-second handshake deadline,
-120 incoming control messages per connection per second, a 64-KiB incoming wait
+120 incoming messages per connection per second, a 64-KiB incoming wait
 limit, and a 128-command outgoing queue limit. Slow or invalid peers are removed.
-Loading has a 30-second deadline; partial finish agreement has five seconds.
+Loading has a 30-second deadline; partial finish agreement and stalled input
+confirmation each have five seconds. Input repeats are forwarded immediately,
+even if previously accepted, so a receiver can repair a lost relay while stalled.
 
 The tests exercise actual loopback UDP connections for 2/3/4 clients, simultaneous
 joins, full-room and incompatible-build rejection, stale readiness, repeated
@@ -51,9 +53,17 @@ The ordinary test uses disposable fixture children to verify finish agreement
 and that no UDP sockets are inherited by game processes. Windows game-process
 ownership remains unimplemented; its tests are excluded on that platform.
 
-This is not yet a playable client or input relay. No ROM, checkpoint, or native
-pointer is sent. Match completion currently checks client frame agreement; it
-must also require the input protocol's confirmed frontier before live use.
+`input_network` runs four production client connections through actual ENet input
+channels. It independently delays, drops, and duplicates received relays at the
+client delivery boundary, checks corrected state against an oracle, and verifies
+confirmed completion and stalled-match timeout. This is not OS-level packet
+shaping or a ROM rollback test. Raw connection tests reject slot impersonation
+and conflicting replacements. See [input frame rules](INPUT_PROTOCOL.md).
+
+This is not yet a playable game client. No ROM, checkpoint, or native pointer is
+sent. The server checks finish-frame agreement and requires that frame to be
+confirmed by every human receiver. The game adapter must still detect completion
+after correcting its actual simulation to that confirmed boundary.
 No deployment has been performed. For remote private tests, bind the chosen
 interface and restrict its UDP port to testers' public IPs as required by the
 implementation plan. ENet provides neither authentication nor encryption.

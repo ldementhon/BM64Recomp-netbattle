@@ -10,6 +10,7 @@ struct Client {
     Host host{enet_host_create(nullptr, 1, channel_count, 0, 0), enet_host_destroy};
     ENetPeer* peer = nullptr;
     bool connected = false, disconnected = false;
+    unsigned relays = 0;
     Packet roster{Op::Roster};
     std::vector<Packet> events;
     explicit Client(unsigned port) {
@@ -25,12 +26,24 @@ struct Client {
         assert(packet && enet_peer_send(peer, channel, packet) == 0);
         enet_host_flush(host.get());
     }
+    void upload(const online::InputBatch& batch) {
+        auto bytes = encode_input(batch, false);
+        auto* packet = enet_packet_create(bytes.data(), bytes.size(), 0);
+        assert(packet && enet_peer_send(peer, uint8_t(batch.slot + 1), packet) == 0);
+        enet_host_flush(host.get());
+    }
     void service() {
         ENetEvent event{};
         while (enet_host_service(host.get(), &event, 0) > 0) {
             if (event.type == ENET_EVENT_TYPE_CONNECT) connected = true;
             if (event.type == ENET_EVENT_TYPE_DISCONNECT) disconnected = true;
             if (event.type == ENET_EVENT_TYPE_RECEIVE) {
+                if (event.channelID != control_channel) {
+                    assert(!(event.packet->flags & ENET_PACKET_FLAG_RELIABLE));
+                    auto input = decode_input({event.packet->data, event.packet->dataLength}, true);
+                    assert(event.channelID == input.slot + 1); ++relays;
+                    enet_packet_destroy(event.packet); continue;
+                }
                 assert(event.channelID == control_channel && (event.packet->flags & ENET_PACKET_FLAG_RELIABLE));
                 auto packet = decode({event.packet->data, event.packet->dataLength});
                 enet_packet_destroy(event.packet);
@@ -130,7 +143,7 @@ int main() {
             f.until([&] { for (unsigned i = 0; i < count; ++i) if (!f.clients[i]->saw(Op::Commit)) return false; return true; });
             f.until([&] { return monotonic_ms() >= f.server.room().start_epoch(); });
             for (unsigned i = 0; i < count; ++i) {
-                auto finish = f.clients[i]->command(Op::Finished); finish.frame = 5401; f.clients[i]->send(finish);
+                auto finish = f.clients[i]->command(Op::Finished); finish.frame = 1376; f.clients[i]->send(finish);
             }
             f.until([&] { for (unsigned i = 0; i < count; ++i)
                 if (!f.clients[i]->saw(Op::End) || f.clients[i]->roster.phase != Phase::Lobby) return false;
@@ -156,6 +169,28 @@ int main() {
         bad.send(bad.command(Op::Ready), 1);
         f.until([&] { return bad.saw(Op::Reject, Reason::Protocol) && bad.disconnected; });
         assert(f.server.room().count() == 0);
+    }
+    for (bool conflict : {false, true}) {
+        Fixture f;
+        for (unsigned i = 0; i < 2; ++i) { auto& client = f.add(); f.join(client); }
+        f.until([&] { return f.clients[0]->roster.count == 2 && f.clients[1]->roster.count == 2; });
+        f.start(2);
+        for (auto& client : f.clients) {
+            auto loaded = client->command(Op::Loaded); loaded.frame = 1374; loaded.ram = 123; loaded.registers = 456;
+            client->send(loaded);
+        }
+        f.until([&] { return f.server.room().phase() == Phase::Playing; });
+        auto& sender = f.p1();
+        online::InputBatch batch; batch.match = sender.roster.match; batch.count = 1;
+        batch.received = {2, 2, 0, 0}; batch.pads[0].buttons = 0x8000;
+        if (conflict) {
+            sender.upload(batch); f.until([&] { return sender.relays > 0; });
+            batch.pads[0].buttons = 0x4000;
+        }
+        else batch.slot = 1; // Correct channel for P2, wrong connection identity.
+        sender.upload(batch);
+        f.until([&] { return sender.saw(Op::Reject, Reason::Protocol) && sender.disconnected; });
+        assert(f.server.room().phase() == Phase::Lobby && f.server.room().count() == 1);
     }
     enet_deinitialize();
     std::cout << "PASS: real ENet 2/3/4-client joins, rejection, readiness, repeated matches, loading failure and disconnects\n";

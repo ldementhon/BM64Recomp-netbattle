@@ -36,7 +36,9 @@ pad is a 16-bit N64 button mask and two signed bytes (-127…127); reserved butt
 bits are rejected. Maximum upload size is 185 bytes, below the 1,199-byte cap.
 The transport channel is 1+slot, separate from reliable control channel 0.
 
-This document describes the implemented codec/history model. Live ENet delivery,
-five-second stall termination, and the game's checkpoint adapter are not yet
-wired to it. `input_history` exercises a small deterministic simulation oracle;
-it is not evidence that ROM rollback is integrated.
+The server and connection client now send these packets on actual ENet channels.
+The server aborts after five seconds without confirmed progress, keeps connections
+in the lobby, and rejects completion beyond C. Client owners must service the
+connection and drain its bounded input-event queue during loading/replay/stalls.
+The game's checkpoint adapter is not yet wired to this history. `input_history`
+and `input_network` exercise deterministic simulation oracles, not ROM rollback.

@@ -32,7 +32,7 @@ Status: step 1 in progress, 2026-10-25. No server has been rented or deployed.
   remaining configuration/UI
   audit; two-machine comparison. The timed update-1600 marker
   is not accepted as proof of character selection. The current process owner is
-  exercised by tests, not yet wired into the application or a network lobby.
+  exercised through a network integration test, not yet wired into the user-facing application.
 - Comparable diagnostic: `python3 tests/run_independent_clients.py` passes on
   build `a0ee1058f277c7d23dc921ee4e8a4272b0947462fa5845efc52129bc75ed4eae`.
   Two fresh processes match all 747 boundaries (1599–2345), covering the menu
@@ -167,8 +167,7 @@ Status: step 1 in progress, 2026-10-25. No server has been rented or deployed.
   2/3/4 clients, repeat matches retaining identities, load failure, full-room and
   incompatible joins, stale Ready, and disconnects. Local UDP tests require socket
   permission. This is control-plane evidence only: fingerprint generation,
-  lobby UI, input relay/history, and
-  confirmed-frame termination remain unimplemented. There is no deployment.
+  lobby UI and game rollback integration remain unimplemented. There is no deployment.
 - `LobbyClient` now owns the persistent ENet connection, validates roster identity,
   tracks bounded clock probes, and rejects late starts while keeping the room
   connection. Three fresh samples are required before acknowledging loading;
@@ -198,7 +197,20 @@ Status: step 1 in progress, 2026-10-25. No server has been rented or deployed.
   inputs without advancing any simulation. Another injects P3 during P2 replay
   and requires a second restore from the earliest affected frame. O0/O2 and
   address/undefined-behavior sanitizer checks pass. These are model tests, not
-  ROM rollback or live ENet-input integration; that wiring remains next.
+  ROM rollback; actual ENet-input integration is recorded below.
+- The server and `LobbyClient` now carry inputs over separate unreliable sequenced
+  ENet channels 1–4. Each stream is bound to its connection's assigned slot, and
+  exact repeats are forwarded immediately. The server rejects an unconfirmed
+  finish and aborts after five seconds without shared confirmed progress, retaining
+  connections in Lobby. Six Release CTest targets pass, including four real
+  connections carrying 180 simulated updates with independent delivery delays,
+  duplicates, and discarded server-to-P3 relays, then correction to an all-inputs-
+  known oracle. Loss is injected at the receiving client delivery boundary, not
+  by OS packet shaping. Raw connection tests reject slot impersonation and
+  conflicting replacements. Real-game startup/cancel integration still passes on
+  unchanged executable `379c51898ff87054a26f05275bab2b0bad22fe234aaf795518aa851546ce1e85`.
+  The actual ROM still uses recorded inputs: game IPC/input remapping, checkpoint
+  integration, presentation/audio handling, and the lobby UI remain required.
 
 ## Goal and boundary
 
