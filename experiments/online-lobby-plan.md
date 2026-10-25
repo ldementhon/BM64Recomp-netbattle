@@ -158,6 +158,17 @@ Status: step 1 in progress, 2026-10-25. No server has been rented or deployed.
   `379c51898ff87054a26f05275bab2b0bad22fe234aaf795518aa851546ce1e85`.
 - Step 2 server preparation has begun while the remaining step 1 gates stay open;
   no playable-network claim is made. Preserve concurrent renderer/runtime experiments.
+- `server/` builds independently with ENet 1.3.18 pinned to upstream commit
+  `2662c0de09e36f2a2030ccc2c528a3e4c9e8138a`. The bounded, versioned control
+  protocol and room model implement compatibility-token rejection, serialized
+  four-seat assignment, revisioned Ready/Start, matching initial digests, future
+  start epoch, cancellation, finish agreement, timeouts, and disconnect recovery.
+  Release CTest passes pure room/protocol checks and real loopback UDP tests with
+  2/3/4 clients, repeat matches retaining identities, load failure, full-room and
+  incompatible joins, stale Ready, and disconnects. Local UDP tests require socket
+  permission. This is control-plane evidence only: fingerprint generation, clock
+  mapping, persistent game-owner connection, lobby UI, input relay/history, and
+  confirmed-frame termination remain unimplemented. There is no deployment.
 
 ## Goal and boundary
 
