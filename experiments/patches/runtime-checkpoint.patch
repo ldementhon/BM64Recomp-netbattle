@@ -1,0 +1,692 @@
+diff --git a/librecomp/src/overlays.cpp b/librecomp/src/overlays.cpp
+index 8c8e5d1..00386e3 100644
+--- a/librecomp/src/overlays.cpp
++++ b/librecomp/src/overlays.cpp
+@@ -1,4 +1,6 @@
++#include "ultramodern/checkpoint.hpp"
+ #include <algorithm>
++#include <memory>
+ #include <cassert>
+ #include <cstdio>
+ #include <cstring>
+@@ -35,6 +37,7 @@ struct LoadedSection {
+ 
+ static std::unordered_map<uint32_t, uint16_t> code_sections_by_rom{};
+ static std::unordered_map<uint32_t, uint16_t> patch_code_sections_by_rom{};
++static uint64_t checkpoint_overlay_version = 0;
+ static std::vector<LoadedSection> loaded_sections{};
+ static std::unordered_map<int32_t, recomp_func_t*> func_map{};
+ static std::unordered_map<std::string, recomp_func_t*> base_exports{};
+@@ -147,6 +150,7 @@ std::span<const RelocEntry> recomp::overlays::get_section_relocs(uint16_t code_s
+ }
+ 
+ void recomp::overlays::add_loaded_function(int32_t ram, recomp_func_t* func) {
++    ++checkpoint_overlay_version;
+     func_map[ram] = func;
+ }
+ 
+@@ -155,16 +159,19 @@ void load_overlay(size_t section_table_index, int32_t ram) {
+ 
+     for (size_t function_index = 0; function_index < section.num_funcs; function_index++) {
+         const FuncEntry& func = section.funcs[function_index];
++        ++checkpoint_overlay_version;
+         func_map[ram + func.offset] = func.func;
+     }
+ 
+     loaded_sections.emplace_back(ram, section_table_index);
++    ++checkpoint_overlay_version;
+     section_addresses[section.index] = ram;
+ }
+ 
+ static void load_special_overlay(const SectionTableEntry& section, int32_t ram) {
+     for (size_t function_index = 0; function_index < section.num_funcs; function_index++) {
+         const FuncEntry& func = section.funcs[function_index];
++        ++checkpoint_overlay_version;
+         func_map[ram + func.offset] = func.func;
+     }
+ }
+@@ -215,9 +222,11 @@ extern "C" void unload_overlay_by_id(uint32_t id) {
+         for (size_t func_index = 0; func_index < section.num_funcs; func_index++) {
+             const auto& func = section.funcs[func_index];
+             uint32_t func_address = func.offset + find_it->loaded_ram_addr;
++            ++checkpoint_overlay_version;
+             func_map.erase(func_address);
+         }
+         // Reset the section's address in the address table
++        ++checkpoint_overlay_version;
+         section_addresses[section.index] = section.ram_addr;
+         // Remove the section from the loaded section map
+         loaded_sections.erase(find_it);
+@@ -258,9 +267,11 @@ extern "C" void unload_overlays(int32_t ram_addr, uint32_t size) {
+             for (size_t func_index = 0; func_index < section.num_funcs; func_index++) {
+                 const auto& func = section.funcs[func_index];
+                 uint32_t func_address = func.offset + it->loaded_ram_addr;
++                ++checkpoint_overlay_version;
+                 func_map.erase(func_address);
+             }
+             // Reset the section's address in the address table
++            ++checkpoint_overlay_version;
+             section_addresses[section.index] = section.ram_addr;
+             // Remove the section from the loaded section map
+             it = loaded_sections.erase(it);
+@@ -272,6 +283,7 @@ extern "C" void unload_overlays(int32_t ram_addr, uint32_t size) {
+ }
+ 
+ void recomp::overlays::init_overlays() {
++    ++checkpoint_overlay_version;
+     func_map.clear();
+     section_addresses = (int32_t *)calloc(sections_info.total_num_sections, sizeof(int32_t));
+ 
+@@ -285,6 +297,8 @@ void recomp::overlays::init_overlays() {
+     for (size_t section_index = 0; section_index < sections_info.num_code_sections; section_index++) {
+         SectionTableEntry* code_section = &sections_info.code_sections[section_index];
+ 
++        ++checkpoint_overlay_version;
++
+         section_addresses[sections_info.code_sections[section_index].index] = code_section->ram_addr;
+         code_sections_by_rom[code_section->rom_addr] = section_index;        
+     }
+@@ -465,3 +479,29 @@ std::span<const RelocEntry> recomp::overlays::get_patch_section_relocs(uint16_t
+ std::span<const uint8_t> recomp::overlays::get_patch_binary() {
+     return std::span{ reinterpret_cast<const uint8_t*>(patch_data.data()), patch_data.size() };
+ }
++
++void checkpoint::overlays_state(bool restore) {
++    struct Image {
++        decltype(loaded_sections) sections;
++        decltype(func_map) functions;
++        std::vector<int32_t> addresses;
++    };
++    static std::shared_ptr<const Image> images[snapshot_slots], current;
++    static uint64_t version = ~uint64_t{};
++    if (restore) {
++        if (current != images[state_slot] || version != checkpoint_overlay_version) {
++            current = images[state_slot];
++            loaded_sections = current->sections; func_map = current->functions;
++            std::copy(current->addresses.begin(), current->addresses.end(), section_addresses);
++            version = ++checkpoint_overlay_version;
++        }
++    } else {
++        if (version != checkpoint_overlay_version) {
++            auto image = std::make_shared<Image>();
++            image->sections = loaded_sections; image->functions = func_map;
++            image->addresses.assign(section_addresses, section_addresses + sections_info.total_num_sections);
++            current = std::move(image); version = checkpoint_overlay_version;
++        }
++        images[state_slot] = current;
++    }
++}
+diff --git a/librecomp/src/pi.cpp b/librecomp/src/pi.cpp
+index 43509ba..cddbfb5 100644
+--- a/librecomp/src/pi.cpp
++++ b/librecomp/src/pi.cpp
+@@ -1,3 +1,4 @@
++#include "ultramodern/checkpoint.hpp"
+ #include <memory>
+ #include <fstream>
+ #include <array>
+@@ -170,7 +171,7 @@ void save_write_ptr(const void* in, uint32_t offset, uint32_t count) {
+         memcpy(&save_context.save_buffer[offset], in, count);
+     }
+     
+-    save_context.write_sempahore.signal();
++    if (!checkpoint::enabled) save_context.write_sempahore.signal();
+ }
+ 
+ void save_write(RDRAM_ARG PTR(void) rdram_address, uint32_t offset, uint32_t count) {
+@@ -183,7 +184,7 @@ void save_write(RDRAM_ARG PTR(void) rdram_address, uint32_t offset, uint32_t cou
+         }
+     }
+ 
+-    save_context.write_sempahore.signal();
++    if (!checkpoint::enabled) save_context.write_sempahore.signal();
+ }
+ 
+ void save_read(RDRAM_ARG PTR(void) rdram_address, uint32_t offset, uint32_t count) {
+@@ -203,7 +204,7 @@ void save_clear(uint32_t start, uint32_t size, char value) {
+         std::fill_n(save_context.save_buffer.begin() + start, size, value);
+     }
+ 
+-    save_context.write_sempahore.signal();
++    if (!checkpoint::enabled) save_context.write_sempahore.signal();
+ }
+ 
+ size_t get_save_size(recomp::SaveType save_type) {
+@@ -397,3 +398,9 @@ extern "C" void osEPiRawStartDma_recomp(RDRAM_ARG recomp_context * ctx) {
+     );
+     ULTRAMODERN_QUICK_EXIT();
+ }
++
++void checkpoint::saves_state(bool restore) {
++    std::lock_guard lock{save_context.save_buffer_mutex};
++    static std::vector<char> saved_images[checkpoint::snapshot_slots]; auto& saved = saved_images[checkpoint::state_slot];
++    if (restore) save_context.save_buffer = saved; else saved = save_context.save_buffer;
++}
+diff --git a/ultramodern/include/ultramodern/renderer_context.hpp b/ultramodern/include/ultramodern/renderer_context.hpp
+index 43032ea..38f8817 100644
+--- a/ultramodern/include/ultramodern/renderer_context.hpp
++++ b/ultramodern/include/ultramodern/renderer_context.hpp
+@@ -85,6 +85,7 @@ namespace ultramodern {
+                 virtual void enable_instant_present() = 0;
+                 virtual void send_dl(const OSTask* task) = 0;
+                 virtual void update_screen() = 0;
++                virtual void wait_for_checkpoint_present() = 0;
+                 virtual void shutdown() = 0;
+                 virtual uint32_t get_display_framerate() const = 0;
+                 virtual float get_resolution_scale() const = 0;
+diff --git a/ultramodern/src/audio.cpp b/ultramodern/src/audio.cpp
+index 3198be0..26bfed1 100644
+--- a/ultramodern/src/audio.cpp
++++ b/ultramodern/src/audio.cpp
+@@ -1,3 +1,4 @@
++#include "ultramodern/checkpoint.hpp"
+ #include "ultramodern/ultra64.h"
+ #include "ultramodern/ultramodern.hpp"
+ #include <cassert>
+@@ -29,6 +30,7 @@ void ultramodern::queue_audio_buffer(RDRAM_ARG PTR(int16_t) audio_data_, uint32_
+     // Calculate the number of samples from the number of bytes.
+     uint32_t sample_count = byte_count / sizeof(int16_t);
+ 
++    if (checkpoint::enabled || checkpoint::fast_boot) return; // Do not queue speculative or skipped intro audio.
+     // Queue the swapped audio data.
+     if (sample_count > 0 && audio_callbacks.queue_samples) {
+         audio_callbacks.queue_samples(TO_PTR(int16_t, audio_data_), sample_count);
+@@ -44,6 +46,7 @@ float buffer_offset_frames = 0.5f;
+ // the remaining sample count and reporting a number that's too high here can lead to issues.
+ // Reporting a number that's too low can lead to audio lag in some games.
+ uint32_t ultramodern::get_remaining_audio_bytes() {
++    if (checkpoint::enabled || checkpoint::fast_boot) return 0;
+     // Get the number of remaining buffered audio bytes.
+     uint32_t buffered_byte_count;
+     if (audio_callbacks.get_frames_remaining != nullptr) {
+@@ -65,3 +68,5 @@ uint32_t ultramodern::get_remaining_audio_bytes() {
+     }
+     return buffered_byte_count;
+ }
++
++void checkpoint::audio_state(bool restore) { static uint32_t saved_images[checkpoint::snapshot_slots]; auto& saved = saved_images[checkpoint::state_slot];  if (restore) sample_rate = saved; else saved = sample_rate; }
+diff --git a/ultramodern/src/events.cpp b/ultramodern/src/events.cpp
+index 518529d..0b6c225 100644
+--- a/ultramodern/src/events.cpp
++++ b/ultramodern/src/events.cpp
+@@ -1,4 +1,8 @@
++#include "ultramodern/checkpoint.hpp"
+ #include <thread>
++#ifdef __APPLE__
++#include <pthread.h>
++#endif
+ #include <atomic>
+ #include <chrono>
+ #include <cinttypes>
+@@ -35,7 +39,9 @@ struct ScreenUpdateAction {
+ struct UpdateConfigAction {
+ };
+ 
+-using Action = std::variant<SpTaskAction, ScreenUpdateAction, UpdateConfigAction>;
++struct CheckpointFence { bool presentation = false; };
++static moodycamel::LightweightSemaphore checkpoint_fence;
++using Action = std::variant<SpTaskAction, ScreenUpdateAction, UpdateConfigAction, CheckpointFence>;
+ 
+ struct ViState {
+     const OSViMode* mode;
+@@ -200,7 +206,10 @@ void vi_thread_func() {
+             // printf("Skipping the next VI wait\n");
+             next = std::chrono::high_resolution_clock::now();
+         }
+-        ultramodern::sleep_until(next);
++        // Initialization and some updates wait for multiple VIs. Keep providing
++        // interrupts during fast boot even when the main-loop counter is still.
++        if (checkpoint::fast_boot) ultramodern::sleep_milliseconds(1);
++        else ultramodern::sleep_until(next);
+         auto time_now = ultramodern::time_since_start();
+         // Calculate how many VIs have passed
+         uint64_t new_total_vis = (time_now * (60 * ultramodern::get_speed_multiplier()) / 1000ms) + 1;
+@@ -245,6 +254,7 @@ void vi_thread_func() {
+ 
+         if (events_callbacks.vi_callback != nullptr) {
+             events_callbacks.vi_callback();
++            if (checkpoint::enabled) return;
+         }
+     }
+ }
+@@ -289,6 +299,10 @@ void task_thread_func(uint8_t* rdram, moodycamel::LightweightSemaphore* thread_r
+ 
+ std::atomic_uint32_t display_refresh_rate = 60;
+ std::atomic<float> resolution_scale = 1.0f;
++static std::atomic<uint64_t> drawn_tasks{}, skipped_tasks{}, presented_screens{}, hidden_screens{};
++checkpoint::RenderCounts checkpoint::render_counts() {
++    return {drawn_tasks.load(), skipped_tasks.load(), presented_screens.load(), hidden_screens.load()};
++}
+ 
+ uint32_t ultramodern::get_target_framerate(uint32_t original) {
+     auto& config = ultramodern::renderer::get_graphics_config();
+@@ -323,6 +337,9 @@ void gfx_thread_func(uint8_t* rdram, moodycamel::LightweightSemaphore* thread_re
+     bool enabled_instant_present = false;
+     using namespace std::chrono_literals;
+ 
++#ifdef __APPLE__
++    if(checkpoint::enabled && std::getenv("BM64_PACING")) pthread_set_qos_class_self_np(QOS_CLASS_USER_INTERACTIVE,0);
++#endif
+     ultramodern::set_native_thread_name("Gfx Thread");
+     ultramodern::set_native_thread_priority(ultramodern::ThreadPriority::Normal);
+ 
+@@ -351,6 +368,10 @@ void gfx_thread_func(uint8_t* rdram, moodycamel::LightweightSemaphore* thread_re
+         // Try to pull an action from the queue
+         Action action;
+         if (events_context.action_queue.wait_dequeue_timed(action, 1ms)) {
++            if (const auto* fence = std::get_if<CheckpointFence>(&action)) {
++                if (fence->presentation) renderer_context->wait_for_checkpoint_present();
++                checkpoint_fence.signal(); continue;
++            }
+             // Determine the action type and act on it
+             if (const auto* task_action = std::get_if<SpTaskAction>(&action)) {
+                 // Turn on instant present if the game has been started and it hasn't been turned on yet.
+@@ -369,7 +390,11 @@ void gfx_thread_func(uint8_t* rdram, moodycamel::LightweightSemaphore* thread_re
+                 ultramodern::extensions::on_displaylist_submitted(displaylist);
+ 
+                 [[maybe_unused]] auto renderer_start = std::chrono::high_resolution_clock::now();
+-                renderer_context->send_dl(&task_action->task);
++                if (!checkpoint::fast_boot) {
++                    renderer_context->send_dl(&task_action->task);
++                    if (checkpoint::suppress_render) ++skipped_tasks;
++                    else ++drawn_tasks;
++                } else ++skipped_tasks;
+                 [[maybe_unused]] auto renderer_end = std::chrono::high_resolution_clock::now();
+ 
+                 dp_complete();
+@@ -380,7 +405,10 @@ void gfx_thread_func(uint8_t* rdram, moodycamel::LightweightSemaphore* thread_re
+             }
+             else if (const auto* screen_update_action = std::get_if<ScreenUpdateAction>(&action)) {
+                 events_context.vi.update_screen_regs = screen_update_action->regs;
+-                renderer_context->update_screen();
++                if (!checkpoint::fast_boot && !checkpoint::suppress_render) {
++                    renderer_context->update_screen();
++                    ++presented_screens;
++                } else ++hidden_screens;
+                 display_refresh_rate = renderer_context->get_display_framerate();
+                 resolution_scale = renderer_context->get_resolution_scale();
+             }
+@@ -558,10 +586,19 @@ void ultramodern::submit_rsp_task(RDRAM_ARG PTR(OSTask) task_) {
+     // Send gfx tasks to the graphics action queue
+     if (task->t.type == M_GFXTASK) {
+         events_context.action_queue.enqueue(SpTaskAction{ *task });
++        if (checkpoint::enabled) {
++            events_context.action_queue.enqueue(CheckpointFence{});
++            auto wait_start = std::chrono::steady_clock::now();
++            checkpoint_fence.wait();
++            if (checkpoint::profiling) checkpoint::graphics_wait_ns += std::chrono::duration_cast<std::chrono::nanoseconds>(std::chrono::steady_clock::now()-wait_start).count();
++        }
+     }
+     // Set all other tasks as the RSP task
+     else {
+-        events_context.sp_task_queue.enqueue(task);
++        if (checkpoint::enabled) {
++            if (!ultramodern::rsp::run_task(rdram, task)) std::abort();
++            sp_complete();
++        } else events_context.sp_task_queue.enqueue(task);
+     }
+ }
+ 
+@@ -620,3 +657,54 @@ void ultramodern::join_event_threads() {
+     events_context.sp_task_queue.enqueue(nullptr);
+     events_context.sp.task_thread.join();
+ }
++
++static int checkpoint_retraces = 1;
++void checkpoint::finish_presentation() {
++    events_context.action_queue.enqueue(CheckpointFence{true});
++    checkpoint_fence.wait();
++}
++extern void checkpoint_tick_timers(uint8_t* rdram);
++void checkpoint::tick() {
++    ++ticks;
++    events_context.vi.update_vi();
++    auto* state = events_context.vi.get_cur_state();
++    if (--checkpoint_retraces == 0) {
++        if (state->mq) ultramodern::enqueue_external_message_src(state->mq, state->msg, false, ultramodern::EventMessageSource::Vi);
++        checkpoint_retraces = state->retrace_count;
++    }
++    if (events_context.ai.mq) ultramodern::enqueue_external_message_src(events_context.ai.mq, events_context.ai.msg, false, ultramodern::EventMessageSource::Ai);
++    checkpoint_tick_timers(events_context.rdram);
++    // No display work exists for a hidden VI; preserve its host register update in place.
++    static const bool skip_hidden_fence=std::getenv("BM64_SKIP_HIDDEN_FENCE")!=nullptr;
++    if(suppress_render && skip_hidden_fence) {
++        events_context.vi.update_screen_regs=events_context.vi.regs;
++        ++hidden_screens;
++        return;
++    }
++    events_context.action_queue.enqueue(ScreenUpdateAction{events_context.vi.regs});
++    events_context.action_queue.enqueue(CheckpointFence{});
++    auto wait_start = std::chrono::steady_clock::now();
++    checkpoint_fence.wait();
++    if (profiling) graphics_wait_ns += std::chrono::duration_cast<std::chrono::nanoseconds>(std::chrono::steady_clock::now()-wait_start).count();
++}
++void checkpoint::events_state(bool restore) {
++    // No worker owns a task at this boundary. Thread and mutex objects stay alive.
++    static ViState states_images[checkpoint::snapshot_slots][2]; auto& states = states_images[checkpoint::state_slot];
++    static int cur_images[checkpoint::snapshot_slots]; auto& cur = cur_images[checkpoint::state_slot]; static int field_images[checkpoint::snapshot_slots]; auto& field = field_images[checkpoint::state_slot]; static int retraces_images[checkpoint::snapshot_slots]; auto& retraces = retraces_images[checkpoint::state_slot];
++    static ultramodern::renderer::ViRegs regs_images[checkpoint::snapshot_slots]; auto& regs = regs_images[checkpoint::state_slot];
++    static decltype(events_context.ai) ai_images[snapshot_slots]; auto& ai = ai_images[state_slot];
++    static decltype(events_context.si) si_images[snapshot_slots]; auto& si = si_images[state_slot];
++    static decltype(events_context.dp) dp_images[snapshot_slots]; auto& dp = dp_images[state_slot];
++    static int32_t sp_mq_images[checkpoint::snapshot_slots]; auto& sp_mq = sp_mq_images[checkpoint::state_slot];  static OSMesg sp_msg_images[checkpoint::snapshot_slots]; auto& sp_msg = sp_msg_images[checkpoint::state_slot];
++    if (restore) {
++        std::copy(std::begin(states), std::end(states), events_context.vi.states);
++        events_context.vi.cur_state = cur; events_context.vi.field = field; events_context.vi.regs = regs;
++        events_context.ai = ai; events_context.si = si; events_context.dp = dp;
++        events_context.sp.mq = sp_mq; events_context.sp.msg = sp_msg; checkpoint_retraces = retraces;
++    } else {
++        std::copy(std::begin(events_context.vi.states), std::end(events_context.vi.states), states);
++        cur = events_context.vi.cur_state; field = events_context.vi.field; regs = events_context.vi.regs;
++        ai = events_context.ai; si = events_context.si; dp = events_context.dp;
++        sp_mq = events_context.sp.mq; sp_msg = events_context.sp.msg; retraces = checkpoint_retraces;
++    }
++}
+diff --git a/ultramodern/src/extensions.cpp b/ultramodern/src/extensions.cpp
+index e18b276..e005aa7 100644
+--- a/ultramodern/src/extensions.cpp
++++ b/ultramodern/src/extensions.cpp
+@@ -1,3 +1,4 @@
++#include "ultramodern/checkpoint.hpp"
+ #include <mutex>
+ #include <vector>
+ 
+@@ -58,3 +59,9 @@ void ultramodern::extensions::on_displaylist_parsed(PTR(void) displaylist) {
+ void ultramodern::extensions::on_displaylist_completed(PTR(void) displaylist) {
+     dispatch_displaylist_events(displaylist, OS_EX_DISPLAYLIST_EVENT_COMPLETED);
+ }
++
++void checkpoint::extensions_state(bool restore) {
++    std::lock_guard lock{extension_state.dl_events.dl_event_mutex};
++    static std::vector<DLEvent> saved_images[checkpoint::snapshot_slots]; auto& saved = saved_images[checkpoint::state_slot];
++    if (restore) extension_state.dl_events.pending_events = saved; else saved = extension_state.dl_events.pending_events;
++}
+diff --git a/ultramodern/src/input.cpp b/ultramodern/src/input.cpp
+index 8e86cb1..dfb5da8 100644
+--- a/ultramodern/src/input.cpp
++++ b/ultramodern/src/input.cpp
+@@ -1,3 +1,4 @@
++#include "ultramodern/checkpoint.hpp"
+ #include <cassert>
+ 
+ #include "ultramodern/input.hpp"
+@@ -212,3 +213,5 @@ s32 __osMotorAccess(RDRAM_ARG PTR(OSPfs) pfs_, s32 flag) {
+     return 0;
+ }
+ 
++
++void checkpoint::input_state(bool restore) { static decltype(max_controllers) saved_images[checkpoint::snapshot_slots]; auto& saved = saved_images[checkpoint::state_slot];  if (restore) max_controllers = saved; else saved = max_controllers; }
+diff --git a/ultramodern/src/mesgqueue.cpp b/ultramodern/src/mesgqueue.cpp
+index 9944a02..7ae018f 100644
+--- a/ultramodern/src/mesgqueue.cpp
++++ b/ultramodern/src/mesgqueue.cpp
+@@ -1,4 +1,6 @@
++#include "ultramodern/checkpoint.hpp"
+ #include <bitset>
++#include <deque>
+ #include <thread>
+ 
+ #include "blockingconcurrentqueue.h"
+@@ -14,6 +16,11 @@ struct QueuedMessage {
+ };
+ 
+ static moodycamel::BlockingConcurrentQueue<QueuedMessage> external_messages {};
++static std::deque<QueuedMessage> checkpoint_messages;
++void checkpoint::queues_state(bool restore) {
++    static std::deque<QueuedMessage> saved_images[checkpoint::snapshot_slots]; auto& saved = saved_images[checkpoint::state_slot];
++    if (restore) checkpoint_messages = saved; else saved = checkpoint_messages;
++}
+ std::bitset<32> requeue_enabled;
+ 
+ void ultramodern::set_message_queue_control(const ultramodern::MessageQueueControl& mqc) {
+@@ -28,16 +35,25 @@ void ultramodern::set_message_queue_control(const ultramodern::MessageQueueContr
+ }
+ 
+ void ultramodern::enqueue_external_message_src(PTR(OSMesgQueue) mq, OSMesg msg, bool jam, EventMessageSource src) {
+-    external_messages.enqueue({mq, msg, jam, requeue_enabled[static_cast<int>(src)]});
++    ultramodern::enqueue_external_message(mq, msg, jam, requeue_enabled[static_cast<int>(src)]);
+ }
+ 
+ void ultramodern::enqueue_external_message(PTR(OSMesgQueue) mq, OSMesg msg, bool jam, bool requeue_if_blocked) {
+-    external_messages.enqueue({mq, msg, jam, requeue_if_blocked});
++    if (checkpoint::enabled) checkpoint_messages.push_back({mq, msg, jam, requeue_if_blocked});
++    else external_messages.enqueue({mq, msg, jam, requeue_if_blocked});
+ }
+ 
+ bool do_send(RDRAM_ARG PTR(OSMesgQueue) mq_, OSMesg msg, bool jam, bool block);
+ 
+ void dequeue_external_messages(RDRAM_ARG1) {
++    if (checkpoint::enabled) {
++        const size_t count = checkpoint_messages.size();
++        for (size_t i = 0; i < count; ++i) {
++            auto m = checkpoint_messages.front(); checkpoint_messages.pop_front();
++            if (!do_send(rdram, m.mq, m.mesg, m.jam, false) && m.requeue_if_blocked) checkpoint_messages.push_back(m);
++        }
++        return;
++    }
+     QueuedMessage to_send;
+     std::vector<QueuedMessage> requeued_messages{};
+     while (external_messages.try_dequeue(to_send)) {
+@@ -51,6 +67,11 @@ void dequeue_external_messages(RDRAM_ARG1) {
+ }
+ 
+ void ultramodern::wait_for_external_message(RDRAM_ARG1) {
++    if (checkpoint::enabled) {
++        if (checkpoint_messages.empty()) checkpoint::tick();
++        dequeue_external_messages(rdram);
++        return;
++    }
+     QueuedMessage to_send;
+     external_messages.wait_dequeue(to_send);
+     if (!do_send(PASS_RDRAM to_send.mq, to_send.mesg, to_send.jam, false) && to_send.requeue_if_blocked) {
+@@ -59,6 +80,11 @@ void ultramodern::wait_for_external_message(RDRAM_ARG1) {
+ }
+ 
+ void ultramodern::wait_for_external_message_timed(RDRAM_ARG u32 millis) {
++    if (checkpoint::enabled) {
++        if (checkpoint_messages.empty()) checkpoint::tick();
++        dequeue_external_messages(rdram);
++        return;
++    }
+     QueuedMessage to_send;
+     if (external_messages.wait_dequeue_timed(to_send, std::chrono::milliseconds{millis})) {
+         if (!do_send(PASS_RDRAM to_send.mq, to_send.mesg, to_send.jam, false) && to_send.requeue_if_blocked) {
+diff --git a/ultramodern/src/threadqueue.cpp b/ultramodern/src/threadqueue.cpp
+index f9c0fa1..f58bb58 100644
+--- a/ultramodern/src/threadqueue.cpp
++++ b/ultramodern/src/threadqueue.cpp
+@@ -1,3 +1,4 @@
++#include "ultramodern/checkpoint.hpp"
+ #include <cassert>
+ 
+ #include "ultramodern/ultramodern.hpp"
+@@ -65,3 +66,5 @@ PTR(OSThread) ultramodern::thread_queue_peek(RDRAM_ARG PTR(PTR(OSThread)) queue_
+     PTR(OSThread)* queue = queue_to_ptr(PASS_RDRAM queue_);
+     return *queue;
+ }
++
++void checkpoint::runqueue_state(bool restore) { static decltype(running_queue_impl) saved_images[checkpoint::snapshot_slots]; auto& saved = saved_images[checkpoint::state_slot];  if (restore) running_queue_impl = saved; else saved = running_queue_impl; }
+diff --git a/ultramodern/src/threads.cpp b/ultramodern/src/threads.cpp
+index 812c556..47d6fc7 100644
+--- a/ultramodern/src/threads.cpp
++++ b/ultramodern/src/threads.cpp
+@@ -1,3 +1,4 @@
++#include "ultramodern/checkpoint.hpp"
+ #include <cstdio>
+ #include <thread>
+ #include <cassert>
+@@ -167,16 +168,19 @@ void run_next_thread(RDRAM_ARG1) {
+ 
+     OSThread* to_run = TO_PTR(OSThread, ultramodern::thread_queue_pop(PASS_RDRAM ultramodern::running_queue));
+     debug_printf("[Scheduling] Resuming execution of thread %d\n", to_run->id);
++    if (checkpoint::enabled) { checkpoint::switch_thread((int32_t)((uint8_t*)to_run - rdram + 0x80000000)); return; }
+     to_run->context->running.signal();
+ }
+ 
+ void ultramodern::run_next_thread_and_wait(RDRAM_ARG1) {
++    if (checkpoint::enabled) { run_next_thread(PASS_RDRAM1); return; }
+     UltraThreadContext* cur_context = TO_PTR(OSThread, thread_self)->context;
+     run_next_thread(PASS_RDRAM1);
+     wait_for_resumed(PASS_RDRAM cur_context);
+ }
+ 
+ void ultramodern::resume_thread_and_wait(RDRAM_ARG OSThread *t) {
++    if (checkpoint::enabled) { checkpoint::switch_thread((int32_t)((uint8_t*)t - rdram + 0x80000000)); return; }
+     UltraThreadContext* cur_context = TO_PTR(OSThread, thread_self)->context;
+     resume_thread(t);
+     wait_for_resumed(PASS_RDRAM cur_context);
+@@ -239,7 +243,8 @@ extern "C" void osStartThread(RDRAM_ARG PTR(OSThread) t_) {
+     // Otherwise, immediately start the thread and terminate this one.
+     else {
+         t->state = OSThreadState::QUEUED;
+-        resume_thread(t);
++        if (checkpoint::enabled) checkpoint::switch_thread(t_);
++        else resume_thread(t);
+         //throw ultramodern::thread_terminated{};
+     }
+ }
+@@ -255,6 +260,12 @@ extern "C" void osCreateThread(RDRAM_ARG PTR(OSThread) t_, OSId id, PTR(thread_f
+     t->state = OSThreadState::STOPPED;
+     t->sp = sp - 0x10; // Set up the first stack frame
+ 
++    if (checkpoint::enabled) {
++        t->context = nullptr;
++        checkpoint::create_thread(rdram, t_, entrypoint, arg);
++        return;
++    }
++
+     // Spawn a new thread, which will immediately pause itself and wait until it's been started.
+     // Pass the context as an argument to the thread function to ensure that it can't get cleared before the thread captures its value.
+     UltraThreadContext* context = new UltraThreadContext{};
+@@ -292,6 +303,7 @@ extern "C" void osDestroyThread(RDRAM_ARG PTR(OSThread) t_) {
+     if (t->state != OSThreadState::STOPPED) {
+         ultramodern::thread_queue_remove(PASS_RDRAM t->queue, t_);
+     }
++    if (checkpoint::enabled) { checkpoint::destroy_thread(t_); return; }
+     // Check if the thread has already been destroyed to prevent destroying it again.
+     UltraThreadContext* cur_context = t->context;
+     if (cur_context != nullptr) {
+diff --git a/ultramodern/src/timer.cpp b/ultramodern/src/timer.cpp
+index ee26c45..0983d0e 100644
+--- a/ultramodern/src/timer.cpp
++++ b/ultramodern/src/timer.cpp
+@@ -1,3 +1,4 @@
++#include "ultramodern/checkpoint.hpp"
+ #include <thread>
+ #include <variant>
+ #include <set>
+@@ -15,6 +16,7 @@
+ static std::chrono::high_resolution_clock::time_point start_time = std::chrono::high_resolution_clock::now();
+ // Offset of the duration since program start used to calculate the value for osGetTime. 
+ static int64_t ostime_offset = 0;
++static std::vector<int32_t> checkpoint_timers;
+ // Game speed multiplier (1 means no speedup)
+ constexpr uint32_t speed_multiplier = 1;
+ // N64 CPU counter ticks per millisecond
+@@ -63,6 +65,7 @@ std::chrono::high_resolution_clock::time_point ticks_to_timepoint(uint64_t ticks
+ }
+ 
+ uint64_t time_now() {
++    if (checkpoint::enabled) return checkpoint::ticks * 781250;
+     return duration_to_ticks(std::chrono::high_resolution_clock::now() - start_time);
+ }
+ 
+@@ -141,6 +144,7 @@ void timer_thread(RDRAM_ARG1) {
+ }
+ 
+ void ultramodern::init_timers(RDRAM_ARG1) {
++    if (checkpoint::enabled) return;
+     timer_context.thread = std::thread{ timer_thread, PASS_RDRAM1 };
+     timer_context.thread.detach();
+ }
+@@ -192,13 +196,15 @@ extern "C" int osSetTimer(RDRAM_ARG PTR(OSTimer) t_, OSTime countdown, OSTime in
+     t->mq = mq;
+     t->msg = msg;
+ 
+-    timer_context.action_queue.enqueue(AddTimerAction{ t_ });
++    if (checkpoint::enabled) { std::erase(checkpoint_timers, t_); checkpoint_timers.push_back(t_); }
++    else timer_context.action_queue.enqueue(AddTimerAction{ t_ });
+ 
+     return 0;
+ }
+ 
+ extern "C" int osStopTimer(RDRAM_ARG PTR(OSTimer) t_) {
+-    timer_context.action_queue.enqueue(RemoveTimerAction{ t_ });
++    if (checkpoint::enabled) std::erase(checkpoint_timers, t_);
++    else timer_context.action_queue.enqueue(RemoveTimerAction{ t_ });
+ 
+     // TODO don't blindly return 0 here; requires some response from the timer thread to know what the returned value was
+     return 0;
+@@ -232,3 +238,25 @@ void ultramodern::sleep_until(const std::chrono::high_resolution_clock::time_poi
+ }
+ 
+ #endif
++
++void checkpoint::timers_state(bool restore) {
++    static std::vector<int32_t> saved_images[checkpoint::snapshot_slots]; auto& saved = saved_images[checkpoint::state_slot];
++    static int64_t offset_images[checkpoint::snapshot_slots]; auto& offset = offset_images[checkpoint::state_slot];
++    if (restore) { checkpoint_timers = saved; ostime_offset = offset; }
++    else { saved = checkpoint_timers; offset = ostime_offset; }
++}
++void checkpoint_tick_timers(uint8_t* rdram) {
++    auto timers = checkpoint_timers;
++    std::sort(timers.begin(), timers.end(), [&](int32_t a, int32_t b) {
++        auto* x = TO_PTR(OSTimer, a); auto* y = TO_PTR(OSTimer, b);
++        return x->timestamp != y->timestamp ? x->timestamp < y->timestamp : a < b;
++    });
++    for (auto addr : timers) {
++        auto* t = TO_PTR(OSTimer, addr);
++        if (t->timestamp <= time_now()) {
++            ultramodern::enqueue_external_message_src(t->mq, t->msg, false, ultramodern::EventMessageSource::Timer);
++            if (t->interval) t->timestamp += t->interval;
++            else std::erase(checkpoint_timers, addr);
++        }
++    }
++}
+diff --git a/ultramodern/include/ultramodern/checkpoint.hpp b/ultramodern/include/ultramodern/checkpoint.hpp
+new file mode 100644
+index 0000000..d8a0bc0
+--- /dev/null
++++ b/ultramodern/include/ultramodern/checkpoint.hpp
+@@ -0,0 +1,41 @@
++#pragma once
++#include <cstdint>
++#include <cstddef>
++#include <atomic>
++// Local, bounded feasibility experiment. Disabled for normal play.
++namespace checkpoint {
++extern bool enabled;
++extern std::atomic<bool> profiling;
++extern std::atomic<uint64_t> graphics_wait_ns;
++extern std::atomic<uint64_t> presentation_frame, presentation_deadline;
++void framebuffer_texture_read(const void*, size_t, unsigned);
++void framebuffer_written(void*, size_t, bool);
++void displayed(uint64_t, uint64_t, uint64_t);
++extern std::atomic<bool> fast_boot;
++extern std::atomic<uint64_t> boot_frame;
++extern std::atomic<bool> suppress_render;
++extern std::atomic<bool> catchup_active;
++extern std::atomic<uint64_t> presentation_wait_ns;
++struct RenderCounts { uint64_t drawn, skipped, presented, hidden; };
++RenderCounts render_counts();
++void finish_presentation();
++bool boot_input(int controller, uint16_t* buttons, float* x, float* y);
++inline constexpr size_t snapshot_slots = 17;
++extern size_t state_slot;
++extern uint64_t ticks;
++void create_thread(uint8_t* ram, int32_t thread, int32_t entry, int32_t arg);
++void switch_thread(int32_t thread);
++void destroy_thread(int32_t thread);
++void tick();
++void context(void* ctx);
++void events_state(bool restore);
++void timers_state(bool restore);
++void queues_state(bool restore);
++void runqueue_state(bool restore);
++void overlays_state(bool restore);
++void extensions_state(bool restore);
++void audio_state(bool restore);
++void input_state(bool restore);
++void saves_state(bool restore);
++bool input(int controller, uint16_t* buttons, float* x, float* y);
++}

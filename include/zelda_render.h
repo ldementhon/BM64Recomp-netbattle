@@ -28,6 +28,7 @@ namespace zelda64 {
             void enable_instant_present() override;
             void send_dl(const OSTask *task) override;
             void update_screen() override;
+            void wait_for_checkpoint_present() override;
             void shutdown() override;
             uint32_t get_display_framerate() const override;
             float get_resolution_scale() const override;

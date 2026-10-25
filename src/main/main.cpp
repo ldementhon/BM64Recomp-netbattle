@@ -1,3 +1,4 @@
+#include "ultramodern/checkpoint.hpp"
 #include <cstdio>
 #include <cassert>
 #include <unordered_map>
@@ -7,6 +8,8 @@
 #include <numeric>
 #include <stdexcept>
 #include <cinttypes>
+#include <cstdlib>
+#include <string_view>
 
 #include "nfd.h"
 
@@ -528,9 +531,68 @@ void reorder_texture_pack(recomp::mods::ModContext&) {
 
 #define REGISTER_FUNC(name) recomp::overlays::register_base_export(#name, name)
 
+void report_process_probe();
+
+static bool probe_input(int controller, uint16_t* buttons, float* x, float* y) {
+    if (controller != 0) return false;
+    *buttons = 0;
+    *x = *y = 0.0f;
+    static unsigned reads = 0;
+    if (++reads % 60 == 0) {
+        fprintf(stderr, "PROBE: controller_reads=%u\n", reads);
+        report_process_probe();
+    }
+    if (reads == 300) {
+        fprintf(stderr, "PASS: startup reached 300 controller reads; full-state replay NOT tested\n");
+        fflush(stderr);
+        // This bounded diagnostic deliberately bypasses runtime shutdown, whose
+        // thread joins are unrelated to the startup/state inventory experiment.
+        std::_Exit(0);
+    }
+    return true;
+}
+
+static void probe_thread(uint8_t* rdram, recomp_context* ctx) {
+    if (checkpoint::enabled) checkpoint::context(ctx);
+    auto* thread = TO_PTR(OSThread, ultramodern::this_thread());
+    fprintf(stderr, "PROBE: native game thread id=%d priority=%d\n", thread->id, thread->priority);
+}
+
+static ultramodern::input::connected_device_info_t checkpoint_device(int controller) {
+    return {ultramodern::input::Device::Controller, controller == 0 ? ultramodern::input::Pak::RumblePak : ultramodern::input::Pak::None};
+}
+
+static void probe_vi() {
+    recomp::update_rumble();
+    static bool started = false;
+    if (!started) {
+        started = true;
+        // The first VI callback runs after the launcher video mode is initialized.
+        // Starting before runtime initialization skips that setup and races the VI thread.
+        recomp::start_game(supported_games[0].game_id);
+    }
+}
+
+static bool play_input(int controller, uint16_t* buttons, float* x, float* y) {
+    if (checkpoint::fast_boot) return checkpoint::boot_input(controller, buttons, x, y);
+    return recomp::get_n64_input(controller, buttons, x, y);
+}
+
 int main(int argc, char** argv) {
-    (void)argc;
-    (void)argv;
+    bool startup_probe = false;
+    for (int i=1;i<argc;++i) {
+        std::string_view arg(argv[i]);
+        if (arg == "--checkpoint-test") checkpoint::enabled = true;
+        else if (arg == "--single-battle") checkpoint::fast_boot = true;
+        else if (arg == "--smoke-test") startup_probe = true;
+        else { fprintf(stderr, "Unknown option: %s\n", argv[i]); return EXIT_FAILURE; }
+    }
+    const bool smoke_test = checkpoint::enabled || startup_probe;
+    const bool auto_start = smoke_test || checkpoint::fast_boot.load();
+    if (smoke_test && std::getenv("APP_FOLDER_PATH") == nullptr) {
+        fprintf(stderr, "--smoke-test requires APP_FOLDER_PATH pointing to isolated test settings/saves\n");
+        return EXIT_FAILURE;
+    }
     recomp::Version project_version{};
     if (!recomp::Version::from_string(version_string, project_version)) {
         ultramodern::error_handling::message_box(("Invalid version string: " + version_string).c_str());
@@ -596,6 +658,7 @@ int main(int argc, char** argv) {
     recomp::register_config_path(zelda64::get_app_folder_path());
 
     // Register supported games and patches
+    if (smoke_test) supported_games[0].thread_create_callback = probe_thread;
     for (const auto& game : supported_games) {
         recomp::register_game(game);
     }
@@ -652,14 +715,14 @@ int main(int argc, char** argv) {
     };
 
     ultramodern::input::callbacks_t input_callbacks{
-        .poll_input = recomp::poll_inputs,
-        .get_input = recomp::get_n64_input,
-        .set_rumble = recomp::set_rumble,
-        .get_connected_device_info = recomp::get_connected_device_info,
+        .poll_input = checkpoint::enabled ? nullptr : recomp::poll_inputs,
+        .get_input = checkpoint::enabled ? checkpoint::input : (smoke_test ? probe_input : play_input),
+        .set_rumble = checkpoint::enabled ? nullptr : recomp::set_rumble,
+        .get_connected_device_info = checkpoint::enabled ? checkpoint_device : recomp::get_connected_device_info,
     };
 
     ultramodern::events::callbacks_t thread_callbacks{
-        .vi_callback = recomp::update_rumble,
+        .vi_callback = auto_start ? probe_vi : recomp::update_rumble,
         .gfx_init_callback = recompui::update_supported_options,
     };
 
@@ -698,6 +761,13 @@ int main(int argc, char** argv) {
         .message_queue_control = {},
     };
 
+    if (auto_start) {
+        recomp::check_all_stored_roms();
+        if (!recomp::is_rom_valid(supported_games[0].game_id)) {
+            fprintf(stderr, "PROBE: isolated settings directory has no valid bm64_us.z64\n");
+            return EXIT_FAILURE;
+        }
+    }
     recomp::start(cfg);
 
     NFD_Quit();

@@ -1,0 +1,2 @@
+# Append to rollback-inputs.txt with BM64_INPUT_EXTRA.
+1760 1768 0000 0.7 0 0

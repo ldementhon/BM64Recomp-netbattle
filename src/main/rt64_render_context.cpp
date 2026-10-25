@@ -2,9 +2,13 @@
 #include <cstring>
 #include <variant>
 #include <algorithm>
+#include "common/rt64_rollback_probe.h"
+#include "ultramodern/checkpoint.hpp"
 
 #define HLSL_CPU
 #include "hle/rt64_application.h"
+#include "hle/rt64_workload_queue.h"
+#include "hle/rt64_present_queue.h"
 #include "rt64_render_hooks.h"
 #include "overloaded.h"
 
@@ -203,6 +207,18 @@ ultramodern::renderer::GraphicsApi map_graphics_api(RT64::UserConfiguration::Gra
 }
 
 zelda64::renderer::RT64Context::RT64Context(uint8_t* rdram, ultramodern::renderer::WindowHandle window_handle, bool debug) {
+    RT64::RollbackProbe::prep_detail = checkpoint::enabled && std::getenv("BM64_PREP_DETAIL");
+    RT64::RollbackProbe::prep_profile = checkpoint::enabled && std::getenv("BM64_PREP_PROFILE");
+    RT64::RollbackProbe::inline_uploads = checkpoint::enabled && std::getenv("BM64_INLINE_UPLOADS");
+    RT64::RollbackProbe::aligned_pacing = checkpoint::enabled && std::getenv("BM64_PACING");
+    RT64::RollbackProbe::bounded_present = checkpoint::enabled && std::getenv("BM64_BOUNDED_PRESENT");
+    RT64::RollbackProbe::incremental_writeback = checkpoint::enabled && std::getenv("BM64_INCREMENTAL_WRITEBACK");
+    RT64::RollbackProbe::enabled = checkpoint::profiling.load();
+    RT64::RollbackProbe::displayed = checkpoint::displayed;
+#ifdef BM64_TRACE_MEMORY
+    RT64::RollbackProbe::writeback = checkpoint::framebuffer_written;
+    RT64::RollbackProbe::texture_read = checkpoint::framebuffer_texture_read;
+#endif
     static unsigned char dummy_rom_header[0x40];
     recompui::set_render_hooks();
 
@@ -321,14 +337,36 @@ zelda64::renderer::RT64Context::RT64Context(uint8_t* rdram, ultramodern::rendere
 zelda64::renderer::RT64Context::~RT64Context() = default;
 
 void zelda64::renderer::RT64Context::send_dl(const OSTask* task) {
+    app->state->suppressPresentation = checkpoint::suppress_render;
+    app->state->forceSingleFrame = checkpoint::catchup_active;
+    const auto previous_workload = app->state->workloadId;
+    const auto previous_present = app->state->presentId;
+    RT64::RollbackProbe::frame = checkpoint::presentation_frame;
+    RT64::RollbackProbe::deadline = checkpoint::presentation_deadline;
+    RT64::RollbackProbe::Timer probe(RT64::RollbackProbe::graphics);
     check_texture_pack_actions();
     app->state->rsp->reset();
     app->interpreter->loadUCodeGBI(task->t.ucode & 0x3FFFFFF, task->t.ucode_data & 0x3FFFFFF, true);
     app->processDisplayLists(app->core.RDRAM, task->t.data_ptr & 0x3FFFFFF, 0, true);
+    if (app->state->suppressPresentation &&
+        (app->state->workloadId != previous_workload || app->state->presentId != previous_present)) {
+        fprintf(stderr, "CHECKPOINT FAIL: suppressed display list submitted a presentation workload\n");
+        std::abort();
+    }
 }
 
 void zelda64::renderer::RT64Context::update_screen() {
+    RT64::RollbackProbe::Timer probe(RT64::RollbackProbe::screen);
     app->updateScreen();
+}
+
+void zelda64::renderer::RT64Context::wait_for_checkpoint_present() {
+    auto start = std::chrono::steady_clock::now();
+    app->workloadQueue->waitForWorkloadId(app->state->workloadId);
+    app->presentQueue->waitForPresentId(app->state->presentId);
+    app->workloadQueue->waitForIdle();
+    app->presentQueue->waitForIdle();
+    checkpoint::presentation_wait_ns += std::chrono::duration_cast<std::chrono::nanoseconds>(std::chrono::steady_clock::now()-start).count();
 }
 
 void zelda64::renderer::RT64Context::shutdown() {

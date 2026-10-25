@@ -1,3 +1,4 @@
+extern void recomp_checkpoint_frame(const void* players, int stride, int overlay);
 #include "patches.h"
 #include "misc_funcs.h"
 #include "sound.h"
@@ -1023,6 +1024,7 @@ RECOMP_PATCH void func_80225840(void *arg0) {
     D_802B36AC = free_hook;
 
     while (TRUE) {
+        recomp_checkpoint_frame(g_Players, sizeof(Player), gOverlayID);
         Recomp_ProcessCheats();
         func_8023A104();           // receive message from the cont mesg queue and run osContGetReadData
         mainGfx = Gfx_InitGfx();   // init gfx

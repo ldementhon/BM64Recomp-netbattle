@@ -73,3 +73,7 @@ gamecontrollerdb.txt
 
 # RSP Microcode recompiled output
 aspMain.cpp
+
+# Generated diagnostic output (keep fixtures and test sources)
+/experiments/results/
+__pycache__/

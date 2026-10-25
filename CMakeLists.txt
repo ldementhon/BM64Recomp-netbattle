@@ -424,3 +424,13 @@ target_sources(BM64Recompiled PRIVATE ${GENERATED_NRM_SOURCES})
 target_sources(BM64Recompiled PRIVATE ${SOURCES})
 
 set_property(TARGET BM64Recompiled PROPERTY VS_DEBUGGER_WORKING_DIRECTORY "${CMAKE_SOURCE_DIR}")
+
+# Separate diagnostic build: instrument actual generated loads/stores, never time it.
+option(BM64_TRACE_MEMORY "Trace framebuffer consumers in generated game code" OFF)
+if(BM64_TRACE_MEMORY)
+    target_sources(RecompiledFuncs PRIVATE tests/framebuffer_trace_canary.c)
+    foreach(trace_target RecompiledFuncs PatchesLib ultramodern librecomp)
+        target_compile_options(${trace_target} PRIVATE -fsanitize-coverage=trace-pc-guard,trace-loads,trace-stores)
+    endforeach()
+    target_compile_definitions(BM64Recompiled PRIVATE BM64_TRACE_MEMORY=1)
+endif()

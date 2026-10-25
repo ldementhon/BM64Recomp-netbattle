@@ -91,3 +91,5 @@ recomp_get_always_have_remote_bombs = 0x8F00013C;
 recomp_get_always_have_red_bombs = 0x8F000140;
 recomp_get_infinite_credits = 0x8F000144;
 recomp_get_infinite_lives = 0x8F000148;
+
+recomp_checkpoint_frame = 0x8F00014C;

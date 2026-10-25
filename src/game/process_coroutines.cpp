@@ -6,6 +6,11 @@
 #include <cstdio>
 #include <cstdarg>
 #include <array>
+#ifndef BM64_COROUTINE_UNIT_TEST
+#include "ultramodern/checkpoint.hpp"
+struct mco_desc;
+namespace checkpoint { void retain_process(mco_desc*); }
+#endif
 
 // ============================================================================
 // Configuration
@@ -102,6 +107,19 @@ static uint8_t* g_entry_rdram = nullptr;
 
 // System initialization flag
 static bool g_initialized = false;
+
+// Used only by the bounded startup probe; called outside Hudson processes.
+void report_process_probe() {
+    size_t count = 0, bytes = 0;
+    for (const auto& slot : g_slots) {
+        if (slot.coro) {
+            ++count;
+            bytes += slot.coro->coro_size;
+        }
+    }
+    fprintf(stderr, "PROBE: initialized=%d coroutine_count=%zu native_allocation_bytes=%zu in_process=%d\n",
+        g_initialized, count, bytes, g_current_slot != nullptr);
+}
 
 // ============================================================================
 // Slot management
@@ -253,6 +271,9 @@ extern "C" void recomp_process_coro_create(uint8_t* rdram, recomp_context* ctx) 
     
     // Create the coroutine
     mco_desc desc = mco_desc_init(process_coro_entry, native_stack);
+    #ifndef BM64_COROUTINE_UNIT_TEST
+    if (checkpoint::enabled) checkpoint::retain_process(&desc);
+    #endif
     mco_result res = mco_create(&slot->coro, &desc);
     
     if (res != MCO_SUCCESS) {
@@ -475,3 +496,7 @@ extern "C" void setjmp_recomp(uint8_t* rdram, recomp_context* ctx) {
     (void)ctx;
     fprintf(stderr, "[Process] ERROR: setjmp_recomp called - this should not happen!\n");
 }
+
+#ifndef BM64_COROUTINE_UNIT_TEST
+#include "checkpoint.inc"
+#endif
