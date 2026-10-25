@@ -46,9 +46,12 @@ Status: step 1 in progress, 2026-10-25. No server has been rented or deployed.
   rejection paths, so a Windows build cannot accidentally pass as the tested Mac build.
 - Scene inspection exposed a real blocker: the normal threaded `--single-battle`
   handoff at update 1600 displays **Stage Select / Rock Garden**, not character
-  selection. The checkpoint-mode held-frame capture was black and cannot verify
-  the scene. Disposable captures are under `build/experiments/`; a scene predicate
-  and character-selection input check are still required before synchronized start.
+  selection. Capturing at the exact handoff is black because fast boot suppresses
+  both display lists and screen updates; waiting for presentation alone cannot
+  display a frame that was never drawn. With handoff 1400, a held capture at 1402
+  visibly confirms **Player Select** in the deterministic runtime as well.
+  Disposable captures are under `build/experiments/`; an online start acknowledgment
+  with a scene predicate is still required before synchronized start.
 - Loading timeout and owner-destruction cleanup now have focused regressions at
   both optimization levels. The only available second machine is Windows (user
   confirmed); matching Mac/Windows determinism and a Windows process backend are
@@ -76,7 +79,26 @@ Status: step 1 in progress, 2026-10-25. No server has been rented or deployed.
   of the input timing and comparable-context unit checks.
 - The recorded battle eliminates three players by 2220 and enters overlay 17
   by 2340, remaining there through a no-input run to 6000. This narrows the result
-  transition investigation, but is not yet a confirmed round/match-end detector.
+  transition investigation. A held capture at 2500 shows P4 receiving a star;
+  P1's A at 3000 enters another four-human battle by 3060. **Overlay 17 alone is
+  a round-result signal, not match completion.** Do not return to the lobby there.
+- `python3 tests/run_online_transition_tests.py startup` passes two independent
+  histories at 1381–1580, three full-state restores per process, and an altered-input
+  negative control. It covers Player Select through Stage Select, including the
+  earlier boot handoff. The menu-process trace guards this specific tested fixture;
+  it is not a general-purpose scene detector.
+- `python3 tests/run_online_transition_tests.py round` covers result acknowledgment
+  through the next battle (2941–3180): independent full-RAM/canonical-register
+  histories match, three same-process restores pass, and omitting native stacks
+  diverges. `tests/fixtures/battle-next-round.txt` adds the result acknowledgment.
+  Both transition checks used build
+  `2aec316eddf5b88cc7ba9962e8aaa7735ecc29109d0fae208749da988aef339e`.
+  Held-frame captures now drain pending presentation first; a four-update replay
+  with a held capture on every traversal still passes full-state comparison.
+- A choice is pending on the plan's independent-character-selection assumption:
+  keep fixed colors with P1 advancing the existing shared menus, or implement new
+  per-player selection controls. No change to the requested selection behavior
+  is assumed while waiting. Other local correctness work can continue.
 - Step 2 onward remains pending these correctness gates. Preserve concurrent
   renderer/runtime experiments; no dependency edits are included in this work.
 

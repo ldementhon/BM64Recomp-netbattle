@@ -80,6 +80,8 @@ sh tests/run_simplified_validation.sh verify
 BM64_SESSION_REAL_GAME=1 sh tests/run_game_session_tests.sh
 python3 tests/run_independent_clients.py
 python3 tests/run_match_settings.py
+python3 tests/run_online_transition_tests.py startup
+python3 tests/run_online_transition_tests.py round
 ```
 
 The checked-in text fixtures are scripted inputs, not generated results. Keep
@@ -108,3 +110,8 @@ or cross-platform state. The session-owner checks use disposable child processes
 they do not yet detect normal game completion or retain a real server connection.
 `--online-test` is an isolated settings diagnostic, not a playable online mode.
 The old update-1600 boot handoff reaches Stage Select, not Player Select.
+For a visible Player Select capture, use `BM64_BOOT_HANDOFF_FRAME=1400` and
+`BM64_HOLD_FRAME=1402` with the checkpoint runner. The exact handoff has no drawn
+frame because fast boot suppresses rendering; held captures drain pending work
+but cannot display a frame skipped during boot. Overlay 17 is a round result;
+the next-round regression proves that acknowledging it resumes battle.

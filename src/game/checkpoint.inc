@@ -321,7 +321,11 @@ static void on_boundary() {
         fprintf(stderr, "PASS: all seven attempted mid-match cheat changes refused\n");
     }
     if (!replay_pass && frame % 60 == 0) { fprintf(stderr,"CHECKPOINT: frame=%llu vi=%llu threads=%zu\n",frame,ticks,fiber_count); report_process_probe(); }
-    if (frame == setting("BM64_HOLD_FRAME", 0)) { fprintf(stderr,"CHECKPOINT: holding frame %llu for inspection\n", frame); std::this_thread::sleep_for(std::chrono::seconds(3)); }
+    if (frame == setting("BM64_HOLD_FRAME", 0)) {
+        finish_presentation();
+        fprintf(stderr,"CHECKPOINT: holding frame %llu for inspection\n", frame);
+        std::this_thread::sleep_for(std::chrono::seconds(3));
+    }
     const unsigned at = setting("BM64_CHECKPOINT_FRAME", 0);
     const unsigned length = setting("BM64_REPLAY_LENGTH", 12);
     if (std::getenv("BM64_SUPPRESS_REPLAY")) suppress_render = replay_pass && frame < at + length - 1;
