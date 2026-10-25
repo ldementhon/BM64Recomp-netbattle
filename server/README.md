@@ -13,8 +13,23 @@ ENet 1.3.18 is pinned to upstream commit
 `2662c0de09e36f2a2030ccc2c528a3e4c9e8138a`. CMake fetches it during configuration.
 The final argument must be 64 hexadecimal digits identifying the accepted client
 build. The server compares the complete 32-byte value before allocating a seat.
-Release fingerprint generation and the user-facing game client are still pending;
-the test value is only a fixture, not a compatibility certification.
+On macOS, obtain that value from the exact client bundle after selecting its ROM:
+
+```sh
+build/BM64Recompiled.app/Contents/MacOS/BM64Recompiled --online-fingerprint
+```
+
+The command hashes the executable and stored ROM with SHA-256 and includes the
+macOS architecture and fixed battle profile. `APP_FOLDER_PATH` can select an
+isolated directory containing `bm64_us.z64`. It exits without starting the game.
+`python3 tests/run_fingerprint.py` checks the command against Python's SHA-256;
+the macOS CTest also covers standard vectors and build/ROM changes. The executable
+includes the statically linked recomp, patches, and runtime. This identifies the
+build/profile; it does not certify cross-machine determinism or audit every setting.
+The user-facing game client is still pending. Existing transport fixtures continue
+to use their test token, not the native fingerprint. The application owner supports
+a compatibility check before each Prepare; the upcoming UI must supply it using
+the fingerprint established at connection time.
 
 The server owns one room and serializes membership, Ready, and Start. Roster
 revisions change on membership changes and return to Lobby; Ready flag updates

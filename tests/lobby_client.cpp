@@ -169,6 +169,12 @@ int main(int argc, char** argv) {
         Fingerprint fingerprint{42};
         Server server(address, fingerprint);
         LobbySession::Launch launch{executable, rom, scratch / "session-a.log", {"--child"}, {}};
+        unsigned compatibility_checks = 0;
+        bool compatible = true;
+        launch.verify_compatibility = [&] {
+            ++compatibility_checks;
+            if (!compatible) throw std::runtime_error("local compatibility changed");
+        };
         LobbySession a("127.0.0.1", uint16_t(server.port()), "Alice", fingerprint, launch);
         launch.log = scratch / "session-b.log";
         auto b = std::make_unique<LobbySession>("127.0.0.1", uint16_t(server.port()), "Bob", fingerprint, launch);
@@ -202,6 +208,7 @@ int main(int argc, char** argv) {
             assert(!fs::exists(settings_a) && !fs::exists(settings_b));
             assert(a.connection().roster().identity == a_id && b->connection().roster().identity == b_id);
             if (match != 2) assert(a.error().empty() && b->error().empty());
+            assert(compatibility_checks == match * 2);
         }
         prepare();
         until([&] { return a.connection().start_at() && b->connection().start_at(); });
@@ -209,6 +216,13 @@ int main(int argc, char** argv) {
         until([&] { return a.connection().roster().phase == Phase::Lobby && b->connection().roster().phase == Phase::Lobby; });
         assert(a.error() == "local match start missed its deadline" && b->error() == a.error());
         assert(a.game().state() == online::GameSession::State::Lobby && b->game().state() == online::GameSession::State::Lobby);
+        compatible = false;
+        prepare(false);
+        until([&] { return a.connection().roster().match == 5 &&
+            a.connection().roster().phase == Phase::Lobby && b->connection().roster().phase == Phase::Lobby; });
+        assert(a.error() == "local compatibility changed" && b->error() == a.error());
+        assert(a.game().settings().empty() && b->game().settings().empty());
+        compatible = true;
         prepare();
         auto settings_a = a.game().settings(), settings_b = b->game().settings();
         b.reset();

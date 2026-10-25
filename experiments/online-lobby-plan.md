@@ -6,6 +6,18 @@ has been rented or deployed.
 
 ## Implementation record
 
+- macOS clients now expose `--online-fingerprint`, hashing the exact executable
+  (including linked recomp/patch/runtime code) and stored ROM with SHA-256, with
+  an explicit architecture/fixed-profile domain. The command starts no runtime.
+  Standard SHA-256 vectors, multi-buffer files, swapped/changed inputs, missing
+  files, and executable location pass CTest. `python3 tests/run_fingerprint.py`
+  independently agrees with the native command on executable SHA-256
+  `1e031f4a127feaffb38fcabe0806a03716e29698a4344f74ad34e3a9d650bbda`.
+  `LobbySession` can revalidate compatibility before every Prepare; its regression
+  changes compatibility after successful matches and confirms refusal before a
+  child launches, with both connections retained. The UI must still wire the
+  actual file check into that hook. Test transports still use their fixture token.
+  This is build/profile identification, not a cross-machine or settings-audit pass.
 - `src/online/lobby_session.hpp` now combines the persistent connection with the
   disposable game owner for application use. Its regular poll handles Prepare,
   exact-ready acknowledgment, local start epoch, uploads/relays, confirmed finish,

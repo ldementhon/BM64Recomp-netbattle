@@ -45,6 +45,9 @@
 #include "librecomp/helpers.hpp"
 #include "../online/match_settings.hpp"
 #include "../online/local_input.hpp"
+#if defined(__APPLE__)
+#include "../online/fingerprint.hpp"
+#endif
 
 #include "../../patches/graphics.h"
 #include "../../patches/input.h"
@@ -582,13 +585,28 @@ static bool play_input(int controller, uint16_t* buttons, float* x, float* y) {
 
 int main(int argc, char** argv) {
     bool startup_probe = false;
+    bool print_fingerprint = false;
     for (int i=1;i<argc;++i) {
         std::string_view arg(argv[i]);
         if (arg == "--checkpoint-test") checkpoint::enabled = true;
         else if (arg == "--single-battle") checkpoint::fast_boot = true;
         else if (arg == "--smoke-test") startup_probe = true;
         else if (arg == "--online-test") online::match_settings_locked = true;
+        else if (arg == "--online-fingerprint") print_fingerprint = true;
         else { fprintf(stderr, "Unknown option: %s\n", argv[i]); return EXIT_FAILURE; }
+    }
+    if (print_fingerprint) {
+#if defined(__APPLE__)
+        try {
+            auto value = online::lobby::client_fingerprint(online::lobby::current_executable(),
+                zelda64::get_app_folder_path() / "bm64_us.z64");
+            printf("%s\n", online::lobby::fingerprint_hex(value).c_str());
+            return EXIT_SUCCESS;
+        } catch (const std::exception& error) { fprintf(stderr, "%s\n", error.what()); }
+#else
+        fprintf(stderr, "Online client fingerprinting is not supported on this platform yet\n");
+#endif
+        return EXIT_FAILURE;
     }
     const bool smoke_test = checkpoint::enabled || startup_probe;
     const bool auto_start = smoke_test || checkpoint::fast_boot.load();

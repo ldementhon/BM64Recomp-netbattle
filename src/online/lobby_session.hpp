@@ -1,6 +1,7 @@
 #pragma once
 #include "game_session.hpp"
 #include "lobby_client.hpp"
+#include <functional>
 
 namespace online::lobby {
 // Service this owner regularly on the network thread, independently of rendering.
@@ -10,6 +11,7 @@ public:
         std::filesystem::path executable, rom, log;
         std::vector<std::string> arguments{"--checkpoint-test", "--single-battle", "--online-test"};
         std::map<std::string, std::string> diagnostics{{"BM64_NETWORK_INPUT", "1"}};
+        std::function<void()> verify_compatibility = {};
     };
     LobbySession(const std::string& address, uint16_t port, std::string name,
                  Fingerprint fingerprint, Launch launch)
@@ -39,6 +41,7 @@ public:
                     match_ = event.match;
                     loaded_ = stopping_ = false;
                     error_.clear();
+                    if (launch_.verify_compatibility) launch_.verify_compatibility();
                     game_.start(match_, launch_.executable, launch_.rom, launch_.log,
                                 launch_.arguments, launch_.diagnostics, event.count, connection_.slot(), input_);
                 } else if (event.op == Op::End) {
