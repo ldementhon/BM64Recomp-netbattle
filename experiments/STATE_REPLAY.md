@@ -110,6 +110,9 @@ register pointers. Matching it does not certify native continuation/runtime queu
 or cross-platform state. The session-owner checks use disposable child processes;
 they do not yet detect normal game completion or retain a real server connection.
 `--online-test` is an isolated settings diagnostic, not a playable online mode.
+It locks cheats and guest music/effects/voice balance while allowing host Main
+Volume. The match-settings check compares online settings-change attempts and
+uses an offline sound-change run as a negative control.
 The old update-1600 boot handoff reaches Stage Select, not Player Select.
 Use `BM64_BOOT_TO_PLAYER_SELECT=1` with the checkpoint runner (automatic with
 `--online-test`) to stop scripted boot at the actual menu input loop. The hook

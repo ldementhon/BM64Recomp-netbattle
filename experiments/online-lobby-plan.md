@@ -117,9 +117,14 @@ Status: step 1 in progress, 2026-10-25. No server has been rented or deployed.
   `d13b9448088ab0f2ef6e223e5cb042a868c6ab33f941276e348ee1c9b8191d73`.
   Battle-state assertions, log-validation tests, input-timing and coroutine checks
   also pass; the last two run at both optimization levels.
-- Configuration audit found music/effects volume applied inside guest libaudio
-  events, so allowing per-client values can change full RAM. Lock these separately
-  from host-side main volume before considering settings immutable.
+- Music/effects volume is applied inside guest libaudio events and changes RAM.
+  Online match overrides now keep music/effects/voice balance at 100, refuse their
+  setters, and hide those controls; Main Volume remains adjustable on the host.
+  `python3 tests/run_match_settings.py` passes four real-game runs: online cheat
+  and sound changes leave full RAM/register state unchanged, while the offline
+  sound-change negative control diverges. Main Volume remains adjustable in both
+  modes and personal settings remain untouched. The disabled sound UI still needs
+  visual inspection; live audio output/replay deduplication remains step 3 work.
 - Step 2 onward remains pending these correctness gates. Preserve concurrent
   renderer/runtime experiments; no dependency edits are included in this work.
 

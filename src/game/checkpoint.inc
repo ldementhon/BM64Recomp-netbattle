@@ -28,6 +28,7 @@
 #include "../online/match_settings.hpp"
 #include "../online/battle_state.hpp"
 #include "zelda_cheats.h"
+#include "zelda_sound.h"
 
 extern uint8_t dmem[0x1000];
 extern thread_local PTR(OSThread) thread_self;
@@ -346,6 +347,18 @@ static void on_boundary() {
             require(getters[i]() == zelda64::GenericOnOffOption::Off, "match cheat override changed");
         }
         fprintf(stderr, "PASS: all seven attempted mid-match cheat changes refused\n");
+    }
+    if (!replay_pass && frame == 1940 && std::getenv("BM64_TRY_SOUND")) {
+        zelda64::set_bgm_volume(17);
+        zelda64::set_sfx_volume(23);
+        zelda64::set_voice_volume(29);
+        zelda64::set_main_volume(37);
+        require(zelda64::get_bgm_volume() == (online::match_settings_locked ? 100 : 17) &&
+                zelda64::get_sfx_volume() == (online::match_settings_locked ? 100 : 23) &&
+                zelda64::get_voice_volume() == (online::match_settings_locked ? 100 : 29), "sound balance override failed");
+        require(zelda64::get_main_volume() == 37, "host main volume should remain adjustable");
+        fprintf(stderr, "PASS: sound balance %s; host main volume remains adjustable\n",
+                online::match_settings_locked ? "locked" : "changed");
     }
     if (!replay_pass && frame % 60 == 0) { fprintf(stderr,"CHECKPOINT: frame=%llu vi=%llu threads=%zu\n",frame,ticks,fiber_count); report_process_probe(); }
     if (frame == setting("BM64_HOLD_FRAME", 0)) {

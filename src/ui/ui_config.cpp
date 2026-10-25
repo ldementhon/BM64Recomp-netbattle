@@ -438,6 +438,7 @@ int zelda64::get_main_volume() {
 }
 
 void zelda64::set_bgm_volume(int volume) {
+    if (online::match_settings_locked) return;
     sound_options_context.bgm_volume.store(std::clamp(volume, 0, 100));
     if (sound_options_model_handle) {
         sound_options_model_handle.DirtyVariable("bgm_volume");
@@ -445,10 +446,12 @@ void zelda64::set_bgm_volume(int volume) {
 }
 
 int zelda64::get_bgm_volume() {
+    if (online::match_settings_locked) return 100;
     return sound_options_context.bgm_volume.load();
 }
 
 void zelda64::set_sfx_volume(int volume) {
+    if (online::match_settings_locked) return;
     sound_options_context.sfx_volume.store(std::clamp(volume, 0, 100));
     if (sound_options_model_handle) {
         sound_options_model_handle.DirtyVariable("sfx_volume");
@@ -456,10 +459,12 @@ void zelda64::set_sfx_volume(int volume) {
 }
 
 int zelda64::get_sfx_volume() {
+    if (online::match_settings_locked) return 100;
     return sound_options_context.sfx_volume.load();
 }
 
 void zelda64::set_voice_volume(int volume) {
+    if (online::match_settings_locked) return;
     sound_options_context.voice_volume.store(std::clamp(volume, 0, 100));
     if (sound_options_model_handle) {
         sound_options_model_handle.DirtyVariable("voice_volume");
@@ -467,6 +472,7 @@ void zelda64::set_voice_volume(int volume) {
 }
 
 int zelda64::get_voice_volume() {
+    if (online::match_settings_locked) return 100;
     return sound_options_context.voice_volume.load();
 }
 
@@ -1350,6 +1356,7 @@ public:
         bind_config_list_events(constructor);
         
         sound_options_model_handle = constructor.GetModelHandle();
+        constructor.Bind("match_settings_locked", &online::match_settings_locked);
 
         bind_atomic(constructor, sound_options_model_handle, "main_volume", &sound_options_context.main_volume);
         bind_atomic(constructor, sound_options_model_handle, "bgm_volume", &sound_options_context.bgm_volume);
