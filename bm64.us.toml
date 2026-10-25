@@ -26,6 +26,23 @@ ignored = [
     "osPfsReFormat",
 ]
 
+# The Player Select input loop and its exit, rather than a timed boot cutoff.
+# Observed at the following game-loop boundary; the marker is part of checkpoints.
+[[patches.hook]]
+func = "func_ovl3_3_8004386C"
+before_vram = 0x8004386C
+text = "{ extern void bm64_player_select_ready(int); bm64_player_select_ready(0); }"
+
+[[patches.hook]]
+func = "func_ovl3_3_8004386C"
+before_vram = 0x8004408C
+text = "{ extern void bm64_player_select_ready(int); bm64_player_select_ready(1); }"
+
+[[patches.hook]]
+func = "func_ovl3_3_8004386C"
+before_vram = 0x800447FC
+text = "{ extern void bm64_player_select_ready(int); bm64_player_select_ready(0); }"
+
 # Implement skybox texture hook system to check if the listed skybox address has been loaded, and stretch it with
 # the appropriate EX command.
 

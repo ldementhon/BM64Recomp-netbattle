@@ -47,7 +47,7 @@ sh tests/run_coroutine_replay.sh
 sh tests/run_game_session_tests.sh
 sh tests/run_comparable_context_tests.sh
 mkdir -p build/experiments
-for test in checkpoint_memory changed_writeback presentation_recovery; do
+for test in checkpoint_memory changed_writeback presentation_recovery battle_state; do
     clang++ -std=c++20 -O2 -pthread "tests/$test.cpp" -o "build/experiments/$test"
     "build/experiments/$test"
 done
@@ -82,6 +82,7 @@ python3 tests/run_independent_clients.py
 python3 tests/run_match_settings.py
 python3 tests/run_online_transition_tests.py startup
 python3 tests/run_online_transition_tests.py round
+python3 tests/run_online_transition_tests.py match
 ```
 
 The checked-in text fixtures are scripted inputs, not generated results. Keep
@@ -110,8 +111,18 @@ or cross-platform state. The session-owner checks use disposable child processes
 they do not yet detect normal game completion or retain a real server connection.
 `--online-test` is an isolated settings diagnostic, not a playable online mode.
 The old update-1600 boot handoff reaches Stage Select, not Player Select.
-For a visible Player Select capture, use `BM64_BOOT_HANDOFF_FRAME=1400` and
-`BM64_HOLD_FRAME=1402` with the checkpoint runner. The exact handoff has no drawn
-frame because fast boot suppresses rendering; held captures drain pending work
-but cannot display a frame skipped during boot. Overlay 17 is a round result;
-the next-round regression proves that acknowledging it resumes battle.
+Use `BM64_BOOT_TO_PLAYER_SELECT=1` with the checkpoint runner (automatic with
+`--online-test`) to stop scripted boot at the actual menu input loop. The hook
+reaches boundary 1374 in the recorded fixture; `BM64_HOLD_FRAME=1402` produces a
+visible Player Select capture. The readiness marker is included in checkpoints
+and both state digests. Regenerate game code with `./N64Recomp bm64.us.toml` when
+changing these hooks, then rebuild; never edit or commit generated functions.
+The startup check rewinds across entry, handoff, and exit to Stage Select.
+
+Overlay 17 serves both round results and the final match winner. The next-round
+regression proves that acknowledging an ordinary round resumes battle. The match
+regression uses only controller inputs to win three rounds, then crosses from
+scene 20 to scene 21 at boundary 5401 after acknowledging the third star. The
+completion predicate supports only this tested first-to-three single-battle
+preset. It must eventually be acted on only at a confirmed simulation boundary;
+no live network confirmation or return-to-lobby path is implemented yet.

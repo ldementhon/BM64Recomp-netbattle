@@ -26,6 +26,7 @@
 #include "checkpoint_trace.hpp"
 #include "comparable_context.hpp"
 #include "../online/match_settings.hpp"
+#include "../online/battle_state.hpp"
 #include "zelda_cheats.h"
 
 extern uint8_t dmem[0x1000];
@@ -49,6 +50,7 @@ static uint8_t* ram;
 static uint64_t frame = 0;
 static int32_t players, player_stride, overlay;
 static unsigned replay_pass = 0;
+static bool player_select_ready = false;
 struct Fiber { mco_coro* co; int32_t thread, entry, arg; bool dead; recomp_context* ctx; };
 static std::array<Fiber, 64> fibers{};
 static size_t fiber_count = 0;
@@ -140,7 +142,7 @@ size_t saved_fiber_count;
 int32_t saved_next, saved_yield, saved_resume;
 uint64_t saved_frame, saved_ticks;
 uint64_t saved_boot_frame;
-bool saved_fast_boot;
+bool saved_fast_boot, saved_player_select_ready;
 bool saved_initialized;
 uint8_t* saved_entry_rdram;
 CheckpointMemory saved_ram;
@@ -175,6 +177,7 @@ static double save(size_t index = 0, bool quiet = false) {
     s.saved_slots = g_slots; s.saved_fibers = fibers; s.saved_fiber_count = fiber_count; s.saved_fenv = fiber_fenv;
     s.saved_next = next_thread; s.saved_frame = frame; s.saved_ticks = ticks;
     s.saved_boot_frame = boot_frame.load(); s.saved_fast_boot = fast_boot.load();
+    s.saved_player_select_ready = player_select_ready;
     s.saved_yield = g_yield_reason; s.saved_resume = g_resume_value;
     s.saved_initialized = g_initialized; s.saved_entry_rdram = g_entry_rdram;
     trace.mark("metadata");
@@ -201,6 +204,7 @@ static double restore(size_t index = 0, bool quiet = false) {
     g_slots = s.saved_slots; fibers = s.saved_fibers; fiber_count = s.saved_fiber_count; fiber_fenv = s.saved_fenv;
     next_thread = s.saved_next; frame = s.saved_frame; ticks = s.saved_ticks;
     boot_frame = s.saved_boot_frame; fast_boot = s.saved_fast_boot;
+    player_select_ready = s.saved_player_select_ready;
     g_yield_reason = s.saved_yield; g_resume_value = s.saved_resume;
     trace.mark("metadata");
     runtime_state(true); trace.mark("runtime");
@@ -251,6 +255,7 @@ static Digest digest() {
         XXH3_64bits_update(&state, &slot.ctx, sizeof(slot.ctx));
     }
     for (size_t i=0; i<fiber_count; ++i) if (!fibers[i].dead && fibers[i].ctx) XXH3_64bits_update(&state, fibers[i].ctx, sizeof(recomp_context));
+    XXH3_64bits_update(&state, &player_select_ready, sizeof(player_select_ready));
     auto context_hash = XXH3_64bits_digest(&state);
     return {XXH3_64bits(ram, recomp::mem_size), context_hash};
 }
@@ -297,13 +302,35 @@ static bool benchmark(unsigned at) {
 #include "running_loop.inc"
 #include "catchup.inc"
 
+static online::BattleState battle_state() {
+    auto* rdram = ram;
+    // func_8023A834 returns this settings block; func_80243800 returns the scene.
+    constexpr int32_t settings = int32_t(0x802ac660);
+    return {overlay, MEM_W(0, int32_t(0x802ac5d8)), MEM_W(0, settings), MEM_W(0x24, settings),
+            {MEM_W(0xa4, settings), MEM_W(0xa8, settings), MEM_W(0xac, settings), MEM_W(0xb0, settings)}};
+}
+
 static void on_boundary() {
     // Boundary N precedes input N; its resulting state is checked at boundary N+1.
     ++frame;
-    if (!replay_pass && std::getenv("BM64_TRACE_MENU") && overlay == 13 && frame % 20 == 0) {
-        for (const auto& slot : g_slots) if (slot.state == ProcessState::Suspended && slot.entry_func == 0x8004386c) {
-            fprintf(stderr, "MENU: frame=%llu process=%u entry=%08x s3=%lld s4=%lld sp=%08x\n",
-                    frame, slot.process_id, slot.entry_func, slot.ctx.r19, slot.ctx.r20, uint32_t(slot.ctx.r29));
+    if (!replay_pass && std::getenv("BM64_TRACE_MENU")) {
+        static bool last_ready = false;
+        if (last_ready != player_select_ready) {
+            fprintf(stderr, "PLAYER_SELECT: frame=%llu ready=%d\n", frame, player_select_ready);
+            last_ready = player_select_ready;
+        }
+    }
+    if (!replay_pass && std::getenv("BM64_TRACE_BATTLE_STATE")) {
+        auto state = battle_state();
+        static bool last_complete = false;
+        if (state.complete() != last_complete) {
+            fprintf(stderr, "MATCH_COMPLETE: frame=%llu complete=%d\n", frame, state.complete());
+            last_complete = state.complete();
+        }
+        if (frame % 60 == 0) {
+            fprintf(stderr, "BATTLE_STATE: frame=%llu overlay=%d scene=%d kind=%d target=%d scores=%d,%d,%d,%d complete=%d\n",
+                    frame, state.overlay, state.scene, state.kind, state.target,
+                    state.wins[0], state.wins[1], state.wins[2], state.wins[3], state.complete());
         }
     }
     if (!replay_pass && frame == 1940 && std::getenv("BM64_TRY_CHEATS")) {
@@ -417,11 +444,23 @@ void switch_thread(int32_t thread) {
     }
 }
 }
+extern "C" void bm64_player_select_ready(int ready) {
+    checkpoint::player_select_ready = ready != 0;
+}
+
 extern "C" void recomp_checkpoint_frame(uint8_t*, recomp_context* ctx) {
     static const unsigned handoff = checkpoint::setting("BM64_BOOT_HANDOFF_FRAME", 1600);
-    if (checkpoint::fast_boot && ++checkpoint::boot_frame >= handoff) {
-        checkpoint::fast_boot = false;
-        fprintf(stderr, "SINGLE_BATTLE: scripted boot handoff at update %u (scene not verified)\n", handoff);
+    if (checkpoint::fast_boot) {
+        ++checkpoint::boot_frame;
+        if (online::match_settings_locked || std::getenv("BM64_BOOT_TO_PLAYER_SELECT")) {
+            if (checkpoint::player_select_ready && int32_t(ctx->r6) == 13) {
+                checkpoint::fast_boot = false;
+                fprintf(stderr, "SINGLE_BATTLE: Player Select input loop ready at update %llu\n", checkpoint::boot_frame.load());
+            }
+        } else if (checkpoint::boot_frame >= handoff) {
+            checkpoint::fast_boot = false;
+            fprintf(stderr, "SINGLE_BATTLE: scripted boot handoff at update %u (scene not verified)\n", handoff);
+        }
     }
     checkpoint::players = int32_t(ctx->r4);
     checkpoint::player_stride = int32_t(ctx->r5);

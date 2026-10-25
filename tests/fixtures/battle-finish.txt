@@ -1,0 +1,13 @@
+# Append to battle-active-inputs.txt. P4 wins three rounds without guest-state edits.
+# Acknowledge round 1, then P1-P3 place bombs without leaving their blast radius.
+3000 3001 8000 0 0 0
+3300 3301 8000 0 0 0
+3300 3301 8000 0 0 1
+3300 3301 8000 0 0 2
+# Round 3.
+4200 4201 8000 0 0 0
+4500 4501 8000 0 0 0
+4500 4501 8000 0 0 1
+4500 4501 8000 0 0 2
+# Acknowledge the third star to enter the match-winner scene.
+5400 5401 8000 0 0 0

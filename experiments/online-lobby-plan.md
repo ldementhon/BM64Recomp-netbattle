@@ -23,10 +23,9 @@ Status: step 1 in progress, 2026-10-25. No server has been rented or deployed.
   400-frame replay, and the rolling history. Full-RAM baselines match across the
   existing independent runs. macOS game probes require audio/graphics access;
   the restricted invocation failed opening CoreAudio before simulation.
-- Step 1 remaining: define and verify the true character-selection boundary;
-  independent native continuation/runtime-state coverage; audit the remaining
-  simulation-facing configuration; actual normal round/match completion; repeated
-  game-aware lifecycle and two-machine comparison. The timed update-1600 marker
+- Step 1 remaining: independent native continuation/runtime-state coverage;
+  audit remaining simulation-facing configuration; wire the verified selection and
+  completion boundaries into repeated game-aware lifecycle; two-machine comparison. The timed update-1600 marker
   is not accepted as proof of character selection. The current process owner is
   exercised by tests, not yet wired into the application or a network lobby.
 - Comparable diagnostic: `python3 tests/run_independent_clients.py` passes on
@@ -62,8 +61,8 @@ Status: step 1 in progress, 2026-10-25. No server has been rented or deployed.
   correctly says the scene is unverified. `BM64_TRACE_MENU=1` records the active
   menu process for investigation, not as a certified scene predicate.
   Source inspection shows overlay 3/3 helpers at `0x800432A0` and `0x800432F0`
-  OR all four controllers together. Per-player menu selection therefore requires
-  explicit integration; controller routing alone cannot satisfy that requirement.
+  OR all four controllers together. The accepted P1-only shared-menu behavior
+  therefore still needs explicit input filtering; controller routing alone is insufficient.
 - `--online-test` now requires a fresh isolated folder containing only the ROM,
   so existing saves, settings, and gameplay mods cannot enter startup. It forces
   all seven cheats off, refuses their setters, hides the cheat form, and keeps
@@ -95,16 +94,38 @@ Status: step 1 in progress, 2026-10-25. No server has been rented or deployed.
   `2aec316eddf5b88cc7ba9962e8aaa7735ecc29109d0fae208749da988aef339e`.
   Held-frame captures now drain pending presentation first; a four-update replay
   with a held capture on every traversal still passes full-state comparison.
-- A choice is pending on the plan's independent-character-selection assumption:
-  keep fixed colors with P1 advancing the existing shared menus, or implement new
-  per-player selection controls. No change to the requested selection behavior
-  is assumed while waiting. Other local correctness work can continue.
+- User confirmed the first version uses fixed player colors and P1 advancing the
+  existing shared menus. Lobby assignments lock human/CPU seats; independent
+  character-selection controls are outside this first version.
+- Player Select now has explicit entry/input-loop/exit hooks in `bm64.us.toml`.
+  The marker is captured/restored with the simulation and included in both state
+  digests. `BM64_BOOT_TO_PLAYER_SELECT=1` (also the `--online-test` default) ends
+  scripted boot at the first boundary after the real input loop is reached,
+  update 1374 in this fixture. A capture at 1402 confirms the visible screen;
+  the 1301–1580 startup regression covers entry, boot handoff, and exit at 1501.
+  It passes independent histories, three full-state restores, and changed-input
+  negative control. The old register-trace heuristic is removed.
+- `tests/fixtures/battle-finish.txt` completes three ordinary rounds using controller
+  input alone. P4 reaches three stars, then P1 acknowledges the final round at
+  5400. Boundary 5401 changes from round-result scene 20 to winner scene 21;
+  a capture at 5550 shows WIN. `online::BattleState::complete()` accepts only the
+  tested first-to-three single-battle winner, checking overlay, scene, preset,
+  and scores; the third star on the round-result screen alone is insufficient.
+  `python3 tests/run_online_transition_tests.py match` passes two independent
+  histories at 5381–5540, three full-state restores each, and the omitted-stack
+  negative control. Both updated startup and match checks used build
+  `d13b9448088ab0f2ef6e223e5cb042a868c6ab33f941276e348ee1c9b8191d73`.
+  Battle-state assertions, log-validation tests, input-timing and coroutine checks
+  also pass; the last two run at both optimization levels.
+- Configuration audit found music/effects volume applied inside guest libaudio
+  events, so allowing per-client values can change full RAM. Lock these separately
+  from host-side main volume before considering settings immutable.
 - Step 2 onward remains pending these correctness gates. Preserve concurrent
   renderer/runtime experiments; no dependency edits are included in this work.
 
 ## Goal and boundary
 
-Let two to four people join one private room, select characters, and finish real
+Let two to four people join one private room with fixed player colors and finish real
 Bomberman 64 battles through a rented datacenter server. Use this to judge feel
 before doing more speculative renderer optimization.
 
@@ -135,9 +156,8 @@ Player 1 also has Start, enabled only with two or more humans and everyone ready
 Show connection delay to the server, explicitly labeled as such.
 
 Start launches the game's existing single-battle character selection with the
-agreed human/CPU layout. Each person selects their own character through their
-assigned controller port. Player 1 operates any shared game menus that already
-require controller 1. The first version uses one tested battle preset, with CPU
+agreed human/CPU layout and fixed player colors. Player 1 operates the existing
+shared menus; other players cannot change those menus or human/CPU assignments. The first version uses one tested battle preset, with CPU
 players filling unused slots; do not duplicate stage/rules menus in the lobby.
 
 ## Exact assignment rules
