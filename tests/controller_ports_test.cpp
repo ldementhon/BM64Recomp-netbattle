@@ -9,7 +9,9 @@
 
 // Only the window/game shell is stubbed. SDL, routing, calibration and config are real.
 namespace recomp {
-int get_joystick_deadzone() { return 0; }
+static int test_deadzone = 0;
+int get_joystick_deadzone() { return test_deadzone; }
+void set_joystick_deadzone(int value) { test_deadzone = value; }
 int get_rumble_strength() { return 50; }
 int get_scanned_input_index() { return -1; }
 void cancel_scanning_input() { stop_scanning_input(); }
@@ -117,6 +119,31 @@ int main(int argc, char** argv) {
         "sensitivity and calibration survive reload");
     check(recomp::get_input_binding(recomp::GameInput::A, 0, recomp::InputDevice::Controller, 1).input_id == SDL_CONTROLLER_BUTTON_Y,
         "custom per-player binding survives reload");
+    auto online_path = std::filesystem::path(argv[1]) / "online-input.json";
+    recomp::set_joystick_deadzone(17);
+    auto snapshot = zelda64::serialize_online_input();
+    { std::ofstream out(online_path); out << snapshot; }
+    recomp::set_joystick_deadzone(0);
+    recomp::set_stick_sensitivity(1, 100);
+    recomp::set_stick_calibration(1, {});
+    recomp::set_port_mode(1, recomp::ControllerPortMode::Off);
+    zelda64::reset_input_bindings();
+    check(zelda64::load_online_input(online_path), "load isolated online input snapshot");
+    check(recomp::get_joystick_deadzone() == 17 && recomp::get_stick_sensitivity(1) == 150 &&
+          recomp::get_stick_calibration(1).center_x == .2f &&
+          recomp::get_port_mode(1) == recomp::ControllerPortMode::Controller,
+          "online snapshot restores port mode, calibration, sensitivity and deadzone");
+    check(recomp::get_input_binding(recomp::GameInput::A, 0, recomp::InputDevice::Controller, 1).input_id == SDL_CONTROLLER_BUTTON_Y,
+          "online snapshot restores custom binding");
+    check(zelda64::serialize_online_input() == snapshot, "all four ports round trip without personal file writes");
+    for (const char* invalid : {"{", "[]", R"({"controls":{},"joystick_deadzone":-1})",
+            R"({"controls":{},"joystick_deadzone":101})", R"({"controls":{},"joystick_deadzone":0.5})",
+            R"({"controls":{},"joystick_deadzone":4294967313})",
+            R"({"controls":{},"joystick_deadzone":0,"cheats":{}})",
+            R"({"controls":{"ports":[{"mode":"Keyboard","stick_sensitivity":[]}]},"joystick_deadzone":0})"}) {
+        { std::ofstream out(online_path); out << invalid; }
+        check(!zelda64::load_online_input(online_path), "malformed online preferences rejected");
+    }
     { std::ofstream out(path); out << R"({"ports":[{"mode":"Keyboard"}],"controller_defaults_version":1})"; }
     check(load_controls_config(path), "load partial config");
     check(recomp::get_port_mode(1) == recomp::ControllerPortMode::Off && !recomp::get_stick_calibration(1).enabled,

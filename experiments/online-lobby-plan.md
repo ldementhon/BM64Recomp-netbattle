@@ -6,6 +6,25 @@ has been rented or deployed.
 
 ## Implementation record
 
+- The process owner now accepts a bounded local-input snapshot and an explicit
+  physical port independent of the assigned online slot. The child imports only
+  port modes, keyboard/controller bindings, sensitivity, calibration, and global
+  deadzone, using the existing controls serializer/loader. Its fresh folder
+  allows only the ROM and optional `online-input.json`; other settings, saves,
+  directories, symlinks, oversized input files, and malformed snapshots are refused.
+  The typed physical port overrides diagnostic environment values. Offline config
+  serialization is unchanged. `python3 tests/run_controller_tests.py` passes 44
+  calibration and 79 routing/config checks, including snapshot round trips and
+  invalid-input cases. Owner/channel/policy checks pass at O0/O2.
+  `BM64_SESSION_REAL_GAME=1 sh tests/run_game_session_tests.sh` cancels a real
+  load and completes two matches, with changed input preferences in the second:
+  initial RAM/register digests still match, both finish at 5401, temporary settings
+  are removed, and personal settings stay untouched. Tested executable SHA-256:
+  `ff0535b5d6fc377238d149eef1ea6461d45a72ab52954eb767b23e303da1ed4f`.
+  Remaining input work: wire the snapshot into the actual lobby, preserve manual
+  physical-device assignments across fresh processes (the existing config stores
+  modes/bindings but not device identity), and verify live hardware. These tests
+  use virtual SDL controllers or recorded inputs, not two human players.
 - Lifecycle choice: persistent external lobby owner with one fresh game process
   per match. `src/online/game_session.{hpp,cpp}` implements POSIX process ownership,
   isolated settings/ROM copies, cleanup, loading deadline, cancellation, exit/crash

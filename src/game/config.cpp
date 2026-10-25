@@ -403,7 +403,7 @@ void add_input_bindings(nlohmann::json& out, recomp::GameInput input, recomp::In
     }
 };
 
-bool save_controls_config(const std::filesystem::path& path) {
+nlohmann::json controls_config() {
     nlohmann::json config_json{};
     config_json["controller_defaults_version"] = controller_defaults_version;
 
@@ -437,7 +437,16 @@ bool save_controls_config(const std::filesystem::path& path) {
     }
 
     config_json["ports"] = ports_array;
-    return save_json_with_backups(path, config_json);
+    return config_json;
+}
+
+bool save_controls_config(const std::filesystem::path& path) {
+    return save_json_with_backups(path, controls_config());
+}
+
+std::string zelda64::serialize_online_input() {
+    return nlohmann::json{{"controls", controls_config()},
+                          {"joystick_deadzone", recomp::get_joystick_deadzone()}}.dump();
 }
 
 bool load_input_device_from_json(const nlohmann::json& config_json, recomp::InputDevice device, const std::string& key, int port,
@@ -511,11 +520,7 @@ bool load_input_device_from_json(const nlohmann::json& config_json, recomp::Inpu
     return true;
 }
 
-bool load_controls_config(const std::filesystem::path& path) {
-    nlohmann::json config_json{};
-    if (!read_json_with_backups(path, config_json)) {
-        return false;
-    }
+bool set_controls_from_json(const nlohmann::json& config_json) {
     // Missing ports and short binding lists must not leave controls empty or stale.
     zelda64::reset_input_bindings();
     for (int p = 0; p < recomp::max_ports; ++p) {
@@ -588,6 +593,27 @@ bool load_controls_config(const std::filesystem::path& path) {
     }
 
     return true;
+}
+
+bool load_controls_config(const std::filesystem::path& path) {
+    nlohmann::json config_json{};
+    return read_json_with_backups(path, config_json) && set_controls_from_json(config_json);
+}
+
+bool zelda64::load_online_input(const std::filesystem::path& path) {
+    nlohmann::json config_json{};
+    if (!read_json(std::ifstream(path), config_json)) return false;
+    try {
+        if (!config_json.is_object() || config_json.size() != 2 ||
+            !config_json.at("controls").is_object() ||
+            !config_json.at("joystick_deadzone").is_number_integer()) return false;
+        const auto& deadzone_value = config_json.at("joystick_deadzone");
+        if (deadzone_value < 0 || deadzone_value > 100) return false;
+        auto deadzone = deadzone_value.get<int>();
+        if (!set_controls_from_json(config_json.at("controls"))) return false;
+        recomp::set_joystick_deadzone(deadzone);
+        return true;
+    } catch (const nlohmann::json::exception&) { return false; }
 }
 
 bool save_sound_config(const std::filesystem::path& path) {

@@ -37,6 +37,14 @@ int main(int argc, char** argv) {
         fs::path settings = std::getenv("APP_FOLDER_PATH");
         assert(fs::exists(settings / "bm64_us.z64"));
         assert(!fs::exists(settings / "personal-marker"));
+        if (std::string(argv[1]) == "--child-preferences") {
+            assert(std::string(std::getenv("BM64_LOCAL_PORT")) == "3");
+            assert(std::string(std::getenv("BM64_ONLINE_SLOT")) == "1");
+            std::ifstream input(settings / "online-input.json");
+            std::string text((std::istreambuf_iterator<char>(input)), {});
+            assert(text == R"({"controls":{},"joystick_deadzone":17})");
+            online::validate_match_folder(settings);
+        }
         std::ofstream(settings / "child-save") << "match only";
         if (std::string(argv[1]) == "--child-crash") raise(SIGKILL);
         if (std::string(argv[1]) == "--child-hold") for (;;) pause();
@@ -113,7 +121,10 @@ int main(int argc, char** argv) {
                         std::vector<std::string>{child_mode},
             real_game ? std::map<std::string, std::string>{{"BM64_STOP_FRAME", "5600"},
                             {"BM64_INPUT_SCRIPT", recording.string()}} :
-                        std::map<std::string, std::string>{});
+                        std::map<std::string, std::string>{}, 4, 0,
+            real_game && match == 3 ? online::LocalInput{2,
+                R"({"controls":{"controller_defaults_version":1,"ports":[{"mode":"Keyboard","keyboard":{"A":[{"input_type":1,"input_id":27}]}},{"mode":"Off"},{"mode":"Keyboard","stick_sensitivity":150,"stick_calibration":{"enabled":true,"center_x":0.2,"center_y":0,"left":1,"right":1,"up":1,"down":1}}]},"joystick_deadzone":17})"}
+                : online::LocalInput{});
     };
     start(1, "--child-hold");
     auto first_settings = session.settings();
@@ -227,6 +238,40 @@ int main(int argc, char** argv) {
         assert(wait_exit(session).completed_frame && session.take_inputs().empty());
         start(17, "--child-bad-input"); wait_ready(session); assert(session.playing(17));
         assert(!wait_exit(session).error.empty());
+        for (const auto& input : {online::LocalInput{4, {}}, online::LocalInput{0, std::string(online::local_input_limit + 1, 'x')}}) {
+            try {
+                session.start(18, executable, rom, scratch / "invalid-input.log", {}, {}, 2, 1, input);
+                assert(false);
+            } catch (const std::invalid_argument&) {}
+        }
+        session.start(18, executable, rom, scratch / "preferences.log", {"--child-preferences"},
+                      {{"BM64_LOCAL_PORT", "999"}}, 2, 1, {3, R"({"controls":{},"joystick_deadzone":17})"});
+        auto preferences = session.settings();
+        wait_ready(session); assert(session.playing(18));
+        assert(wait_exit(session).completed_frame && !fs::exists(preferences));
+
+        auto isolated = scratch / "folder-validation";
+        fs::create_directories(isolated);
+        fs::copy_file(rom, isolated / "bm64_us.z64", fs::copy_options::overwrite_existing);
+        online::validate_match_folder(isolated);
+        auto rejects = [&] {
+            try { online::validate_match_folder(isolated); assert(false); }
+            catch (const std::runtime_error&) {}
+        };
+        std::ofstream(isolated / "online-input.json") << "{}";
+        online::validate_match_folder(isolated);
+        std::ofstream(isolated / "cheats.json") << "{}";
+        rejects(); fs::remove(isolated / "cheats.json");
+        std::ofstream(isolated / "online-input.json", std::ios::trunc);
+        rejects();
+        std::ofstream(isolated / "online-input.json") << std::string(online::local_input_limit + 1, 'x');
+        rejects(); fs::remove(isolated / "online-input.json");
+        fs::create_symlink(rom, isolated / "online-input.json");
+        rejects(); fs::remove(isolated / "online-input.json");
+        fs::create_directory(isolated / "online-input.json");
+        rejects(); fs::remove(isolated / "online-input.json");
+        fs::remove(isolated / "bm64_us.z64"); rejects();
+        fs::remove(isolated);
     }
     close(connection[0]); close(connection[1]);
     std::string marker;

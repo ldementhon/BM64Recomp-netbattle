@@ -11,6 +11,7 @@
 #include <vector>
 #include <sys/types.h>
 #include "match_channel.hpp"
+#include "local_input.hpp"
 
 namespace online {
 class GameSession {
@@ -32,7 +33,8 @@ public:
                const std::filesystem::path& rom, const std::filesystem::path& log,
                const std::vector<std::string>& arguments,
                const std::map<std::string, std::string>& diagnostic_environment = {},
-               unsigned human_players = 4, unsigned local_slot = 0);
+               unsigned human_players = 4, unsigned local_slot = 0,
+               const LocalInput& local_input = {});
     bool playing(uint64_t match);
     bool cancel(uint64_t match);
     std::optional<Exit> poll(std::chrono::steady_clock::time_point now = std::chrono::steady_clock::now());

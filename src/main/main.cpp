@@ -44,6 +44,7 @@
 #include "librecomp/mods.hpp"
 #include "librecomp/helpers.hpp"
 #include "../online/match_settings.hpp"
+#include "../online/local_input.hpp"
 
 #include "../../patches/graphics.h"
 #include "../../patches/input.h"
@@ -604,18 +605,11 @@ int main(int argc, char** argv) {
                 return EXIT_FAILURE;
             }
         }
-        // A match starts with only the verified ROM, never personal saves/mods/config.
-        std::error_code error;
-        auto directory = std::filesystem::directory_iterator(std::getenv("APP_FOLDER_PATH"), error);
-        if (error) {
-            fprintf(stderr, "--online-test cannot open isolated settings: %s\n", error.message().c_str());
+        // Local input preferences cannot import gameplay settings, saves, or mods.
+        try { online::validate_match_folder(std::getenv("APP_FOLDER_PATH")); }
+        catch (const std::exception& error) {
+            fprintf(stderr, "--online-test %s\n", error.what());
             return EXIT_FAILURE;
-        }
-        for (const auto& entry : directory) {
-            if (entry.path().filename() != "bm64_us.z64" || !entry.is_regular_file()) {
-                fprintf(stderr, "--online-test requires fresh settings containing only bm64_us.z64\n");
-                return EXIT_FAILURE;
-            }
         }
     }
     if (smoke_test && std::getenv("APP_FOLDER_PATH") == nullptr) {
@@ -722,6 +716,13 @@ int main(int argc, char** argv) {
     zelda64::register_patches();
     // recomputil::init_extended_actor_data();
     zelda64::load_config();
+    if (online::match_settings_locked) {
+        auto input_path = zelda64::get_app_folder_path() / "online-input.json";
+        if (std::filesystem::exists(input_path) && !zelda64::load_online_input(input_path)) {
+            fprintf(stderr, "Invalid online input settings\n");
+            return EXIT_FAILURE;
+        }
+    }
 
     recomp::rsp::callbacks_t rsp_callbacks{
         .get_rsp_microcode = get_rsp_microcode,

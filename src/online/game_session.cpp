@@ -3,6 +3,7 @@
 #include <csignal>
 #include <cstdlib>
 #include <fcntl.h>
+#include <fstream>
 #include <spawn.h>
 #include <stdexcept>
 #include <system_error>
@@ -41,11 +42,13 @@ void GameSession::start(uint64_t match, const std::filesystem::path& executable,
                         const std::filesystem::path& rom, const std::filesystem::path& log,
                         const std::vector<std::string>& arguments,
                         const std::map<std::string, std::string>& diagnostic_environment,
-                        unsigned human_players, unsigned local_slot) {
+                        unsigned human_players, unsigned local_slot, const LocalInput& local_input) {
     if (state_ != State::Lobby || child_ >= 0) throw std::logic_error("match already running");
     if (!match || match <= match_) throw std::invalid_argument("match ID must increase");
     if (human_players < 2 || human_players > 4) throw std::invalid_argument("online match requires 2, 3, or 4 humans");
     if (local_slot >= human_players) throw std::invalid_argument("local player is not a human slot");
+    if (local_input.port >= 4 || local_input.settings.size() > local_input_limit)
+        throw std::invalid_argument("invalid local input settings");
     // Consume IDs even on failed launches: queued events must never become valid later.
     match_ = match;
     auto pattern = (std::filesystem::temp_directory_path() / "bm64-match-XXXXXX").string();
@@ -59,6 +62,12 @@ void GameSession::start(uint64_t match, const std::filesystem::path& executable,
         if (inherited < 0) throw std::system_error(errno, std::generic_category(), "inherit match socket");
         MatchChannel inherited_channel(inherited);
         std::filesystem::copy_file(rom, settings_ / "bm64_us.z64");
+        if (!local_input.settings.empty()) {
+            std::ofstream output(settings_ / "online-input.json", std::ios::binary);
+            output << local_input.settings;
+            output.close();
+            if (!output) throw std::runtime_error("cannot write local input settings");
+        }
         std::map<std::string, std::string> environment;
         for (char** e = environ; *e; ++e) {
             std::string entry(*e);
@@ -77,6 +86,7 @@ void GameSession::start(uint64_t match, const std::filesystem::path& executable,
         environment["BM64_OWNER_MATCH"] = std::to_string(match);
         environment["BM64_ONLINE_HUMANS"] = std::to_string(human_players);
         environment["BM64_ONLINE_SLOT"] = std::to_string(local_slot);
+        environment["BM64_LOCAL_PORT"] = std::to_string(local_input.port);
         std::vector<std::string> env_strings;
         for (auto& [key, value] : environment) env_strings.push_back(key + "=" + value);
         std::vector<char*> env;
