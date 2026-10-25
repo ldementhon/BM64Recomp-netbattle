@@ -40,6 +40,10 @@ Status: step 1 in progress, 2026-10-25. No server has been rented or deployed.
   Unsupported references fail. The separate diagnostic also records logical
   process/thread identity and clocks; it does **not** certify native continuation,
   runtime queue, or GPU state across machines. No arbitrary RAM range is excluded.
+  Log comparison refuses incomplete/duplicate histories, changed executables,
+  different executable hashes, or different input recordings (except the explicit
+  negative control). `python3 tests/test_independent_client_logs.py` covers these
+  rejection paths, so a Windows build cannot accidentally pass as the tested Mac build.
 - Scene inspection exposed a real blocker: the normal threaded `--single-battle`
   handoff at update 1600 displays **Stage Select / Rock Garden**, not character
   selection. The checkpoint-mode held-frame capture was black and cannot verify

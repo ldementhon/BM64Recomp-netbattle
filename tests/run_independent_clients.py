@@ -26,7 +26,19 @@ def records(path):
     return {int(frame): (ram, registers) for frame, ram, registers in rows}
 
 
-def compare(first, second):
+def metadata(path):
+    text = path.read_text()
+    match = re.search(r"^PROBE_IMAGE: sha256=([0-9a-f]{64}) input_sha256=([0-9a-f]{64}) ", text, re.M)
+    if not match or f"PROBE_IMAGE_UNCHANGED: sha256={match[1]}" not in text:
+        raise RuntimeError(f"Missing executable/input identity or executable changed: {path}")
+    return match.groups()
+
+
+def compare(first, second, *, changed_input=False):
+    image_a, input_a = metadata(first)
+    image_b, input_b = metadata(second)
+    if image_a != image_b or (not changed_input and input_a != input_b):
+        raise RuntimeError("Comparison requires the same executable and input recording")
     a, b = records(first), records(second)
     return [frame for frame in a if a[frame] != b[frame]]
 
@@ -70,7 +82,7 @@ if __name__ == "__main__":
             extra = Path(scratch) / "changed-input.txt"
             extra.write_text("1950 1970 0000 -0.7 0 0\n")
             changed = run("independent-negative", sha, extra)
-        differences = compare(first, changed)
+        differences = compare(first, changed, changed_input=True)
         if not differences or differences[0] <= 1950:
             raise SystemExit("FAIL: changed-input control failed or diverged before changed input")
         print(f"PASS: independent guest-state histories match; changed input detected at {differences[0]}")
