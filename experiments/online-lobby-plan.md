@@ -209,8 +209,21 @@ Status: step 1 in progress, 2026-10-25. No server has been rented or deployed.
   by OS packet shaping. Raw connection tests reject slot impersonation and
   conflicting replacements. Real-game startup/cancel integration still passes on
   unchanged executable `379c51898ff87054a26f05275bab2b0bad22fe234aaf795518aa851546ce1e85`.
-  The actual ROM still uses recorded inputs: game IPC/input remapping, checkpoint
+  The actual ROM still uses recorded inputs: game input remapping, checkpoint
   integration, presentation/audio handling, and the lobby UI remain required.
+- Private owner/game IPC is now version 2 with bounded input-upload/relay records.
+  The owner validates the assigned local slot, supplies it through the isolated
+  launch environment, drains a bounded incoming queue, and rejects stale-match
+  inputs. Nonblocking writes retain partial records in a capped 2,048-message
+  queue; a socket-buffer saturation test drains them in order without loss. This
+  matters on macOS, whose observed default local socket buffer is only 8 KiB.
+  Fixture game children now exchange assigned inputs through IPC → ENet server →
+  IPC before completing, and wrong-slot child uploads abort. O0/O2 ownership and
+  channel tests pass. Rebuilt game SHA-256
+  `91b58d8b6fe7dedb29fd5f11886462ca88694fcc36a97c02b9959c4d06b4a24a`
+  passes two normal real first-to-three matches and the real two-client startup/
+  cancel checks; all six lobby CTest targets pass. The real game callback has not
+  yet consumed network inputs or driven its checkpoint ring from this history.
 
 ## Goal and boundary
 

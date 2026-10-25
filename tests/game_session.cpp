@@ -43,16 +43,16 @@ int main(int argc, char** argv) {
         online::MatchChannel channel(3);
         auto match = std::stoull(std::getenv("BM64_OWNER_MATCH"));
         if (std::string(argv[1]) == "--child-wrong-match") {
-            channel.send({1, online::MatchEvent::Ready, match + 1, 1374});
+            channel.send({online::match_channel_version, online::MatchEvent::Ready, match + 1, 1374});
             for (;;) pause();
         }
         if (std::string(argv[1]) == "--child-early-finish") {
-            channel.send({1, online::MatchEvent::Finished, match, 2000});
+            channel.send({online::match_channel_version, online::MatchEvent::Finished, match, 2000});
             for (;;) pause();
         }
-        channel.send({1, online::MatchEvent::Ready, match, 1374, 123, 456});
+        channel.send({online::match_channel_version, online::MatchEvent::Ready, match, 1374, 123, 456});
         if (std::string(argv[1]) == "--child-duplicate") {
-            channel.send({1, online::MatchEvent::Ready, match, 1374, 123, 456});
+            channel.send({online::match_channel_version, online::MatchEvent::Ready, match, 1374, 123, 456});
             for (;;) pause();
         }
         for (;;) {
@@ -63,7 +63,23 @@ int main(int argc, char** argv) {
             std::this_thread::sleep_for(1ms);
         }
         if (std::string(argv[1]) == "--child-play-hold") for (;;) pause();
-        channel.send({1, online::MatchEvent::Finished, match, 2000});
+        if (std::string(argv[1]) == "--child-input" || std::string(argv[1]) == "--child-bad-input") {
+            online::InputBatch input;
+            input.match = match; input.count = 1;
+            input.slot = uint8_t(std::stoul(std::getenv("BM64_ONLINE_SLOT")));
+            if (std::string(argv[1]) == "--child-bad-input") input.slot = uint8_t((input.slot + 1) % 3);
+            input.pads[0] = {0x8000, 64, -64};
+            channel.send(online::input_message(input, false));
+            for (;;) {
+                if (auto relayed = channel.receive()) {
+                    assert(relayed->event == online::MatchEvent::InputRelay && relayed->input.match == match);
+                    assert(relayed->input.slot == 0 && relayed->input.pads[0].buttons == 0x4000);
+                    break;
+                }
+                std::this_thread::sleep_for(1ms);
+            }
+        }
+        channel.send({online::match_channel_version, online::MatchEvent::Finished, match, 2000});
         return 0;
     }
     auto scratch = fs::absolute("build/experiments/session-tests");
@@ -190,12 +206,33 @@ int main(int argc, char** argv) {
         wait_ready(session);
         assert(session.playing(15));
         assert(wait_exit(session).completed_frame);
+        try {
+            session.start(16, executable, rom, scratch / "invalid-slot.log", {}, {}, 2, 2); assert(false);
+        } catch (const std::invalid_argument&) {}
+        session.start(16, executable, rom, scratch / "inputs.log", {"--child-input"},
+                      {{"BM64_ONLINE_SLOT", "999"}}, 3, 2);
+        wait_ready(session); assert(session.playing(16));
+        std::vector<online::InputBatch> uploads;
+        auto upload_deadline = std::chrono::steady_clock::now() + 2s;
+        while (uploads.empty() && std::chrono::steady_clock::now() < upload_deadline) {
+            assert(!session.poll()); uploads = session.take_inputs(); std::this_thread::sleep_for(1ms);
+        }
+        assert(uploads.size() == 1 && uploads[0].slot == 2 && uploads[0].pads[0].buttons == 0x8000);
+        auto relayed = uploads[0]; relayed.match = 15;
+        assert(!session.send_inputs(relayed));
+        relayed.match = 16; relayed.slot = 3;
+        try { session.send_inputs(relayed); assert(false); } catch (const std::logic_error&) {}
+        relayed.slot = 0; relayed.pads[0].buttons = 0x4000;
+        assert(session.send_inputs(relayed));
+        assert(wait_exit(session).completed_frame && session.take_inputs().empty());
+        start(17, "--child-bad-input"); wait_ready(session); assert(session.playing(17));
+        assert(!wait_exit(session).error.empty());
     }
     close(connection[0]); close(connection[1]);
     std::string marker;
     std::ifstream(personal / "personal-marker") >> marker;
     assert(marker == "unchanged" && !fs::exists(personal / "child-save"));
     std::cout << "PASS: " << (real_game ? "real game cancellation and two normal matches with matching ready digests" :
-        "loading cancellation, acknowledged start/finish, crash, failed launch, restart and invalid events")
+        "loading cancellation, acknowledged start/finish, assigned input transfer, crash, failed launch, restart and invalid events")
         << "; isolated settings cleaned; local owner connection retained\n";
 }

@@ -17,11 +17,26 @@ int main(int argc, char** argv) {
         }
         online::MatchChannel channel(3);
         auto match = std::stoull(std::getenv("BM64_OWNER_MATCH"));
-        channel.send({1, online::MatchEvent::Ready, match, 1374, 123, 456});
+        channel.send({online::match_channel_version, online::MatchEvent::Ready, match, 1374, 123, 456});
         for (;;) {
             if (auto command = channel.receive()) {
                 assert(command->event == online::MatchEvent::Start && command->match == match);
-                channel.send({1, online::MatchEvent::Finished, match, 1376});
+                online::InputBatch input; input.match = match; input.count = 1;
+                input.slot = uint8_t(std::stoul(std::getenv("BM64_ONLINE_SLOT")));
+                input.pads[0].buttons = input.slot ? 0x4000 : 0x8000;
+                input.received = {2, 2, 0, 0}; input.received[input.slot] = 3;
+                channel.send(online::input_message(input, false));
+                for (;;) {
+                    if (auto received = channel.receive()) {
+                        assert(received->event == online::MatchEvent::InputRelay);
+                        if (received->input.slot != input.slot) {
+                            assert(received->input.pads[0].buttons == (input.slot ? 0x8000 : 0x4000));
+                            break;
+                        }
+                    }
+                    std::this_thread::sleep_for(std::chrono::milliseconds(1));
+                }
+                channel.send({online::match_channel_version, online::MatchEvent::Finished, match, 1376});
                 return 0;
             }
             std::this_thread::sleep_for(std::chrono::milliseconds(1));
@@ -71,7 +86,7 @@ int main(int argc, char** argv) {
                            std::vector<std::string>{"--child"},
                     real ? std::map<std::string, std::string>{{"BM64_INPUT_SCRIPT", fs::absolute(argv[3]).string()},
                                                              {"BM64_STOP_FRAME", "5600"}} :
-                           std::map<std::string, std::string>{}, a.roster().count);
+                           std::map<std::string, std::string>{}, a.roster().count, i == 0 ? a.slot() : b.slot());
             }
             until([&] {
                 for (auto& game : games) {
@@ -105,7 +120,12 @@ int main(int argc, char** argv) {
             } else {
                 std::array<std::optional<online::GameSession::Exit>, 2> exits;
                 until([&] {
-                    for (unsigned i = 0; i < games.size(); ++i) if (!exits[i]) exits[i] = games[i].poll();
+                    for (unsigned i = 0; i < games.size(); ++i) {
+                        auto& connection = i == 0 ? a : b;
+                        if (!exits[i]) exits[i] = games[i].poll();
+                        for (auto& input : games[i].take_inputs()) connection.send_inputs(input);
+                        for (auto& input : connection.take_inputs()) games[i].send_inputs(input);
+                    }
                     return exits[0] && exits[1];
                 });
                 for (const auto& exit : exits) assert(exit->error.empty() && exit->completed_frame == 1376);
@@ -143,6 +163,6 @@ int main(int argc, char** argv) {
         }
     }
     enet_deinitialize();
-    std::cout << "PASS: production client clocks, owned " << (real ? "real game startup/cancel" : "child completion")
+    std::cout << "PASS: production client clocks, owned " << (real ? "real game startup/cancel" : "fixture child completion and IPC/ENet input transfer")
               << ", repeated match identity retention and late-start cancellation\n";
 }

@@ -5,7 +5,7 @@
 int main() {
     using namespace online;
     auto [owner, child] = MatchChannel::pair();
-    MatchMessage ready{1, MatchEvent::Ready, 7, 1374, 123, 456};
+    MatchMessage ready{match_channel_version, MatchEvent::Ready, 7, 1374, 123, 456};
     assert(!owner.receive());
     // A stream can split any message even though the sender writes it once.
     auto* bytes = reinterpret_cast<const char*>(&ready);
@@ -17,19 +17,49 @@ int main() {
     }
     child.send(ready); child.send(ready);
     assert(owner.receive() && owner.receive() && !owner.receive());
-    owner.send({1, MatchEvent::Start, 7, 1374});
+    owner.send({match_channel_version, MatchEvent::Start, 7, 1374});
     assert(child.receive()->event == MatchEvent::Start);
-    for (auto invalid : {MatchMessage{2, MatchEvent::Ready, 7, 1374},
-                         MatchMessage{1, MatchEvent(99), 7, 1374},
-                         MatchMessage{1, MatchEvent::Ready, 0, 1374},
-                         MatchMessage{1, MatchEvent::Ready, 7, 0}}) {
+    InputBatch input; input.match = 7; input.slot = 2; input.count = input_slots;
+    for (unsigned i = 0; i < input.count; ++i) input.pads[i] = {0x8000, int8_t(i), int8_t(-int(i))};
+    child.send(input_message(input, false));
+    auto upload = owner.receive();
+    assert(upload && upload->event == MatchEvent::InputUpload && upload->input.pads == input.pads);
+    owner.send(input_message(input, true));
+    auto relay = child.receive();
+    assert(relay && relay->event == MatchEvent::InputRelay && relay->input.first == 2 && relay->input.count == 32);
+    for (auto invalid : {input_message(input, false), input_message(input, true)}) {
+        ++invalid.match; child.send(invalid);
+        try { owner.receive(); assert(false); } catch (const std::runtime_error&) {}
+    }
+    for (auto invalid : {MatchMessage{1, MatchEvent::Ready, 7, 1374},
+                         MatchMessage{match_channel_version, MatchEvent(99), 7, 1374},
+                         MatchMessage{match_channel_version, MatchEvent::Ready, 0, 1374},
+                         MatchMessage{match_channel_version, MatchEvent::Ready, 7, 0}}) {
         child.send(invalid);
         try { owner.receive(); assert(false); } catch (const std::runtime_error&) {}
     }
     child = MatchChannel{};
     try { owner.receive(); assert(false); } catch (const std::runtime_error&) {}
     // A dead child must not terminate its persistent owner with SIGPIPE.
-    try { owner.send({1, MatchEvent::Start, 7, 1374}); assert(false); }
+    try { owner.send({match_channel_version, MatchEvent::Start, 7, 1374}); assert(false); }
     catch (const std::runtime_error&) {}
-    std::cout << "PASS: fragmented/batched match events, validation, disconnect and closed-peer send\n";
+    auto [blocked, unread] = MatchChannel::pair();
+    unsigned sent = 0;
+    try { for (; sent < 10000; ++sent) {
+        input.first = 2 + sent; input.pads[0].x = int8_t(sent % 100);
+        blocked.send(input_message(input, false));
+    } }
+    catch (const std::runtime_error&) {}
+    assert(sent > 0 && sent < 10000); // Full IPC buffers fail instead of accumulating an unbounded queue.
+    unsigned received = 0;
+    for (unsigned attempts = 0; received < sent && attempts < 100000; ++attempts) {
+        blocked.flush();
+        if (auto message = unread.receive()) {
+            assert(message->event == MatchEvent::InputUpload && message->input.first == 2 + received);
+            assert(message->input.pads[0].x == int8_t(received % 100));
+            ++received;
+        }
+    }
+    assert(received == sent && blocked.flush());
+    std::cout << "PASS: fragmented/batched input events, bounded queue recovery, validation, disconnect and closed-peer send\n";
 }

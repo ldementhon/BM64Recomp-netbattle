@@ -17,6 +17,7 @@ GameSession::~GameSession() { reap(); cleanup(); }
 void GameSession::cleanup() {
     channel_ = MatchChannel{};
     ready_.reset();
+    inputs_.clear();
     if (!settings_.empty()) {
         std::error_code ignored;
         std::filesystem::remove_all(settings_, ignored);
@@ -40,10 +41,11 @@ void GameSession::start(uint64_t match, const std::filesystem::path& executable,
                         const std::filesystem::path& rom, const std::filesystem::path& log,
                         const std::vector<std::string>& arguments,
                         const std::map<std::string, std::string>& diagnostic_environment,
-                        unsigned human_players) {
+                        unsigned human_players, unsigned local_slot) {
     if (state_ != State::Lobby || child_ >= 0) throw std::logic_error("match already running");
     if (!match || match <= match_) throw std::invalid_argument("match ID must increase");
     if (human_players < 2 || human_players > 4) throw std::invalid_argument("online match requires 2, 3, or 4 humans");
+    if (local_slot >= human_players) throw std::invalid_argument("local player is not a human slot");
     // Consume IDs even on failed launches: queued events must never become valid later.
     match_ = match;
     auto pattern = (std::filesystem::temp_directory_path() / "bm64-match-XXXXXX").string();
@@ -74,6 +76,7 @@ void GameSession::start(uint64_t match, const std::filesystem::path& executable,
         environment["APP_FOLDER_PATH"] = settings_.string();
         environment["BM64_OWNER_MATCH"] = std::to_string(match);
         environment["BM64_ONLINE_HUMANS"] = std::to_string(human_players);
+        environment["BM64_ONLINE_SLOT"] = std::to_string(local_slot);
         std::vector<std::string> env_strings;
         for (auto& [key, value] : environment) env_strings.push_back(key + "=" + value);
         std::vector<char*> env;
@@ -99,6 +102,7 @@ void GameSession::start(uint64_t match, const std::filesystem::path& executable,
         posix_spawn_file_actions_destroy(&actions);
         if (error) { child_ = -1; throw std::system_error(error, std::generic_category(), "launch game"); }
         state_ = State::Loading;
+        humans_ = human_players; local_slot_ = local_slot;
         loading_deadline_ = std::chrono::steady_clock::now() + std::chrono::seconds(30);
     } catch (...) { reap(); cleanup(); throw; }
 }
@@ -119,13 +123,27 @@ bool GameSession::cancel(uint64_t match) {
     return true;
 }
 
+bool GameSession::send_inputs(const InputBatch& batch) {
+    if (state_ == State::Lobby || batch.match != match_) return false;
+    if (!ready_ || batch.slot >= humans_) throw std::logic_error("input cannot reach this game session");
+    validate_batch(batch);
+    channel_.send(input_message(batch, true));
+    return true;
+}
+
 std::optional<GameSession::Exit> GameSession::poll(std::chrono::steady_clock::time_point now) {
     if (child_ < 0) return std::nullopt;
     try {
-        if (auto message = channel_.receive()) {
+        for (unsigned received = 0; received < 128; ++received) {
+            auto message = channel_.receive();
+            if (!message) break;
             if (message->match != match_) throw std::runtime_error("wrong-match child event");
             if (message->event == MatchEvent::Ready && state_ == State::Loading && !ready_) {
                 ready_ = *message;
+            } else if (message->event == MatchEvent::InputUpload && state_ == State::Playing) {
+                if (message->input.slot != local_slot_ || inputs_.size() >= 128)
+                    throw std::runtime_error("invalid or excessive game input uploads");
+                inputs_.push_back(message->input);
             } else if (message->event == MatchEvent::Finished && state_ == State::Playing &&
                        ready_ && message->frame > ready_->frame) {
                 auto status = reap();

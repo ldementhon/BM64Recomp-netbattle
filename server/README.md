@@ -50,7 +50,11 @@ states, starts/cancels twice, and deliberately delivers a third start too late.
 Both owners retain identities and clean up settings. This two-human/two-CPU
 fixture proves startup/cancel, not normal match completion or live inputs.
 The ordinary test uses disposable fixture children to verify finish agreement
-and that no UDP sockets are inherited by game processes. Windows game-process
+after exchanging assigned inputs through the private IPC channel and ENet relay,
+and verifies that no UDP sockets are inherited by game processes. Private channel
+version 2 queues at most 2,048 fixed 240-byte records, supports partial nonblocking
+writes, and fails if that bound is exceeded. The owner drains at most 128 child
+records per poll. These input records are separate from checkpoints. Windows game-process
 ownership remains unimplemented; its tests are excluded on that platform.
 
 `input_network` runs four production client connections through actual ENet input

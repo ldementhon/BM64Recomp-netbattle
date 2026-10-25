@@ -115,6 +115,9 @@ The local owner socket survives. `BM64_LOBBY_REAL_GAME=1 sh tests/run_lobby_test
 also checks two simultaneous real games starting/cancelling through persistent
 ENet connections, retaining identities across restarts and rejecting a late start.
 That two-human/CPU fixture does not prove normal completion or live inputs.
+The private owner/game channel carries bounded input records in both directions;
+fixture children exercise IPC → ENet relay → IPC with their assigned slots. The
+actual game still needs to connect those inputs to its checkpoint/controller path.
 `--online-test` is an isolated settings diagnostic, not a playable online mode.
 It locks cheats and guest music/effects/voice balance while allowing host Main
 Volume. The match-settings check compares online settings-change attempts and

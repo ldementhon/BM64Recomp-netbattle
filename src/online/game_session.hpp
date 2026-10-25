@@ -32,13 +32,15 @@ public:
                const std::filesystem::path& rom, const std::filesystem::path& log,
                const std::vector<std::string>& arguments,
                const std::map<std::string, std::string>& diagnostic_environment = {},
-               unsigned human_players = 4);
+               unsigned human_players = 4, unsigned local_slot = 0);
     bool playing(uint64_t match);
     bool cancel(uint64_t match);
     std::optional<Exit> poll(std::chrono::steady_clock::time_point now = std::chrono::steady_clock::now());
     State state() const { return state_; }
     const std::optional<MatchMessage>& ready() const { return ready_; }
     const std::filesystem::path& settings() const { return settings_; }
+    bool send_inputs(const InputBatch& batch);
+    std::vector<InputBatch> take_inputs() { auto result = std::move(inputs_); inputs_.clear(); return result; }
 
 private:
     int reap();
@@ -50,5 +52,7 @@ private:
     std::chrono::steady_clock::time_point loading_deadline_;
     MatchChannel channel_;
     std::optional<MatchMessage> ready_;
+    std::vector<InputBatch> inputs_;
+    unsigned humans_ = 4, local_slot_ = 0;
 };
 }

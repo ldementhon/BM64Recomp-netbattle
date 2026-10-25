@@ -22,7 +22,7 @@ static void owned_match_boundary() {
         static Owner owner(value);
         if (!owner.started && player_select_ready && overlay == 13) {
             finish_presentation();
-            online::MatchMessage ready{1, online::MatchEvent::Ready, owner.match, frame,
+            online::MatchMessage ready{online::match_channel_version, online::MatchEvent::Ready, owner.match, frame,
                                       digest().ram, comparable_registers()};
             owner.channel.send(ready);
             fprintf(stderr, "MATCH_READY: match=%llu frame=%llu ram=%016llx registers=%016llx\n",
@@ -44,7 +44,12 @@ static void owned_match_boundary() {
         if (owner.started) {
             if (owner.channel.receive()) throw std::runtime_error("unexpected owner command during match");
             if (battle_state().complete()) {
-                owner.channel.send({1, online::MatchEvent::Finished, owner.match, frame});
+                owner.channel.send({online::match_channel_version, online::MatchEvent::Finished, owner.match, frame});
+                auto deadline = std::chrono::steady_clock::now() + std::chrono::seconds(5);
+                while (!owner.channel.flush()) {
+                    if (std::chrono::steady_clock::now() >= deadline) throw std::runtime_error("owner finish delivery timed out");
+                    std::this_thread::sleep_for(std::chrono::milliseconds(1));
+                }
                 fprintf(stderr, "MATCH_FINISHED: match=%llu frame=%llu\n", owner.match, frame);
                 fflush(stderr);
                 std::_Exit(0);
