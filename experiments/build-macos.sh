@@ -51,6 +51,12 @@ if ! git -C lib/rt64/src/contrib/plume apply --reverse --check "$descriptor_patc
     git -C lib/rt64/src/contrib/plume apply "$descriptor_patch"
 fi
 
+readback_patch="$recomp_root/experiments/patches/plume-texture-readback.patch"
+if ! git -C lib/rt64/src/contrib/plume apply --reverse --check "$readback_patch" 2>/dev/null; then
+    git -C lib/rt64/src/contrib/plume apply --check "$readback_patch"
+    git -C lib/rt64/src/contrib/plume apply "$readback_patch"
+fi
+
 presentation_patch="$recomp_root/experiments/patches/plume-presentation-probe.patch"
 if ! git -C lib/rt64/src/contrib/plume apply --reverse --check "$presentation_patch" 2>/dev/null; then
     git -C lib/rt64/src/contrib/plume apply --check "$presentation_patch"

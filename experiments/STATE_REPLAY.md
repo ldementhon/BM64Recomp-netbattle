@@ -18,6 +18,7 @@ and renderer changes are stored in these patches:
   transforms, matching the Windows x64 path on Apple Silicon.
 - `patches/plume-presentation-probe.patch`: Metal presentation timing.
 - `patches/plume-descriptor-layout.patch`: Windows buffer bindings after static samplers.
+- `patches/plume-texture-readback.patch`: Windows texture-to-buffer copies use the source texture's sample positions.
 - `patches/hlslpp-stdlib.patch`: standard-library include needed by the Mac build.
 
 Initialize submodules with `git submodule update --init --recursive`, then apply
@@ -65,6 +66,10 @@ x64 developer shell, run `cmake --build build --target bm64_d3d12_descriptor_tes
 and `build\bm64_d3d12_descriptor_test.exe` to check D3D12 heap offsets and counts
 for static/dynamic samplers and buffer arrays, including a boundless final range.
 This check requires a D3D12 adapter but no window or ROM.
+The same environment can run `cmake --build build --target bm64_d3d12_copy_test`
+and `build\bm64_d3d12_copy_test.exe` to check a depth texture copy followed by
+readback into a buffer with padded rows. This catches a null destination-texture
+dereference in the readback path.
 
 Replay input checks also run at both optimization levels. Boundary N is the start
 of simulation update N: every controller read during that update uses input N,

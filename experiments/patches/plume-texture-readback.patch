@@ -1,0 +1,11 @@
+--- a/plume_d3d12.cpp
++++ b/plume_d3d12.cpp
+@@ -2316,7 +2316,7 @@
+ 
+         const D3D12_TEXTURE_COPY_LOCATION copyDstLocation = toD3D12(dstLocation);
+         const D3D12_TEXTURE_COPY_LOCATION copySrcLocation = toD3D12(srcLocation);
+-        setSamplePositions(dstLocation.texture);
++        setSamplePositions(dstLocation.texture != nullptr ? dstLocation.texture : srcLocation.texture);
+         d3d->CopyTextureRegion(&copyDstLocation, dstX, dstY, dstZ, &copySrcLocation, (srcBox != nullptr) ? &copyBox : nullptr);
+         resetSamplePositions();
+     }

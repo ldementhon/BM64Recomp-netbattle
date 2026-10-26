@@ -9,6 +9,38 @@ open. No server has been rented or deployed.
 
 ## Implementation record
 
+- Per-draw depth attribution and readback fix (2026-10-25): the first Windows
+  depth-readback probe exposed a separate Plume null dereference: texture-to-buffer
+  copies passed the absent destination texture to `setSamplePositions`. The
+  shared copy path now uses the source texture when the destination is a buffer.
+  `patches/plume-texture-readback.patch` preserves this one-line fix; the Mac
+  preparation recipe applies it, and Windows bundles export the patched source.
+  The new `bm64_d3d12_copy_test` passes on Windows, checking a depth texture copy
+  followed by exact readback across padded rows, without a window or ROM. The
+  original diagnostic crashed with access violation; a separate deliberate
+  regression reversal has not run. This fix does not establish replay stability.
+
+  With single-sample depth captured after every native draw, image
+  `45ee821a2268f7c519fa0b55ca1f36257709a027cca037931601ab090d5d9d58`
+  passes the complete 280-boundary startup replay on three restores. All 74,643
+  replay depth records match their 24,881 baseline records over the sampled
+  8-by-3-pixel region. The relevant pixels change during the indexed draw starting
+  at face-index offset 120; draw ordinal varies with the frame. Added transitions
+  and readbacks may hide the original failure, so this is attribution evidence,
+  not an accepted renderer fix. Logs: `windows-depth-readback-fixed-run.log`,
+  `depth-readback-fixed-windows.txt`, and its `.comparison.json` under
+  `build/experiments/`.
+
+  The follow-up uses one image with tracing disabled, barriers alone, and full
+  tracing. Its SSH connection was interrupted when the user shut down the Windows
+  PC; its build/test outcome is unknown and must be inspected before another run.
+  All three temporary source files are restored locally, with the diagnostic
+  saved in `build/experiments/depth-draw-attribution.patch`. Windows restoration
+  remains pending: inspect its `windows-depth-sync-control-*` logs and active
+  processes/tasks, then apply the checked `windows-restored-depth-draw` delta and
+  run the normal control. Keep the independently tested readback fix. No normal
+  Windows image or mixed-platform build pair is certified by these experiments.
+
 - GPU replay attribution (2026-10-25): the Windows failure persists with GPU
   readback instrumentation. Position/UV/color output buffers match in all 42
   compared replay captures, yet depth diverges at update 1385 (native list 10).
