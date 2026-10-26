@@ -1,12 +1,59 @@
 # Minimal dedicated-server lobby and player assignment
 
 Status: macOS Online Battle screen is wired and locally exercised, 2026-10-25.
-Four-process scripted rollback matches pass; the full Windows x64 client builds.
-Windows real-game lifecycle validation passes. Cross-platform
-determinism, physical-controller validation, audio/rumble, and human playtests remain
+Four-process scripted Mac rollback matches pass; the full Windows x64 client builds.
+Windows real-game lifecycle validation passes, but Windows full-state replay
+is intermittent. Cross-platform determinism, physical-controller validation, audio/rumble, and human playtests remain
 open. No server has been rented or deployed.
 
 ## Implementation record
+
+- Restored-build startup results (2026-10-25): the rejected shader experiment
+  is removed byte-for-byte from the renderer sources on both machines. Final
+  images: Mac `9b45280c3b862121c0c0e0374be64883616be1753756eaab5d6b6c39419f4189`;
+  Windows `9e722fd45bb52a21591403a9414a9100b4bcb5cd86523c04aebca73963f24ed0`.
+  Full-executable fingerprint, Unicode settings isolation, portable fallback,
+  and missing-ROM checks pass on both. Input timing passes 7,047 checks at each
+  of O0/O2. Mac passes two independent 280-boundary startup histories, three
+  full-state restores each, and the input-negative control. Windows passes its
+  first complete startup history, but the second fresh process fails replay 1
+  at frame 1565 in color/depth pages `0x12e000` and `0x209000`, with equal
+  registers. Its startup negative control is not reached. The strict cross-build
+  comparison of the successful full histories finds first divergence at **1375**,
+  immediately after the agreed Player Select boundary 1374. RAM at 1375 is
+  Mac `8fbd32fb67d17a91`, Windows `116ba18a08857b91`; both register digests are
+  `bd455789a084498b`. Thus the earlier frame-1601 finding is not limited to the
+  old scripted handoff. Windows replay stability and cross-platform rendering
+  determinism remain step-1 blockers; round/match cross-platform certification
+  and live mixed-platform admission remain pending.
+  Logs under `build/experiments/`: `restored-startup-mac.log`,
+  `windows-startup-{a,b}.txt`, `windows-startup-desktop.log`,
+  `cross-startup-comparison.log`, `restored-mac-fingerprint.log`, and
+  `cross-platform-input-checks.log`. Windows build/fingerprint output is retained
+  in the private test workspace and tool transcript. Unrelated dependency edits
+  and local experiments remain untouched; no ROM, dump, or generated log is committed.
+
+- Windows replay instability (2026-10-25): after separating stdout/stderr,
+  two complete Windows histories pass all 747 boundaries and three restores,
+  but the changed-input run fails its own third replay at frame 1620, before
+  its input change at 1950. Registers agree; only color/depth pages `0x11c000`
+  and `0x21c000` differ. This is an additional same-machine correctness blocker,
+  not a passing negative control. A candidate forced native rendering to use
+  only fallback shaders, removing background compilation from shader selection.
+  Both clients built and their short replay passed, but Windows still failed
+  full replay at frame 1648 in the same two buffer pages. The candidate was
+  removed rather than promoted as a fix. Candidate image identities were Mac
+  `8ba690cb71ace17ba526b9a151551d8c8463e74ea2d6f92d01a90a67a142ffc1`
+  and Windows `15ffb5f7a14de61b1a9ab7973741d33f521d1633bdd07ded295632203fd3f4d7`.
+  Evidence: `build/experiments/windows-independent-clean-{a,negative}.txt` and
+  `windows-fixed-shader-failed.txt`. The failed runs retain all-memory comparisons
+  and reject compatibility; no failure has been converted into an accepted result.
+  A private Vulkan run of the candidate also passes its short local replay but
+  differs from Mac at frame 1601 (RAM `2243f4c56f374c3c`); it does not establish
+  a compatible alternative backend. Production renderer source/settings are
+  restored. Next renderer investigation must distinguish retained native render
+  state, CPU-prepared draw inputs, and GPU output precision; neither shader
+  readiness nor sample count alone has been shown to explain these failures.
 
 - Portable transition comparison (2026-10-25): `run_online_transition_tests.py`
   now selects the platform executable and forwards explicit local executable/ROM
@@ -18,7 +65,7 @@ open. No server has been rented or deployed.
   incorrect scenes, changed RAM, failed replay, invalid windows, and provenance
   mismatches. Mac's real startup fixture passes two independent histories,
   full-state restores, and the input-negative control. Windows real transition
-  runs and final rebuilt-image coverage remain pending.
+  results and final rebuilt-image coverage are recorded in the entry above.
 
 - First divergent-state attribution (2026-10-25): an opt-in diagnostic writes
   all 512 MiB at `BM64_DUMP_FRAME` to `BM64_DUMP_PATH` during the baseline
