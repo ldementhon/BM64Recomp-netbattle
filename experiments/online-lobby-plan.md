@@ -7,6 +7,18 @@ open. No server has been rented or deployed.
 
 ## Implementation record
 
+- Windows private channel: `MatchChannel` now supports a local duplex byte pipe
+  with owner-only access, remote connections refused, and initially non-inheritable
+  handles. It uses explicit nonblocking polling with the existing 240-byte
+  records and 2,048-message queue cap; no pending I/O retains moved buffers.
+  The shared channel regression now runs in CTest on both platforms and checks
+  fragmentation, batched records, input/event validation, queue saturation and
+  ordered recovery, moves with pending receive/send data, and closure from
+  either end. All seven Windows Clang and MSVC Release CTests and all nine Mac
+  lobby CTests pass. The Mac session, channel, and input-policy tests also pass
+  at O0/O2. Windows process creation and
+  handle inheritance are the next step; this channel test uses both endpoints
+  within one process and does not yet certify an owned Windows game session.
 - Windows foundation (2026-10-25): SSH access to `dosktep2025` is verified.
   Its original workspace contained only `access-check`; all new files are isolated
   under `C:\Users\ldeme\Dev\bomberman64\online-port`. The host is Windows 11 x64,
