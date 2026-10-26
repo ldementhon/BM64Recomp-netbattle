@@ -8,6 +8,26 @@ open. No server has been rented or deployed.
 
 ## Implementation record
 
+- Cross-build comparison preparation (2026-10-25): the checkpoint runner now
+  selects the native Windows executable by default and accepts `BM64_EXECUTABLE`
+  and `BM64_ROM` for explicit local paths. It records the copied ROM's SHA-256
+  and checks that both ROM and executable remain unchanged. The independent-client
+  runner forwards only those explicit path overrides through its diagnostic-env
+  cleanup. `python3 tests/run_independent_clients.py --cross-build first.log second.log`
+  compares the existing 1599–2345 history across explicit executable identities,
+  requiring matching ROM/input hashes, every expected boundary, and successful
+  full-state replay. Default comparison still requires one executable identity;
+  this diagnostic does not alter lobby compatibility. Five regression cases
+  cover mismatched/missing/duplicated provenance, incomplete/duplicated/failed
+  histories, actual state divergence, and attempted changed-input relaxation.
+  On final Mac image `e7058e918a9c5248a0c9145a9d139482a1e7c5e574a25b88f4782653312af2d6`,
+  two fresh processes match all 747 boundaries and each passes three full-state
+  restores. The changed-input process still replays correctly and diverges from
+  the reference at frame 1951 as expected. Log:
+  `build/experiments/windows-port-independent-mac.log`.
+  Windows execution of this runner and comparison of startup/round-transition
+  histories remain pending; a matching synthetic or Mac-only comparison is not
+  cross-platform determinism evidence.
 - Windows full-client build (2026-10-25): the Online Battle backend is linked on
   Windows, unused POSIX-only includes are removed, and checkpoint tracing uses
   `GetThreadTimes` there. The Windows trace omits unsupported POSIX fault/scheduler
@@ -41,7 +61,9 @@ open. No server has been rented or deployed.
   The Windows source manifest was updated only after checking the old and new
   hashes for the reviewed delta, then completely reverified before rebuilding.
   Source bundle and logs remain ignored under `build/experiments/`;
-  `windows-game-build.log` and `windows-memory-checks.log` record the build/checks.
+  `windows-game-build.log`, `windows-memory-checks.log`,
+  `windows-isolation-final-build.log`, and `windows-fingerprint-final.log`
+  record the build/checks.
   Real Windows gameplay is pending an authorized ROM on the remote PC. Automatic
   approval review rejected its transfer because source/testing access did not
   explicitly authorize proprietary-ROM transfer; the user approval question is

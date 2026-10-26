@@ -1,9 +1,13 @@
-"""Bounded macOS game checkpoint test. Every run uses fresh settings and saves."""
+"""Bounded Mac/Windows checkpoint test. Every run uses fresh settings and saves.
+
+BM64_EXECUTABLE and BM64_ROM select a private platform build and local ROM.
+"""
 import os
 import hashlib
 from pathlib import Path
 import shutil
 import subprocess
+import sys
 import tempfile
 import threading
 import time
@@ -19,11 +23,15 @@ log_path.parent.mkdir(parents=True, exist_ok=True)
 capture = bool(int(os.environ.get('BM64_HOLD_FRAME', '0')))
 helper = scratch / 'capture-game-window'
 if capture:
+    if sys.platform != 'darwin':
+        raise SystemExit('Window capture is currently supported only on macOS')
     subprocess.run(['swiftc', str(root/'tests/capture_game_window.swift'), '-o', str(helper)], check=True, timeout=60)
 with tempfile.TemporaryDirectory(prefix='checkpoint-', dir=scratch) as temporary:
     settings = str(Path(temporary) / 'settings')
     Path(settings).mkdir()
-    shutil.copyfile(root.parent / 'Bomberman 64 (USA).z64', Path(settings) / 'bm64_us.z64')
+    stored_rom = Path(settings) / 'bm64_us.z64'
+    shutil.copyfile(os.environ.get('BM64_ROM', root.parent / 'Bomberman 64 (USA).z64'), stored_rom)
+    rom_sha = hashlib.sha256(stored_rom.read_bytes()).hexdigest()
     environment = dict(os.environ, APP_FOLDER_PATH=settings)
     if environment.get('BM64_INPUT_EXTRA'):
         combined = Path(temporary) / 'combined-inputs.txt'
@@ -31,7 +39,9 @@ with tempfile.TemporaryDirectory(prefix='checkpoint-', dir=scratch) as temporary
                             Path(environment['BM64_INPUT_EXTRA']).read_text())
         environment['BM64_INPUT_SCRIPT'] = str(combined)
     with log_path.open('w') as log:
-        arguments = [os.environ.get('BM64_EXECUTABLE', str(root/'build/BM64Recompiled.app/Contents/MacOS/BM64Recompiled')), '--checkpoint-test']
+        default_game = root / ('build/BM64Recompiled.exe' if sys.platform == 'win32' else
+                               'build/BM64Recompiled.app/Contents/MacOS/BM64Recompiled')
+        arguments = [os.environ.get('BM64_EXECUTABLE', str(default_game)), '--checkpoint-test']
         if os.environ.get('BM64_SINGLE_BATTLE') == '1': arguments.append('--single-battle')
         if os.environ.get('BM64_ONLINE_TEST') == '1': arguments.append('--online-test')
         image_path = Path(arguments[0]).resolve()
@@ -42,6 +52,7 @@ with tempfile.TemporaryDirectory(prefix='checkpoint-', dir=scratch) as temporary
         input_path = environment.get('BM64_INPUT_SCRIPT')
         input_sha = hashlib.sha256(Path(input_path).read_bytes()).hexdigest() if input_path else 'none'
         log.write(f"PROBE_IMAGE: sha256={image_sha} input_sha256={input_sha} palette_batching={int('BM64_COALESCE_PALETTE' in environment)}\n")
+        log.write(f'PROBE_ROM: sha256={rom_sha}\n')
         log.flush()
         process = subprocess.Popen(arguments,
             cwd=root, env=environment, stdout=subprocess.PIPE, stderr=subprocess.STDOUT, text=True)
@@ -66,6 +77,8 @@ with tempfile.TemporaryDirectory(prefix='checkpoint-', dir=scratch) as temporary
         final_sha = hashlib.sha256(image_path.read_bytes()).hexdigest()
         if final_sha != image_sha:
             raise RuntimeError('Executable changed during run: '+final_sha)
+        if hashlib.sha256(stored_rom.read_bytes()).hexdigest() != rom_sha:
+            raise RuntimeError('Isolated ROM changed during run')
         log.write(f'PROBE_IMAGE_UNCHANGED: sha256={final_sha}\n')
         log.write(f'RESULT: process_exit_code={code}\n')
 output = log_path.read_text()
