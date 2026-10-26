@@ -1,0 +1,11 @@
+diff --git a/src/hle/rt64_rsp.cpp b/src/hle/rt64_rsp.cpp
+--- a/src/hle/rt64_rsp.cpp
++++ b/src/hle/rt64_rsp.cpp
+@@ -1,3 +1,7 @@
++#if defined(__clang__)
++// Match the separate multiply/add rounding used by the Windows x64 build.
++#pragma clang fp contract(off)
++#endif
+ //
+ // RT64
+ //

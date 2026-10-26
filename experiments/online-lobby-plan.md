@@ -8,6 +8,26 @@ open. No server has been rented or deployed.
 
 ## Implementation record
 
+- CPU transform attribution (2026-10-25): a temporary native-input diagnostic
+  compared 28 draw-data arrays before upload on the first two rendered updates.
+  Raw positions, indices, matrices, colors, RDP parameters, lights, viewport, and
+  texture coordinates agreed across Mac/Windows, but `posTransformed` differed
+  (`d45ea709f3f6b09e` vs `63879f90e4589f09`). Disabling floating-point contraction
+  in RT64's CPU RSP translation unit makes all 28 baseline arrays agree. The
+  narrow `rt64-rsp-rounding.patch` preserves this correction and is applied by
+  the Mac build recipe; Windows x64 already used separate multiply/add rounding.
+  This does not remove the first framebuffer mismatch: the Mac full-RAM hash at
+  1601 remains `51ac468a7cca5a6a`, compared with Windows `586f8a93d8ecbabe`.
+  The evidence narrows the remaining work beyond these CPU draw inputs; it does
+  not prove that every renderer input/cache is identical or certify GPU behavior.
+  A separate Metal precise-math/no-contraction shader experiment changed pixels
+  but still differed in 166 words (82 color, 84 depth). It was removed, as was
+  the temporary trace. The original shaders, writebacks, and full-RAM acceptance
+  checks remain. Logs: `experiments/results/native-{input,contract}-mac.txt`,
+  `build/experiments/native-input-windows.txt`, and
+  `cross-metal-math-1601-diff.txt`; disposable instrumentation is preserved locally
+  as `build/experiments/native-input-trace.patch`, not part of the shipped build.
+
 - Native renderer counters (2026-10-25): checkpoint state omitted RT64's
   native shader frame counter and color-dither seed. Both feed shader randomness
   that can enter guest RAM through framebuffer writeback. The root renderer

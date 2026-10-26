@@ -14,6 +14,8 @@ and renderer changes are stored in these patches:
   and diagnostic runtime hooks.
 - `patches/rt64-catchup.patch`: replay presentation suppression, changed-block
   writeback, and timing instrumentation.
+- `patches/rt64-rsp-rounding.patch`: separate multiply/add rounding in CPU RSP
+  transforms, matching the Windows x64 path on Apple Silicon.
 - `patches/plume-presentation-probe.patch`: Metal presentation timing.
 - `patches/hlslpp-stdlib.patch`: standard-library include needed by the Mac build.
 
