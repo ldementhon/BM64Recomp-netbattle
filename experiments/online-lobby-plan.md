@@ -8,6 +8,39 @@ open. No server has been rented or deployed.
 
 ## Implementation record
 
+- GPU-output attribution (2026-10-25): a disposable readback probe captures the
+  completed native RSP compute outputs before guest RAM comparison. At the first
+  rendered update, Mac/Windows differ in 107 of 2,936 position components (maximum
+  absolute difference `0.000030517578125`) and 16 of 2,936 lighting components
+  (maximum `0.000000059604644775390625`); all 1,468 texture-coordinate components
+  agree. Both diagnostic images still pass their four-boundary full-state replay.
+  Images: Mac `4354a73d425e1030b3cab9b0b179e14676f0fcd93c9220163c9c7a3c8fc1c9e2`,
+  Windows `306cb6d495b486587c6c42b3f1cc5ba84e96db455b505468add2985bd1ef1baf`.
+  HLSL `precise` annotations plus strict Metal compiler flags increased the
+  differing counts to 479 position and 140 lighting components. Generated Metal
+  matrix helpers still use explicit fused operations; this experiment does not
+  establish identical arithmetic. Windows also failed its own replay at 1602.
+  The precision candidate and all temporary instrumentation were removed from
+  production sources; original shader behavior and full-RAM checks remain.
+
+  A full-window Windows trace fails replay 1 at frame 1454 with matching renderer
+  counters, all 28 traced CPU draw arrays, and all three completed GPU vertex
+  output buffers at that boundary. Only the first rendered update, 1375, has a
+  traced CPU-array difference (`rdpParams`); subsequent traced inputs agree through
+  the failure. RAM differs in color/depth pages `0x11c000` and `0x21c000`, with
+  equal registers. This narrows that failure to later rendering or untraced state,
+  rather than establishing complete renderer-input equivalence.
+  Reloading native color/depth targets from RAM each update still fails at 1570.
+  Disabling interpolation while keeping presentation still fails at 1573.
+  Suppressing presentation entirely passes one 280-boundary, three-restore window;
+  that is attribution evidence only, not playable acceptance. These candidates
+  were removed. Evidence under `build/experiments/`: `native-gpu-comparison.json`,
+  `native-gpu-windows.txt`, `rsp-precise-windows.txt`, `full-gpu-windows.txt`,
+  `canonical-native-windows.txt`, `single-present-windows.txt`, and
+  `no-present-windows.txt`; Mac logs are in `experiments/results/` with corresponding
+  names. Reproducible disposable instrumentation is saved locally as
+  `build/experiments/native-full-gpu-trace.patch`. No generated buffers are committed.
+
 - Retained renderer-fix validation (2026-10-25): the final builds contain the
   native counter snapshot and CPU RSP rounding correction, with disposable shader
   and tracing experiments removed. Mac image:
