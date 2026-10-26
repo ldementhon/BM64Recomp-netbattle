@@ -26,7 +26,10 @@ current build.
    its cost, then require repeated fresh startup, battle, round, and match
    histories with full-state restores and negative controls. A short or
    instrumented pass is insufficient. Other GPUs need the same re-execution
-   check before they are trusted for online play.
+   check before they are trusted for online play. The framebuffer-consumer audit
+   below found no consumer of GPU output in game state. That makes a display-only
+   online mode (`renderToRAM` off) the preferred alternative to per-GPU
+   workarounds; prototype and validate it first.
 2. **Close cross-platform determinism.** Reuse the archived ordered-arithmetic
    prototypes as evidence, then isolate any required changes to native rendering.
    Restore real textures/colors and evaluate interpolation, sampling, depth,
@@ -45,6 +48,50 @@ current build.
    further performance changes. No server has been purchased or deployed.
 
 ## Implementation record
+
+- Framebuffer-consumer audit (2026-10-26): no game state observed consuming GPU
+  output. RT64's default `renderToRAM` writes native color/depth results into
+  game RAM, so GPU differences become state differences. This audit asks whether
+  anything that matters reads those bytes.
+
+  *Method.* A disposable probe can invert every byte that
+  `Framebuffer::copyNativeToRAM` stores (`BM64_POISON_WRITEBACK`); that is RT64's
+  only path that writes game RAM. It also keeps a byte-exact map of GPU-written
+  RAM. Each boundary prints three hashes: all 512 MiB with only those bytes
+  masked, the full RAM, and the comparable registers. Fresh processes ran normally
+  and poisoned. A consumer by any route (CPU loads, native bulk copies, RSP DMA,
+  framebuffer textures) would make the poisoned history diverge outside the
+  masked bytes. Mac image `5f09c079…`; results are
+  `experiments/results/audit-*.txt`.
+
+  | Fixture (boundaries) | Normal vs repeat | Normal vs poisoned |
+  | --- | --- | --- |
+  | Startup through Player Select (1,584) | identical | masked RAM and registers identical; full RAM differs on 210 |
+  | Three-round match through completion at scene 21 (5,474) | identical | masked identical; full differs on 3,874; same `MATCH_COMPLETE` |
+  | `rollback-inputs` battle (3,254) | — | masked identical; full differs on 1,654 |
+  | Same with CPU-player extra (a different history from 1611) | — | masked identical; full differs on 1,654 |
+
+  *Sensitivity control.* A synthetic consumer copies one GPU-written depth word
+  into unused RAM. The masked hash then diverges at exactly the injection frame
+  (1500 at startup, 2000 in the match).
+
+  *Limits.* The `rollback-stage-next` and `rollback-stage-third` extras produced
+  histories identical to their base fixture in this build, so they add no stage
+  coverage. Fast-boot frames are not rendered, so they are not covered either;
+  online play uses the same fast boot. Pause/settings, other stages and items,
+  longer sessions, and the lobby's repeated-match path are untested. The probe
+  is archived locally as `build/experiments/writeback-audit.patch`, with runner
+  `run-writeback-audit.py` and comparer `compare-writeback-audit.py`; sources
+  were restored and the Mac app rebuilt normally.
+
+  *Implication.* If the gaps stay clean, online mode can stop writing GPU output
+  into game RAM. That would mean `renderToRAM` off for checkpoint/online
+  processes, with display-only rendering as in a plain RT64 setup. Game RAM would
+  then hold no hardware-dependent bytes, and the full-RAM checks stay unchanged.
+  That would remove both the RDNA 4 glitch and the Mac/Windows rendering mismatch
+  from the determinism problem. The next step is to prototype that mode and
+  verify fresh-process, replay, and cross-platform histories, plus visual
+  correctness of transitions and framebuffer effects.
 
 - Windows replay root cause (2026-10-26, Graphics Tools installed): the
   divergence is attributed to the test PC's AMD Radeon RX 9070 XT (RDNA 4,
