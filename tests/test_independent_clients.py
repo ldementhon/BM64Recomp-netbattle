@@ -59,6 +59,18 @@ class Comparison(unittest.TestCase):
         with self.assertRaises(RuntimeError):
             compare(self.first, self.second, cross_build=True, changed_input=True)
 
+    def test_explicit_transition_window_requires_every_boundary(self):
+        for path, image in ((self.first, "a"), (self.second, "f")):
+            text = history(image=image)
+            for frame in range(FIRST, LAST + 1):
+                text = text.replace(f"frame={frame} ", f"frame={frame + 4000} ")
+            path.write_text(text)
+        window = (FIRST + 4000, LAST + 4000)
+        self.assertEqual(compare(self.first, self.second, cross_build=True, window=window), [])
+        for invalid in ((FIRST, LAST), (window[0], window[1] - 1), (window[1], window[0])):
+            with self.assertRaises(RuntimeError):
+                compare(self.first, self.second, cross_build=True, window=invalid)
+
 
 if __name__ == "__main__":
     unittest.main()

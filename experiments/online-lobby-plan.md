@@ -8,6 +8,18 @@ open. No server has been rented or deployed.
 
 ## Implementation record
 
+- Portable transition comparison (2026-10-25): `run_online_transition_tests.py`
+  now selects the platform executable and forwards explicit local executable/ROM
+  paths. `--cross-build startup|round|match first.log second.log` requires the
+  exact configured frame window, expected Player Select/next-round/winner markers,
+  matching ROM/input provenance, unchanged images, and successful full replay.
+  It does not infer a smaller window from available rows. Six comparison tests
+  and 15 transition CLI cases pass on Mac and Windows; they reject missing rows,
+  incorrect scenes, changed RAM, failed replay, invalid windows, and provenance
+  mismatches. Mac's real startup fixture passes two independent histories,
+  full-state restores, and the input-negative control. Windows real transition
+  runs and final rebuilt-image coverage remain pending.
+
 - First divergent-state attribution (2026-10-25): an opt-in diagnostic writes
   all 512 MiB at `BM64_DUMP_FRAME` to `BM64_DUMP_PATH` during the baseline
   comparison pass; missing/unwritable paths fail the probe. Dumps remain private

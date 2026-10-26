@@ -17,10 +17,10 @@ FIRST, LAST = 1599, 2345
 PATTERN = re.compile(r"^COMPARABLE_V1: frame=(\d+) ram=([0-9a-f]{16}) registers=([0-9a-f]{16})$", re.M)
 
 
-def records(path):
+def records(path, first=FIRST, last=LAST):
     text = path.read_text()
     rows = PATTERN.findall(text)
-    if [int(row[0]) for row in rows] != list(range(FIRST, LAST + 1)):
+    if first > last or [int(row[0]) for row in rows] != list(range(first, last + 1)):
         raise RuntimeError(f"Incomplete/duplicate comparable history: {path}")
     if "PASS: coordinated replay" not in text or "RESULT: process_exit_code=0" not in text:
         raise RuntimeError(f"Replay did not finish: {path}")
@@ -36,7 +36,7 @@ def metadata(path):
     return matches[0]
 
 
-def compare(first, second, *, changed_input=False, cross_build=False):
+def compare(first, second, *, changed_input=False, cross_build=False, window=(FIRST, LAST)):
     image_a, input_a = metadata(first)
     image_b, input_b = metadata(second)
     if (not cross_build and image_a != image_b) or (not changed_input and input_a != input_b):
@@ -48,7 +48,7 @@ def compare(first, second, *, changed_input=False, cross_build=False):
                 for path in (first, second)]
         if len(roms[0]) != 1 or roms[0] != roms[1]:
             raise RuntimeError("Cross-build comparison requires matching ROM identities")
-    a, b = records(first), records(second)
+    a, b = records(first, *window), records(second, *window)
     return [frame for frame in a if a[frame] != b[frame]]
 
 
