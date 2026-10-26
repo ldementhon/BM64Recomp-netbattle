@@ -760,3 +760,10 @@ index 0000000..0f8efce
 +    ~Timer() { if (start) counter += now()-start; }
 +};
 +}
+diff --git a/src/render/rt64_shader_compiler.cpp b/src/render/rt64_shader_compiler.cpp
+--- a/src/render/rt64_shader_compiler.cpp
++++ b/src/render/rt64_shader_compiler.cpp
+@@ -54,2 +54,3 @@
+             RT64_LOG_PRINTF("Shader compilation error: %s\n", infoLog.data());
++            fprintf(stderr, "Shader compilation error: %s\n", infoLog.data());
+             throw std::runtime_error("Shader compilation error: " + std::string(infoLog.data()));

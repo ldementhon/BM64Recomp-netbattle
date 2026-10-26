@@ -8,6 +8,15 @@ open. No server has been rented or deployed.
 
 ## Implementation record
 
+- Windows shader diagnostics (2026-10-25): failed DXC compile/link validation
+  now prints its existing diagnostic text to stderr before throwing, so release
+  test logs retain the cause even when RT64 file logging is disabled. The
+  explicit-interpolation prototype exposed an unwritten `SV_Depth` output on
+  discarded fragments; the previously silent termination is now actionable.
+  This logging-only fix is retained in `patches/rt64-catchup.patch` and uses both
+  existing build recipes. Evidence: `windows-manual-diagnostics-desktop.log` on
+  the Windows test machine. It changes no shader arithmetic or acceptance gate.
+
 - Raster-output attribution (2026-10-25): on the ordered-arithmetic diagnostic
   images, a full 512 MiB dump at boundary 1601 differs in only 50 bytes, all in
   framebuffer storage (12 pages). This short fixture has just completed its
