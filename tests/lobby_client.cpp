@@ -12,12 +12,14 @@ using namespace online::lobby;
 int main(int argc, char** argv) {
     if (argc == 2 && std::string(argv[1]) == "--crash-child") return 1;
     if (argc == 2 && std::string(argv[1]) == "--child") {
+#ifndef _WIN32
         // ENet itself does not set CLOEXEC. Verify the owner helper does.
         for (int fd = 4; fd < 1024; ++fd) {
             int type; socklen_t size = sizeof(type);
             assert(getsockopt(fd, SOL_SOCKET, SO_TYPE, &type, &size) != 0 || type != SOCK_DGRAM);
         }
-        online::MatchChannel channel(3);
+#endif
+        auto channel = online::MatchChannel::inherited();
         auto match = std::stoull(std::getenv("BM64_OWNER_MATCH"));
         channel.send({online::match_channel_version, online::MatchEvent::Ready, match, 1374, 123, 456});
         for (;;) {

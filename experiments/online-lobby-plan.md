@@ -7,6 +7,28 @@ open. No server has been rented or deployed.
 
 ## Implementation record
 
+- Windows process ownership (2026-10-25): the same `GameSession`, `LobbySession`,
+  and background worker now run fixture matches on Windows x64. Each launch uses
+  `CreateProcessW`, a fresh settings/ROM folder, quoted arguments, a sanitized
+  Unicode environment, and an explicit inherited-handle list containing only the
+  match pipe and redirected standard streams. The child adopts and clears
+  inheritance on its channel. It starts suspended until attached to an unnamed
+  kill-on-close job, preventing an owner crash from leaving a game running.
+  All ten Release CTests pass on Windows with Clang 19.1.3 and MSVC 19.44 and on
+  Mac. Lifecycle coverage includes loading cancellation/timeouts, normal finish
+  and restart, crashes/failed launch, stale or invalid events, input preferences,
+  argument quotes/backslashes/empty values, paths containing spaces, case-insensitive
+  environment isolation, a deliberately inheritable unrelated handle, and job
+  closure terminating a live child. Windows symlink-fixture creation is skipped
+  only when the OS denies that privilege; the Mac rejection check remains active.
+  The Windows screen/full game is still unbuilt; these are component fixtures.
+  `BM64_SESSION_REAL_GAME=1 sh tests/run_game_session_tests.sh` also passes on Mac:
+  loading cancellation and two complete matches at frame 5401, equal initial
+  digests, private-folder cleanup, and unchanged personal settings. Executable
+  SHA-256 `0603e796abfbad3f04703bff693aa07dbde0685dd9f894182e1ad9730877972b`.
+  Logs: `build/experiments/windows-{clang,msvc}-owner-checks.log` and
+  `build/experiments/windows-owner-mac-real.log`. Next: the Windows full-game
+  build/runtime snapshot paths and actual Mac/Windows recorded-history comparison.
 - Windows private channel: `MatchChannel` now supports a local duplex byte pipe
   with owner-only access, remote connections refused, and initially non-inheritable
   handles. It uses explicit nonblocking polling with the existing 240-byte

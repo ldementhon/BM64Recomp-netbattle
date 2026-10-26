@@ -3,7 +3,9 @@
 // Private owner/child IPC on one machine, not the network wire protocol.
 #include <array>
 #include <cerrno>
+#include <charconv>
 #include <cstdint>
+#include <cstdlib>
 #include <cstring>
 #include <deque>
 #include <optional>
@@ -77,6 +79,29 @@ public:
         return *this;
     }
     Handle fd() const { return fd_; }
+
+    static MatchChannel inherited() {
+#ifdef _WIN32
+        const char* value = std::getenv("BM64_OWNER_CHANNEL");
+        if (!value) throw std::runtime_error("missing owner channel");
+        uintptr_t handle = 0;
+        auto* end = value + std::strlen(value);
+        auto parsed = std::from_chars(value, end, handle);
+        if (parsed.ec != std::errc{} || parsed.ptr != end || !handle || handle == UINTPTR_MAX)
+            throw std::runtime_error("invalid owner channel");
+        MatchChannel channel(reinterpret_cast<HANDLE>(handle));
+        DWORD mode = PIPE_READMODE_BYTE | PIPE_NOWAIT;
+        if (GetFileType(channel.fd()) != FILE_TYPE_PIPE) throw std::runtime_error("owner channel is not a pipe");
+        if (!SetNamedPipeHandleState(channel.fd(), &mode, nullptr, nullptr) ||
+            !SetHandleInformation(channel.fd(), HANDLE_FLAG_INHERIT, 0)) fail("adopt owner channel");
+#else
+        MatchChannel channel(3);
+        auto flags = fcntl(channel.fd(), F_GETFL);
+        if (flags < 0 || fcntl(channel.fd(), F_SETFD, FD_CLOEXEC) < 0 ||
+            fcntl(channel.fd(), F_SETFL, flags | O_NONBLOCK) < 0) fail("adopt owner channel");
+#endif
+        return channel;
+    }
 
     static std::pair<MatchChannel, MatchChannel> pair() {
 #ifdef _WIN32

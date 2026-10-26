@@ -2,13 +2,19 @@
 #include "../src/online/lobby_worker.hpp"
 #include <cassert>
 #include <iostream>
+#include <random>
 
 using namespace online::lobby;
 int main() {
     namespace fs = std::filesystem;
-    auto pattern = (fs::temp_directory_path() / "bm64-worker-XXXXXX").string();
-    assert(mkdtemp(pattern.data())); fs::path scratch(pattern);
-    auto fixture = current_executable().parent_path() / "lobby_client", rom = scratch / "fixture.rom";
+    auto scratch = fs::temp_directory_path() / ("bm64-worker-" + std::to_string(std::random_device{}()));
+    assert(fs::create_directory(scratch));
+#ifdef _WIN32
+    auto fixture = current_executable().parent_path() / "lobby_client.exe";
+#else
+    auto fixture = current_executable().parent_path() / "lobby_client";
+#endif
+    auto rom = scratch / "fixture.rom";
     std::ofstream(rom) << "worker test fixture";
     assert(enet_initialize() == 0);
     {

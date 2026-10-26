@@ -5,13 +5,16 @@
 #include <fstream>
 #include <iostream>
 #include <thread>
-#include <sys/socket.h>
+#ifdef _WIN32
+#include "../src/online/windows_game_process.hpp"
+#endif
+#ifndef _WIN32
 #include <sys/wait.h>
-#include <fcntl.h>
-#include <unistd.h>
+#endif
 
 using namespace std::chrono_literals;
 namespace fs = std::filesystem;
+static const std::vector<std::string> quoted_arguments{"", "two words", "a\\\"b\\\\", "\"quoted\"", "C:\\path with spaces\\", "\t"};
 static void wait_ready(online::GameSession& session) {
     auto deadline = std::chrono::steady_clock::now() + 35s;
     while (!session.ready() && std::chrono::steady_clock::now() < deadline) {
@@ -30,8 +33,22 @@ static online::GameSession::Exit wait_exit(online::GameSession& session) {
 }
 
 int main(int argc, char** argv) {
-    if (argc == 2 && std::string(argv[1]).starts_with("--child-")) {
+    if (argc >= 2 && std::string(argv[1]).starts_with("--child-")) {
         assert(!std::getenv("BM64_NEGATIVE_INPUT"));
+        if (std::string(argv[1]) == "--child-arguments") {
+            assert(argc == int(quoted_arguments.size()) + 2);
+            for (size_t i = 0; i < quoted_arguments.size(); ++i) assert(argv[i + 2] == quoted_arguments[i]);
+            assert(std::string(std::getenv("BM64_ONLINE_HUMANS")) == "2");
+            assert(std::string(std::getenv("BM64_LOCAL_PORT")) == "0");
+#ifdef _WIN32
+            wchar_t value[32];
+            assert(GetEnvironmentVariableW(L"BM64_TEST_UNICODE", value, 32) && std::wstring(value) == L"\u00e9\u96ea");
+            wchar_t path[32768];
+            auto handle = reinterpret_cast<HANDLE>(uintptr_t(std::stoull(std::getenv("BM64_TEST_HANDLE"))));
+            auto length = GetFinalPathNameByHandleW(handle, path, 32768, FILE_NAME_NORMALIZED);
+            assert(!length || fs::path(path).filename() != L"personal-marker");
+#endif
+        }
         if (std::string(argv[1]) == "--child-seats-2")
             assert(std::string(std::getenv("BM64_ONLINE_HUMANS")) == "2");
         fs::path settings = std::getenv("APP_FOLDER_PATH");
@@ -46,22 +63,32 @@ int main(int argc, char** argv) {
             online::validate_match_folder(settings);
         }
         std::ofstream(settings / "child-save") << "match only";
-        if (std::string(argv[1]) == "--child-crash") raise(SIGKILL);
-        if (std::string(argv[1]) == "--child-hold") for (;;) pause();
-        online::MatchChannel channel(3);
+        if (std::string(argv[1]) == "--child-crash") {
+#ifdef _WIN32
+            TerminateProcess(GetCurrentProcess(), 77);
+#else
+            raise(SIGKILL);
+#endif
+        }
+        if (std::string(argv[1]) == "--child-hold") for (;;) std::this_thread::sleep_for(1s);
+        auto channel = online::MatchChannel::inherited();
+#ifdef _WIN32
+        DWORD inherited_flags;
+        assert(GetHandleInformation(channel.fd(), &inherited_flags) && !(inherited_flags & HANDLE_FLAG_INHERIT));
+#endif
         auto match = std::stoull(std::getenv("BM64_OWNER_MATCH"));
         if (std::string(argv[1]) == "--child-wrong-match") {
             channel.send({online::match_channel_version, online::MatchEvent::Ready, match + 1, 1374});
-            for (;;) pause();
+            for (;;) std::this_thread::sleep_for(1s);
         }
         if (std::string(argv[1]) == "--child-early-finish") {
             channel.send({online::match_channel_version, online::MatchEvent::Finished, match, 2000});
-            for (;;) pause();
+            for (;;) std::this_thread::sleep_for(1s);
         }
         channel.send({online::match_channel_version, online::MatchEvent::Ready, match, 1374, 123, 456});
         if (std::string(argv[1]) == "--child-duplicate") {
             channel.send({online::match_channel_version, online::MatchEvent::Ready, match, 1374, 123, 456});
-            for (;;) pause();
+            for (;;) std::this_thread::sleep_for(1s);
         }
         for (;;) {
             if (auto command = channel.receive()) {
@@ -70,7 +97,7 @@ int main(int argc, char** argv) {
             }
             std::this_thread::sleep_for(1ms);
         }
-        if (std::string(argv[1]) == "--child-play-hold") for (;;) pause();
+        if (std::string(argv[1]) == "--child-play-hold") for (;;) std::this_thread::sleep_for(1s);
         if (std::string(argv[1]) == "--child-input" || std::string(argv[1]) == "--child-bad-input") {
             online::InputBatch input;
             input.match = match; input.count = 1;
@@ -95,8 +122,13 @@ int main(int argc, char** argv) {
     auto personal = scratch / "personal";
     fs::create_directories(personal);
     std::ofstream(personal / "personal-marker") << "unchanged";
+#ifdef _WIN32
+    assert(_putenv_s("app_folder_path", personal.string().c_str()) == 0);
+    assert(_putenv_s("bm64_negative_input", "1") == 0);
+#else
     setenv("APP_FOLDER_PATH", personal.c_str(), 1);
     setenv("BM64_NEGATIVE_INPUT", "1", 1);
+#endif
     auto rom = scratch / "fixture.rom";
     std::ofstream(rom) << "local process ownership fixture, not a ROM";
     bool real_game = argc == 3;
@@ -111,9 +143,7 @@ int main(int argc, char** argv) {
         }
     }
     // This endpoint belongs to the surviving owner, never to disposable children.
-    int connection[2];
-    assert(socketpair(AF_UNIX, SOCK_STREAM, 0, connection) == 0);
-    for (int fd : connection) assert(fcntl(fd, F_SETFD, FD_CLOEXEC) == 0);
+    auto [connection, peer] = online::MatchChannel::pair();
     online::GameSession session;
     auto start = [&](uint64_t match, const char* child_mode) {
         session.start(match, executable, rom, scratch / ("match-" + std::to_string(match) + ".log"),
@@ -154,13 +184,17 @@ int main(int argc, char** argv) {
         assert(result.error.empty() && result.completed_frame == (real_game ? 5401 : 2000));
         assert(!fs::exists(settings));
         assert(session.state() == online::GameSession::State::Lobby);
-        assert(write(connection[0], "x", 1) == 1);
-        char byte; assert(read(connection[1], &byte, 1) == 1 && byte == 'x');
+        connection.send({online::match_channel_version, online::MatchEvent::Ready, match, 1});
+        assert(peer.receive()->match == match);
     }
     if (!real_game) {
         start(4, "--child-crash");
         auto result = wait_exit(session);
+#ifdef _WIN32
+        assert(result.status == 77);
+#else
         assert(WIFSIGNALED(result.status));
+#endif
         start(5, "--child-play-hold");
         wait_ready(session);
         assert(session.playing(5) && !session.playing(5));
@@ -250,6 +284,42 @@ int main(int argc, char** argv) {
         wait_ready(session); assert(session.playing(18));
         assert(wait_exit(session).completed_frame && !fs::exists(preferences));
 
+        auto spaced_executable = scratch / "child with spaces.exe";
+        fs::copy_file(executable, spaced_executable, fs::copy_options::overwrite_existing);
+        auto arguments = quoted_arguments;
+        arguments.insert(arguments.begin(), "--child-arguments");
+        std::map<std::string, std::string> environment;
+#ifdef _WIN32
+        SECURITY_ATTRIBUTES access{sizeof(SECURITY_ATTRIBUTES), nullptr, TRUE};
+        HANDLE sentinel = CreateFileW((personal / "personal-marker").c_str(), GENERIC_READ, FILE_SHARE_READ,
+                                      &access, OPEN_EXISTING, FILE_ATTRIBUTE_NORMAL, nullptr);
+        assert(sentinel != INVALID_HANDLE_VALUE);
+        environment = {{"BM64_TEST_HANDLE", std::to_string(reinterpret_cast<uintptr_t>(sentinel))},
+                       {"BM64_TEST_UNICODE", "\xc3\xa9\xe9\x9b\xaa"}, {"BM64_online_humans", "999"},
+                       {"BM64_local_port", "999"}, {"BM64_owner_channel", "0"}};
+#endif
+        session.start(19, spaced_executable, rom, scratch / "quoted arguments.log", arguments, environment, 2);
+        wait_ready(session); assert(session.playing(19));
+        assert(wait_exit(session).completed_frame);
+#ifdef _WIN32
+        CloseHandle(sentinel);
+#endif
+        fs::remove(spaced_executable);
+#ifdef _WIN32
+        auto job_settings = online::detail::make_match_directory();
+        fs::copy_file(rom, job_settings / "bm64_us.z64");
+        auto [job_owner, job_child] = online::MatchChannel::pair();
+        auto owned = online::detail::launch_windows_game(executable, scratch / "owner-exit.log", job_settings,
+            job_child.fd(), {"--child-hold"}, {});
+        BOOL assigned = FALSE;
+        assert(IsProcessInJob(owned.process, owned.job, &assigned) && assigned);
+        assert(WaitForSingleObject(owned.process, 20) == WAIT_TIMEOUT);
+        assert(CloseHandle(owned.job));
+        assert(WaitForSingleObject(owned.process, 5000) == WAIT_OBJECT_0);
+        CloseHandle(owned.process);
+        fs::remove_all(job_settings);
+#endif
+
         auto isolated = scratch / "folder-validation";
         fs::create_directories(isolated);
         fs::copy_file(rom, isolated / "bm64_us.z64", fs::copy_options::overwrite_existing);
@@ -266,14 +336,23 @@ int main(int argc, char** argv) {
         rejects();
         std::ofstream(isolated / "online-input.json") << std::string(online::local_input_limit + 1, 'x');
         rejects(); fs::remove(isolated / "online-input.json");
-        fs::create_symlink(rom, isolated / "online-input.json");
-        rejects(); fs::remove(isolated / "online-input.json");
+        std::error_code symlink_error;
+        fs::create_symlink(rom, isolated / "online-input.json", symlink_error);
+#ifdef _WIN32
+        // Windows may require Developer Mode or administrator rights for symlinks.
+        if (symlink_error) {
+            assert(symlink_error.value() == ERROR_PRIVILEGE_NOT_HELD);
+            std::cout << "SKIP: Windows symlink fixture requires Developer Mode or administrator rights\n";
+        }
+#else
+        assert(!symlink_error);
+#endif
+        if (!symlink_error) { rejects(); fs::remove(isolated / "online-input.json"); }
         fs::create_directory(isolated / "online-input.json");
         rejects(); fs::remove(isolated / "online-input.json");
         fs::remove(isolated / "bm64_us.z64"); rejects();
         fs::remove(isolated);
     }
-    close(connection[0]); close(connection[1]);
     std::string marker;
     std::ifstream(personal / "personal-marker") >> marker;
     assert(marker == "unchanged" && !fs::exists(personal / "child-save"));

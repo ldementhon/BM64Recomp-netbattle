@@ -1,7 +1,7 @@
 // The connection owner survives this process. Native checkpoints and input
 // history stay here; only controller records and lifecycle events cross IPC.
 struct OwnedMatch {
-    online::MatchChannel channel{3};
+    online::MatchChannel channel = online::MatchChannel::inherited();
     uint64_t match = 0, origin = 0, logged = UINT64_MAX;
     unsigned slot = 0, local_port = 0;
     bool started = false, network = std::getenv("BM64_NETWORK_INPUT") != nullptr;
@@ -16,7 +16,6 @@ struct OwnedMatch {
         auto parsed = std::from_chars(text, end, match);
         if (parsed.ec != std::errc{} || parsed.ptr != end || !match)
             throw std::runtime_error("invalid owner match ID");
-        if (fcntl(channel.fd(), F_SETFD, FD_CLOEXEC) < 0) throw std::runtime_error("missing owner channel");
         if (network) {
             const char* local = std::getenv("BM64_ONLINE_SLOT");
             if (!local || std::strlen(local) != 1 || *local < '0' || unsigned(*local - '0') >= online::human_players)

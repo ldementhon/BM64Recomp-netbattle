@@ -40,8 +40,7 @@ private:
     void publish(const View& view) { std::lock_guard lock(mutex_); view_ = view; }
     void run(std::stop_token stop, LobbySession::Launch launch) {
         if (enet_initialize() != 0) { View view; view.status = "Network initialization failed."; publish(view); return; }
-        // This owner is macOS-only; ENet initialization has no process-global
-        // platform resources here. Destroy all sockets before deinitializing it.
+        // Balance initialization, including Windows resources, after all sockets close.
         {
             std::unique_ptr<LobbySession> session;
             View view;

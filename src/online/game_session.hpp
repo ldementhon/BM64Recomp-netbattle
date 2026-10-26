@@ -1,7 +1,6 @@
 #pragma once
 
 // The lobby owns this object; a game process owns all runtime/checkpoint state.
-// shortcut: POSIX clients only; add a Windows process backend when that build is tested.
 #include <chrono>
 #include <cstdint>
 #include <filesystem>
@@ -9,7 +8,9 @@
 #include <optional>
 #include <string>
 #include <vector>
+#ifndef _WIN32
 #include <sys/types.h>
+#endif
 #include "match_channel.hpp"
 #include "local_input.hpp"
 
@@ -46,8 +47,16 @@ public:
 
 private:
     int reap();
+    std::optional<int> poll_child();
     void cleanup();
+#ifdef _WIN32
+    static constexpr HANDLE no_child = nullptr;
+    HANDLE child_ = no_child;
+    HANDLE job_ = nullptr;
+#else
+    static constexpr pid_t no_child = -1;
     pid_t child_ = -1;
+#endif
     uint64_t match_ = 0;
     State state_ = State::Lobby;
     std::filesystem::path settings_;
