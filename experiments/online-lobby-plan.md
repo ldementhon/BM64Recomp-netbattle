@@ -2,11 +2,109 @@
 
 Status: macOS Online Battle screen is wired and locally exercised, 2026-10-25.
 Four-process scripted Mac rollback matches pass; the full Windows x64 client builds.
-Windows real-game lifecycle and full-state replay suites pass with presentation
-serialized before native rendering. Cross-platform determinism, physical-controller validation, audio/rumble, and human playtests remain
+Windows lifecycle checks pass, but renewed full-state validation found an
+intermittent framebuffer replay failure despite serialized presentation.
+Cross-platform determinism, physical-controller validation, audio/rumble, and human playtests remain
 open. No server has been rented or deployed.
 
 ## Implementation record
+
+- Normal-renderer follow-up (2026-10-25): after removing the interpolation probe,
+  Mac image `09aa342cab7de2b4616af2002e7d92e7ee38c434f12c95676e7d383273210760`
+  passes the short replay control and the full two-process startup suite with its
+  input-negative control. Windows image
+  `f755422043a3e9a4a42749e4ecf4144f0049a992b346ca952207b1baad4e20c9`
+  passes the short control and first full startup history, but its second history
+  fails replay 3 at frame 1524 in pages `0x11c000` and `0x21c000`; guest register
+  hashes still agree. Both 280-row baseline histories are identical, so this
+  failure cannot be dismissed as different fresh-process inputs. The suite stops
+  before its negative control and before battle/round/match checks. Logs are
+  `descriptor-windows-startup-a.txt`, `descriptor-windows-startup-b-failed.txt`,
+  and `descriptor-startup-mac-run.log` under `build/experiments/`.
+  This reopens same-machine native-render stability as an acceptance blocker;
+  the earlier successful suites remain evidence for their exact runs, not a
+  guarantee against intermittent failures. Keeping native checkpoint rendering
+  on one fallback shader path still fails Windows startup at frame 1418, replay 1,
+  in the same two pages (image
+  `c5c3577116c9d6463441d2037c97f4d34cdf6011c7ddca62c06737a6fbab02e1`).
+  A bounded word trace narrows a subsequent failure at frame 1452 to four words,
+  addresses `0x11c9e0/4` and `0x21c9e0/4`: three adjacent color/depth pixels.
+  Disabling MSAA still fails at frame 1490 in those same four words, so neither
+  shader selection nor multisampling alone explains this failure. These controls
+  use the same instrumented image
+  `7aae3005064d6f895f4fc9c98da8d9f9ac173c8d268990789a90e71c7fd6c5b4`.
+  Diagnostic logs: `deterministic-native-windows-startup-failed.txt`,
+  `windows-native-diff-words-run.log`, and `windows-native-single-sample-run.log`.
+  The unsuccessful shader-selection candidate is not an accepted fix.
+  The same candidate passes Mac startup/battle/round/match independent histories,
+  three restores, and negative controls; logs are in
+  `build/experiments/deterministic-native-validation-mac/` (image
+  `478e80d445c9ea23a9c22293b9976de9d851fa7aee20ef8f3a04a084b8febf03`).
+
+  A subsequent native-input trace fails at frame 1400 (native draw list 25),
+  again in the same four words. All 28 traced CPU draw arrays and the frame/dither
+  counters match at that draw list. Across all 26 replayed lists, only list 0's
+  `rdpParams` hash differs; the remaining arrays/counters agree. Thus no differing
+  traced CPU geometry at the failing update explains the three-pixel result;
+  uploads, GPU output, textures, and retained framebuffer state still need checking.
+  Instrumented image
+  `2f3a3df1944d25552e3fefde09eb5964b221f8bb42e07fbbf085dab03efc65dc`;
+  logs `native-input-replay-windows.txt` and `native-replay-input-comparison.json`.
+  The candidate and bounded word/input probes are saved in
+  `build/experiments/native-stability-diagnostics.patch`; their four source files
+  were restored by checked hashes. The normal descriptor fix and shader logging
+  remain. Both archived diagnostic patches apply cleanly after restoration.
+  Final normal images pass the four-boundary, three-restore control:
+  Mac `4465bed2d32ded468a0b747c9eed07f1417d1a7ae719af76fb00000a091ae990`;
+  Windows `b7e5897c4f681701bd611433a740b6cab433d287cd2c7981ea3870e42db096c7`.
+  The descriptor regression also passes after linking against the final normal
+  Windows dependency. All 20 restored/retained file entries match checked hashes
+  locally and on Windows, including its source manifest; no private game process
+  or scheduled test task remains. Evidence: `restored-native-stability-{mac,windows}`
+  result logs, `final-windows-descriptor-regression.log`, and
+  `final-windows-native-cleanup.log`. These short controls do not clear the known
+  full-startup failure or certify cross-platform compatibility. Next compare GPU
+  outputs and texture/upload state at the failing native update before choosing
+  another renderer change.
+
+- Explicit interpolation attribution (2026-10-25): the diagnostic triangle
+  shader preserves culling/depth checks and omits rectangles. With matching GPU
+  vertex buffers, 640 normalized CPU draw records and 232 native input records
+  agree, but hardware interpolation/depth produces 45,377 differing captured
+  pixels. Explicit ordered edge/perspective calculations and binary32 division,
+  plus the Windows binding fix below, reduce this to 1,684 pixels, each differing
+  by only one RGBA16-UNORM unit. These are diagnostic colors, not normal gameplay.
+
+  The probe inherits 2× MSAA. Encoding draw ID and the low 16 UV bits as three
+  separate bytes makes all four comparable boundaries (1599–1602) agree across
+  platforms; both pass three full-state restores. The resolved capture still
+  differs by one unit in 615 components, with identical draw-ID channels and
+  half-sample averages. It does not prove every underlying UV sample is equal.
+  Mac image `44e6d9a55ea10b87a255e2a50cc47881fbe8f778b7e7078cb46d8276d0352e13`;
+  Windows `5a526fd1d9610f7faab5a4e05c52aac06ab8ef20eac11d32111af36bb419acab`.
+
+  A separate no-MSAA probe encodes the low 24 depth bits into RGB. Its first
+  rendered 320×240 RGBA16 capture is byte-identical, and all four comparable
+  boundaries and three full-state restores agree. Mac image
+  `ef900078a4d74285dad880b074438e3086fe0efb5ed603c87e207fc7d5cd763a`;
+  Windows `017a3d7dfa6c07d148d93d94ee1a93516e5b295d991ffd9d0cb2b2d580e66ed1`.
+  Evidence: `manual-descriptors-comparison.json`,
+  `manual-bytes-decoded-comparison.json`, `manual-depth-single-comparison.json`,
+  and corresponding Mac result/Windows copied logs under `build/experiments/`.
+  The first Windows byte/depth runs reused stale shader outputs because copied
+  source timestamps preceded those outputs; they are excluded. Corrected runs
+  use the `rebuilt` names, and the private transfer helpers now touch checked
+  destinations after copying. No acceptance rule or hash range was weakened.
+
+  The complete disposable prototype is archived as
+  `build/experiments/explicit-interpolation-diagnostic.patch`. All 14 experimental
+  source entries were restored by checked hashes, retaining only the independently
+  tested descriptor fix and shader-error logging; the archived patch applies
+  cleanly to that restored checkout. Next: isolate this arithmetic to native
+  rendering, restore real color/texture operations, and prove full startup,
+  battle, round, and match histories. This short boot-handoff fixture does not
+  establish active-battle or mixed-platform playability. MSAA resolve differences,
+  texture sampling, color arithmetic, and blending remain to be evaluated.
 
 - Windows descriptor layout (2026-10-25): fixed Plume counting static samplers
   as buffer/texture heap entries, while its pipeline layout correctly skipped
