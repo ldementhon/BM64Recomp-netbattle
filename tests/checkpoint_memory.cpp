@@ -1,14 +1,27 @@
 #include "../src/game/checkpoint_memory.hpp"
+#ifdef _WIN32
+#include <windows.h>
+#else
 #include <sys/mman.h>
 #include <unistd.h>
+#endif
 #include <array>
 #include <cstdlib>
 #include <cstdio>
 static void check(bool ok) { if (!ok) std::abort(); }
 int main() {
-    size_t page = getpagesize(), size = 512ull << 20;
+    size_t size = 512ull << 20;
+#ifdef _WIN32
+    SYSTEM_INFO info; GetSystemInfo(&info);
+    size_t page = info.dwPageSize;
+    auto* allocation = static_cast<uint8_t*>(VirtualAlloc(nullptr, size+2*page, MEM_RESERVE|MEM_COMMIT, PAGE_READWRITE));
+    check(allocation != nullptr);
+#else
+    size_t page = getpagesize();
     auto* allocation = static_cast<uint8_t*>(mmap(nullptr, size+2*page, PROT_READ|PROT_WRITE, MAP_PRIVATE|MAP_ANON, -1, 0));
-    check(allocation != MAP_FAILED); auto* ram = allocation+page;
+    check(allocation != MAP_FAILED);
+#endif
+    auto* ram = allocation+page;
     allocation[0]=91; ram[size]=92;
     std::array<CheckpointMemory,16> ring;
     for (unsigned i=0;i<48;++i) {
@@ -33,6 +46,10 @@ int main() {
     reference.restore(ram); check(ram[0]==255);
     ring[0].restore(ram); check(ram[0]==32 && ram[size-1]==33);
     check(allocation[0]==91 && ram[size]==92);
+#ifdef _WIN32
+    check(VirtualFree(allocation, 0, MEM_RELEASE));
+#else
     munmap(allocation,size+2*page);
-    puts("PASS: COW ring eviction, immutable images, repeated fixed-address restores, future sparse writes and adjacent mappings");
+#endif
+    puts("PASS: snapshot ring eviction, immutable images, repeated fixed-address restores, future sparse writes and adjacent mappings");
 }

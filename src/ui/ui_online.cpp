@@ -4,14 +4,14 @@
 #include "recomp_input.h"
 #include <charconv>
 #include <memory>
-#if defined(__APPLE__)
+#if defined(__APPLE__) || defined(_WIN32)
 #include "../online/lobby_worker.hpp"
 #endif
 
 namespace {
 struct OnlineMenu {
     Rml::DataModelHandle model;
-#if defined(__APPLE__)
+#if defined(__APPLE__) || defined(_WIN32)
     bool available = true;
     std::unique_ptr<online::lobby::LobbyWorker> worker;
 #else
@@ -26,7 +26,7 @@ struct OnlineMenu {
         local_error.clear();
         if (action == "open") visible = true;
         else if (action == "back") visible = false;
-#if defined(__APPLE__)
+#if defined(__APPLE__) || defined(_WIN32)
         using Worker = online::lobby::LobbyWorker;
         try {
             if (action == "connect") {
@@ -64,7 +64,7 @@ struct OnlineMenu {
         model.DirtyAllVariables();
     }
     void update() {
-#if defined(__APPLE__)
+#if defined(__APPLE__) || defined(_WIN32)
         if (!worker) return;
         auto next = worker->view();
         // Keep local validation errors until the worker has a new state to show.
@@ -76,7 +76,7 @@ struct OnlineMenu {
         model.DirtyAllVariables();
 #endif
     }
-#if defined(__APPLE__)
+#if defined(__APPLE__) || defined(_WIN32)
     online::lobby::LobbyWorker::View last_view;
 #endif
 };

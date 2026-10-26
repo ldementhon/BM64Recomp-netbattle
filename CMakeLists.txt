@@ -111,6 +111,16 @@ target_sources(PatchesLib PRIVATE
 
 set_source_files_properties(${CMAKE_SOURCE_DIR}/RecompiledPatches/patches.c PROPERTIES COMPILE_FLAGS -fno-strict-aliasing)
 
+# A private cross-platform test bundle carries the exact guest patch output used
+# by the reference build. Ordinary source builds keep regenerating it below.
+option(BM64_PREGENERATED_PATCHES "Use existing RecompiledPatches from a verified source bundle" OFF)
+if(BM64_PREGENERATED_PATCHES)
+    foreach(file patches.c patches_bin.c patches_bin.h recomp_overlays.inl funcs.h)
+        if(NOT EXISTS "${CMAKE_SOURCE_DIR}/RecompiledPatches/${file}")
+            message(FATAL_ERROR "Missing pre-generated patch file: ${file}")
+        endif()
+    endforeach()
+else()
 # Build patches elf
 if(NOT DEFINED PATCHES_C_COMPILER)
     set(PATCHES_C_COMPILER clang)
@@ -143,16 +153,19 @@ add_custom_command(OUTPUT
                    WORKING_DIRECTORY ${CMAKE_SOURCE_DIR}
                    DEPENDS ${CMAKE_SOURCE_DIR}/patches/patches.elf
 )
+endif()
 
 # Main executable
 add_executable(BM64Recompiled)
 if(WIN32)
     target_link_libraries(BM64Recompiled PRIVATE bcrypt)
 endif()
-if(APPLE)
+if(APPLE OR WIN32)
     include(cmake/Enet.cmake)
     target_sources(BM64Recompiled PRIVATE src/online/game_session.cpp)
     target_link_libraries(BM64Recompiled PRIVATE enet)
+endif()
+if(APPLE)
     # Refresh and re-sign bundled UI resources when the lobby markup changes.
     set_property(TARGET BM64Recompiled APPEND PROPERTY LINK_DEPENDS "${CMAKE_SOURCE_DIR}/assets/launcher.rml")
 endif()

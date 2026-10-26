@@ -1,12 +1,37 @@
 # Minimal dedicated-server lobby and player assignment
 
 Status: macOS Online Battle screen is wired and locally exercised, 2026-10-25.
-Four-process scripted rollback matches pass. Windows x64 support, cross-platform
+Four-process scripted rollback matches pass; the full Windows x64 client builds.
+Windows real-game validation, cross-platform
 determinism, physical-device identity, audio/rumble, and human playtests remain
 open. No server has been rented or deployed.
 
 ## Implementation record
 
+- Windows full-client build (2026-10-25): the Online Battle backend is linked on
+  Windows, unused POSIX-only includes are removed, and checkpoint tracing uses
+  `GetThreadTimes` there. The Windows trace omits unsupported POSIX fault/scheduler
+  counters. The same 512 MiB, 16-slot snapshot-ring regression passes on Windows
+  and Mac, including eviction, immutable snapshots, future sparse writes, and
+  adjacent-memory bounds. Native CPU timing also passes on both platforms.
+  Windows still uses full RAM copies; real-game memory and timing remain unmeasured.
+  `experiments/export-online-source.py` exports actual tracked/dependency-patch
+  bytes plus the existing generated guest code, with per-file SHA-256 checks and
+  no ROMs. `experiments/build-windows.ps1` verifies that manifest, uses the SDK's
+  `mt.exe`, builds with Clang 19.1.3, and installs local runtime assets. The opt-in
+  `BM64_PREGENERATED_PATCHES` path preserves the exact Mac-generated guest code;
+  normal builds still regenerate patches. The first full Windows build succeeded
+  (SHA-256 `3f0f371c2188f0079c40ca2d0afedcea633745328725e5c52097db00315421d2`).
+  This first image exposed a real integration issue: Windows ignored
+  `APP_FOLDER_PATH`, so fixture-child isolation did not prove game isolation.
+  The fix and full-executable regression are being verified before real launches.
+  Source bundle and logs remain ignored under `build/experiments/`;
+  `windows-game-build.log` and `windows-memory-checks.log` record the build/checks.
+  Real Windows gameplay is pending an authorized ROM on the remote PC. Automatic
+  approval review rejected its transfer because source/testing access did not
+  explicitly authorize proprietary-ROM transfer; the user approval question is
+  pending and no ROM was copied. Cross-platform compatibility remains closed
+  until the exact build pair passes complete guest-state comparisons.
 - Windows process ownership (2026-10-25): the same `GameSession`, `LobbySession`,
   and background worker now run fixture matches on Windows x64. Each launch uses
   `CreateProcessW`, a fresh settings/ROM folder, quoted arguments, a sanitized

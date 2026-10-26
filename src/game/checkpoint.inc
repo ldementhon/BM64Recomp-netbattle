@@ -14,9 +14,6 @@
 #include <unordered_map>
 #include <map>
 #include <tuple>
-#include <dlfcn.h>
-#include <pthread.h>
-#include <sys/resource.h>
 #ifdef __APPLE__
 #include <mach/mach_time.h>
 #endif
