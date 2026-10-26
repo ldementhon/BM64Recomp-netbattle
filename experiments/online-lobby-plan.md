@@ -8,6 +8,48 @@ open. No server has been rented or deployed.
 
 ## Implementation record
 
+- Retained renderer-fix validation (2026-10-25): the final builds contain the
+  native counter snapshot and CPU RSP rounding correction, with disposable shader
+  and tracing experiments removed. Mac image:
+  `d15fe6baa45dbe2f74a834125b035e942fcf0a95ae6582b323d117fb32f6ce5b`;
+  Windows image:
+  `ed5f0ab8a0a88094624a9c3e3fd0c24b4dbe6ba7459b7752e87171f4b9b1b3b0`.
+  Both pass fingerprint/settings-isolation checks and real loading cancellation
+  followed by two complete frame-5401 matches, equal Ready digests, isolated
+  settings cleanup, and retained owner connection. Mac also passes two fresh
+  747-boundary histories, three full-state restores per run, and the changed-input
+  control (first divergence 1951). Windows cleanup confirms no running game and
+  no remaining task from the final desktop test. One Windows child exits with
+  status 1 after the acknowledged Finished event at frame 5401, the previously
+  observed owner-termination race; no game error was reported.
+  Logs under `build/experiments/`: `render-final-mac-independent.log`,
+  `render-retained-mac-{fingerprint,session}.log`, and
+  `windows-render-retained-session.log`. Windows build/fingerprint evidence is in
+  the private test workspace's `windows-render-retained-build.log`.
+
+  Windows startup replay remains intermittent despite the counter fix: clean
+  counter/rounding image
+  `28960376ca400ebbb81594d222ee2143c35232166e8e98e603fb23bc3a5095aa`
+  fails replay 1 at frame 1568, with expected RAM `b474e01830c8a7f6`, actual
+  `5b04f0468c520b82`, equal registers `64824f7bdc1b0f9d`, and differing color/depth
+  pages `0x11c000` and `0x21c000`. Testing counters together with fixed native
+  fallback shaders also fails: image
+  `a5d89dfd21bf44fd3c21fb3a95c64a5a93291f75a7bd941af8447f3bd59c6202`,
+  replay 1 frame 1435, pages `0x142000` and `0x21c000`, equal registers. That
+  candidate was removed on both machines, its manifest entry removed after hash
+  verification, and Windows rebuilt to the retained image above. Failure evidence:
+  `build/experiments/windows-render-final-startup.log` (runner failure; detailed
+  frame-1568 output retained in the tool transcript) and
+  `build/experiments/windows-joint-startup-a.txt` (full candidate failure).
+
+  Step 1 remains open for stable Windows replay and identical guest-visible
+  rendering across platforms. Next attribution should compare GPU-transformed
+  vertices and retained RDP/framebuffer state. The rejected Metal compiler-flag
+  experiment still contained explicit `fma` operations in generated shaders, so
+  it did not rule out shader contraction earlier in shader compilation. Full RAM,
+  register checks, negative controls, and cross-build admission remain unchanged;
+  complete cross-platform round/match certification and human playtests are pending.
+
 - CPU transform attribution (2026-10-25): a temporary native-input diagnostic
   compared 28 draw-data arrays before upload on the first two rendered updates.
   Raw positions, indices, matrices, colors, RDP parameters, lights, viewport, and
