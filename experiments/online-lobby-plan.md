@@ -8,6 +8,31 @@ open. No server has been rented or deployed.
 
 ## Implementation record
 
+- GPU arithmetic isolation (2026-10-25): explicit ordered matrix arithmetic,
+  DXC `-Od`, and strict Metal math produce identical pre-division clip positions
+  on the two GPUs. Hardware division still leaves 222 differing screen-position
+  components. A temporary integer IEEE binary32 division implementation removes
+  every position difference; its CPU regression checks 2,130,968 edge/random
+  cases at both O0 and O2 on both Mac ARM64 and Windows x64. Exact color/normal
+  conversion alone leaves 138 lighting differences. Ordered directional-light
+  products/sums and exact normalization division remove those too.
+
+  The resulting diagnostic images produce byte-identical first-batch buffers:
+  screen plus diagnostic clip positions (23,488 bytes, `b4f08af4f029d7a2`), texture
+  coordinates (5,872 bytes, `c9633ecd23eb9ef1`), and colors (11,744 bytes,
+  `af7626755610aed4`). Mac image
+  `b84793e6b312d9bb21b848f64526a3d55b167bc157a6ed2759bb108414574221`;
+  Windows `5e4b60633f7ebf72f41c322544a8d53009a369c5c888040e2196d545af3f4478`.
+  Each passes four full-state boundaries and three restores. Full RAM nevertheless
+  differs at 1601: Mac `e07956641594486b`, Windows `69153ec4bd0c2e36`, with matching
+  canonical registers. Thus matched sampled vertex outputs do not establish
+  framebuffer or cross-platform determinism. Positional lights, texture generation,
+  and other scenes also remain uncertified. Next isolate rasterization/writeback;
+  retain the full-RAM checks and exact-build admission gate. These shader changes
+  and extra buffer readbacks remain experimental, not accepted production fixes.
+  Evidence: `build/experiments/{clip-trace,integer-divide,color-divide,ordered-light}-*`,
+  `windows-float-divide-tests.log`, and matching Mac logs in `experiments/results/`.
+
 - Presentation ordering (2026-10-25): the checkpoint/online path now drains
   previously submitted presentation work before processing each native display
   list. Display output and interpolation remain enabled; the normal offline path
