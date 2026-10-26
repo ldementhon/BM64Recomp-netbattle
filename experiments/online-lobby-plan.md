@@ -8,6 +8,29 @@ open. No server has been rented or deployed.
 
 ## Implementation record
 
+- Native renderer counters (2026-10-25): checkpoint state omitted RT64's
+  native shader frame counter and color-dither seed. Both feed shader randomness
+  that can enter guest RAM through framebuffer writeback. The root renderer
+  adapter now saves/restores these two counters in the same 17 snapshot slots as
+  RAM; it addresses the native framebuffer renderer, not the presentation queue.
+  Normal offline rendering is unchanged. The context publishes its state after
+  successful setup and clears the reference when destroyed. A real active-Battle
+  regression (`tests/run_render_checkpoint.py`) checks nonzero saved counters,
+  three restores, all 20 boundary records, and the original full-RAM/register
+  replay. Mac and Windows pass with saved counters 340/1019; a separate 70-frame window
+  across the earlier failure region passes on both platforms.
+  Windows image `c6e874f2d63ff78b4a45a078152dde1671716478b5bb0ac7b87c95b2391266c5`
+  now passes two fresh 747-boundary histories, three full-state restores per run,
+  and the changed-input history/control (first divergence 1951). This is evidence
+  for the missing-counter fix, not cross-platform certification or proof that all
+  Windows renderer state is covered. Mac counter-test image:
+  `7915aa0d8d7674387aa689a5ccc6570a382a358a139a2d9c032f71e1148c2ba9`.
+  Logs: `build/experiments/render-counter-mac-{run,active}.log`,
+  `windows-counter-independent-{a,negative}.txt`, and
+  `windows-counter-independent-desktop.log`. Cross-platform first-frame differences
+  remain under investigation; a temporary native draw-input trace is not a change
+  to the acceptance hash.
+
 - Restored-build startup results (2026-10-25): the rejected shader experiment
   is removed byte-for-byte from the renderer sources on both machines. Final
   images: Mac `9b45280c3b862121c0c0e0374be64883616be1753756eaab5d6b6c39419f4189`;

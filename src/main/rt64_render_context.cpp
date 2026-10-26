@@ -4,6 +4,7 @@
 #include <algorithm>
 #include "common/rt64_rollback_probe.h"
 #include "ultramodern/checkpoint.hpp"
+#include "recomp_render_checkpoint.h"
 
 #define HLSL_CPU
 #include "hle/rt64_application.h"
@@ -22,6 +23,23 @@
 static RT64::UserConfiguration::Antialiasing device_max_msaa = RT64::UserConfiguration::Antialiasing::None;
 static bool sample_positions_supported = false;
 static bool high_precision_fb_enabled = false;
+static std::atomic<RT64::State*> checkpoint_renderer = nullptr;
+
+void checkpoint::render_state(bool restore) {
+    auto* state = checkpoint_renderer.load();
+    if (!state || state_slot >= snapshot_slots) std::abort();
+    struct Counters { uint32_t frame, dither; };
+    static std::array<Counters, snapshot_slots> saved;
+    auto& counters = saved[state_slot];
+    auto& frame = state->framebufferRenderer->frameParams.frameCount;
+    auto& dither = state->ditherRandomSeed;
+    if (restore) {
+        frame = counters.frame;
+        dither = counters.dither;
+    } else counters = {frame, dither};
+    if (std::getenv("BM64_TRACE_RENDER_STATE"))
+        fprintf(stderr, "RENDER_STATE: restore=%d slot=%zu frame=%u dither=%u\n", restore, state_slot, frame, dither);
+}
 
 static uint8_t DMEM[0x1000];
 static uint8_t IMEM[0x1000];
@@ -332,9 +350,15 @@ zelda64::renderer::RT64Context::RT64Context(uint8_t* rdram, ultramodern::rendere
     }
 
     high_precision_fb_enabled = app->shaderLibrary->usesHDR;
+    checkpoint_renderer.store(app->state.get());
 }
 
-zelda64::renderer::RT64Context::~RT64Context() = default;
+zelda64::renderer::RT64Context::~RT64Context() {
+    if (app) {
+        auto* expected = app->state.get();
+        checkpoint_renderer.compare_exchange_strong(expected, nullptr);
+    }
+}
 
 void zelda64::renderer::RT64Context::send_dl(const OSTask* task) {
     app->state->suppressPresentation = checkpoint::suppress_render;

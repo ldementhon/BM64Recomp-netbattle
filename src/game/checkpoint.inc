@@ -29,6 +29,7 @@
 #include "zelda_cheats.h"
 #include "zelda_sound.h"
 #include "recomp_input.h"
+#include "recomp_render_checkpoint.h"
 
 extern uint8_t dmem[0x1000];
 extern thread_local PTR(OSThread) thread_self;
@@ -157,6 +158,7 @@ static void runtime_state(bool restore) {
     else std::memcpy(saved_dmem.data(), dmem, saved_dmem.size());
     events_state(restore); timers_state(restore); queues_state(restore); runqueue_state(restore);
     overlays_state(restore); extensions_state(restore); audio_state(restore); input_state(restore); saves_state(restore);
+    render_state(restore);
 }
 static double save(size_t index = 0, bool quiet = false) {
     state_slot = index;
