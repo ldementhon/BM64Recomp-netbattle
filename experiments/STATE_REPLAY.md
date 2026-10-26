@@ -2,8 +2,10 @@
 
 This branch contains four-player controller support and an opt-in, same-process
 state replay experiment developed on Apple Silicon macOS. Normal play uses the
-threaded runtime. Four scripted processes now complete a rollback battle through
-the local relay; a user-facing online mode is not yet available.
+threaded runtime. Four scripted Mac processes have completed rollback matches
+through the local relay, and the Mac Online Battle screen is wired. A validated
+human-playable Mac/Windows version remains incomplete; see the current status in
+`online-lobby-plan.md` and the continuation guide in `online-lobby-handoff.md`.
 
 ## Dependency changes and building
 
@@ -80,11 +82,11 @@ input clock; replay reads historical scripted inputs, never live controllers.
 The checkpoint/online renderer waits for previously submitted presentation work
 before processing the next native display list. This conservative ordering keeps
 concurrent presentation work out of guest-visible rendering; normal offline play
-retains its existing asynchronous behavior. Windows startup, battle, round, and
-match replay checks pass with this boundary. The exact shared resource responsible
-for the earlier intermittent failures is not yet identified, and the added wait's
-latency cost still needs measurement. This does not resolve cross-platform shader
-or rasterization differences.
+retains its existing asynchronous behavior. Earlier Windows startup, battle, round,
+and match replay runs passed with this boundary, but later startup restores still
+fail intermittently. The responsible resource or ordering problem remains unknown;
+the added wait's latency cost also needs measurement. Neither Windows replay
+stability nor cross-platform shader/rasterization equivalence is established.
 
 The delayed-input fixture treats player 1 as local and players 2–4 as remote,
 holding each remote pad's last input during a simulated delivery gap, then
@@ -145,8 +147,10 @@ The private owner/game channel carries bounded input records in both directions.
 IPC → ENet relay → IPC, bounded native rollback, and verified state comparisons.
 `python3 tests/run_network_game.py match` completes a three-round match, including
 confirmed completion discovered during replay. These explicit tests use scripted
-inputs and muted audio on one Mac; the native lobby UI and live-player validation
-remain unfinished.
+inputs and muted audio on one Mac; live-player validation remains unfinished.
+Real audio still needs replay-safe output. Online rumble may stay disabled for the
+first playable version, per the user's 2026-10-25 scope decision; preserve offline
+behavior.
 `--online-test` is an isolated settings diagnostic, not a playable online mode.
 It locks cheats and guest music/effects/voice balance while allowing host Main
 Volume. The match-settings check compares online settings-change attempts and

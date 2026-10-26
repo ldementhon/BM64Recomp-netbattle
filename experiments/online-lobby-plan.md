@@ -4,8 +4,44 @@ Status: macOS Online Battle screen is wired and locally exercised, 2026-10-25.
 Four-process scripted Mac rollback matches pass; the full Windows x64 client builds.
 Windows lifecycle checks pass, but renewed full-state validation found an
 intermittent framebuffer replay failure despite serialized presentation.
-Cross-platform determinism, physical-controller validation, audio/rumble, and human playtests remain
-open. No server has been rented or deployed.
+Cross-platform determinism, physical-controller validation, audio, and human playtests
+remain open. Rumble may be disabled for the first online version (user decision,
+2026-10-25); preserve offline behavior. No server has been rented or deployed.
+
+## Remaining work, in priority order
+
+Fresh-session continuation instructions and diagnostic context are in
+[`online-lobby-handoff.md`](online-lobby-handoff.md). The implementation record
+below contains historical results; a successful older image does not certify the
+current build.
+
+1. **Recover the interrupted Windows experiment.** The user shut down the PC.
+   When it is available, inspect the existing build, per-case logs, source manifest,
+   and private processes/tasks before restarting anything. Recover the same-image
+   no-trace/barriers/readback comparison, then restore the normal source and build
+   using checked hashes. Do not infer success from the batch's final exit code.
+2. **Close same-machine Windows replay stability.** Establish whether per-draw
+   synchronization masks the failure, isolate the first differing draw/resource,
+   and retain only a minimal demonstrated fix. Require repeated fresh startup,
+   battle, round, and match histories with full-state restores and negative
+   controls. A short control or instrumented pass is insufficient.
+3. **Close cross-platform determinism.** Reuse the archived ordered-arithmetic
+   prototypes as evidence, then isolate any required changes to native rendering.
+   Restore real textures/colors and evaluate interpolation, sampling, depth,
+   blending, and writeback separately. Compare complete Mac/Windows histories;
+   admit only the exact validated build pair. Never exclude framebuffer RAM to
+   make the comparison pass.
+4. **Finish playable two-person integration.** Enable audio with replay-safe
+   output; disable online rumble for this milestone. Check physical controllers,
+   input preferences/calibration, P1 menus, visual recovery, cancellation, and
+   repeated complete Mac/Windows matches. Revalidate the existing lobby and relay
+   against the resulting builds. Audio/rumble work can proceed locally while the
+   Windows PC is unavailable, but cannot satisfy mixed-platform acceptance.
+5. **Complete the remote four-person acceptance.** Prepare the dedicated relay,
+   arrange four machines/testers, then run at least ten matches and 30 minutes of
+   play with delay/loss, disconnect recovery, diagnostics, and human feedback.
+   Measure the existing presentation wait and rollback recovery costs before
+   further performance changes. No server has been purchased or deployed.
 
 ## Implementation record
 
@@ -1284,9 +1320,12 @@ still detects deliberate divergence; never omit arbitrary RAM ranges to pass it.
 Full-memory hashing is a correctness mode, not work to perform on every rendered
 frame. Measure the overhead of any periodic live desync checks separately.
 
-A playable match also requires enabling real audio and handling replayed audio and
-rumble without duplicates; the existing experiment suppresses output. Record any
-confirmed-audio delay separately. Verify that replay suppression preserves required
+A playable match also requires enabling real audio and handling replayed audio
+without duplicates; the existing experiment suppresses output. Rumble may be
+disabled throughout online matches for the first playable version; rumble support
+is not an acceptance blocker. Preserve normal offline behavior and stop any active
+rumble when entering/leaving the online session. Record any confirmed-audio delay
+separately. Verify that replay suppression preserves required
 framebuffer results and completion events, and inspect visual history artifacts.
 Neither transport nor a lobby solves those existing integration gaps.
 
@@ -1308,7 +1347,8 @@ desynchronization does block a valid match.
 Multiple rooms, player-selected slots, multiple local humans per client, spectators,
 join-in-progress, seamless reconnect, public matchmaking/accounts, ranked play,
 server-authoritative simulation, platforms beyond the requested Mac/Windows pair,
-and adaptive input delay.
+adaptive input delay, and online rumble support.
 The fixed four-seat roster already supports two through four players without any
-of these features. The immediate next implementation is step 1, followed by the
-small server/lobby; further renderer optimization is deferred pending playtest data.
+of these features. Complete step 1's remaining determinism gates, then revalidate
+the existing server/lobby and proceed to human playtests. Further renderer
+optimization is deferred pending playtest data; renderer correctness remains required.
