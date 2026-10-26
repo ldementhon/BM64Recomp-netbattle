@@ -6,6 +6,23 @@ has been rented or deployed.
 
 ## Implementation record
 
+- The application now has `LobbyWorker`, a background owner with a bounded
+  16-command UI queue and copied roster/status views. It computes the actual
+  executable/ROM fingerprint at Connect and rechecks both before every Prepare.
+  No render-thread polling is needed to service the connection or game. All
+  eight Release lobby CTests pass, including two fixture matches with no UI
+  polling, CPU/Ready views, leave cleanup, and changed-ROM rejection both before
+  the next match and on reconnect. Client and server share the pinned ENet CMake
+  declaration. The worker currently uses the Mac fingerprint/POSIX owner; the
+  Windows backend is the next platform task.
+- Scope decision (2026-10-25): the user wants the first remote-play version to
+  support both Apple Silicon macOS and an Intel/AMD Windows PC. Remote access to
+  the Windows PC is available; the connection method/address is pending. This
+  replaces the initial same-platform-only target, not the determinism gate.
+  Port and test the process/IPC, snapshot/runtime, build, and fingerprint paths;
+  compare the exact Mac/Windows build pair through the same startup, battle,
+  and round-transition histories before permitting that pair to share a room.
+  Current platform-specific fingerprints intentionally still reject unlike builds.
 - macOS clients now expose `--online-fingerprint`, hashing the exact executable
   (including linked recomp/patch/runtime code) and stored ROM with SHA-256, with
   an explicit architecture/fixed-profile domain. The command starts no runtime.
@@ -380,7 +397,10 @@ match ID; packets from an earlier match are ignored.
 
 1. On connection, check protocol version and a compatibility fingerprint covering
    game/ROM hash, recomp and patches, runtime version, deterministic configuration,
-   and supported client platform. Start with one tested client build/platform.
+   and supported client platform. The first remote-play target is a tested
+   Apple Silicon macOS/Windows x64 build pair (user decision, 2026-10-25).
+   Admit only the exact fingerprints of that validated pair; platform identity
+   must remain visible rather than pretending the two binaries are identical.
    Reject mismatches before allocating a playable seat. Do not send ROM data.
 2. P1 requests Start for the current roster revision. The server validates all
    Ready flags, locks the roster, and publishes the match ID, ordered roster,
