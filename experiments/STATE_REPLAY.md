@@ -17,6 +17,7 @@ and renderer changes are stored in these patches:
 - `patches/rt64-rsp-rounding.patch`: separate multiply/add rounding in CPU RSP
   transforms, matching the Windows x64 path on Apple Silicon.
 - `patches/plume-presentation-probe.patch`: Metal presentation timing.
+- `patches/plume-descriptor-layout.patch`: Windows buffer bindings after static samplers.
 - `patches/hlslpp-stdlib.patch`: standard-library include needed by the Mac build.
 
 Initialize submodules with `git submodule update --init --recursive`, then apply
@@ -58,6 +59,12 @@ done
 
 The controller runner uses `build/compile_commands.json`, which the Mac build
 recipe enables. Coroutine checks run at both `-O0` and `-O2`.
+
+The private Windows source export includes the patched dependency sources. In its
+x64 developer shell, run `cmake --build build --target bm64_d3d12_descriptor_test`
+and `build\bm64_d3d12_descriptor_test.exe` to check D3D12 heap offsets and counts
+for static/dynamic samplers and buffer arrays, including a boundless final range.
+This check requires a D3D12 adapter but no window or ROM.
 
 Replay input checks also run at both optimization levels. Boundary N is the start
 of simulation update N: every controller read during that update uses input N,

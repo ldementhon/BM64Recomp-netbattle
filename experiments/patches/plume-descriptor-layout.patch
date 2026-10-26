@@ -1,0 +1,13 @@
+--- a/plume_d3d12.cpp
++++ b/plume_d3d12.cpp
+@@ -910,5 +910,9 @@
+ 
+             bool isDynamicSampler = (range.type == RenderDescriptorRangeType::SAMPLER) && (range.immutableSampler == nullptr);
+-            if (isDynamicSampler) {
++            if (range.immutableSampler != nullptr) {
++                // Static samplers do not occupy slots in either descriptor heap.
++                descriptorHeapIndices.emplace_back(0);
++            }
++            else if (isDynamicSampler) {
+                 descriptorHeapIndices.emplace_back(samplerDescriptorCount);
+                 samplerDescriptorCount += descriptorCount;

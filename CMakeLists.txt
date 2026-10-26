@@ -449,6 +449,12 @@ target_sources(BM64Recompiled PRIVATE ${SOURCES})
 
 set_property(TARGET BM64Recompiled PROPERTY VS_DEBUGGER_WORKING_DIRECTORY "${CMAKE_SOURCE_DIR}")
 
+if(WIN32)
+    add_executable(bm64_d3d12_descriptor_test EXCLUDE_FROM_ALL tests/d3d12_descriptors.cpp)
+    target_compile_definitions(bm64_d3d12_descriptor_test PRIVATE NOMINMAX)
+    target_link_libraries(bm64_d3d12_descriptor_test PRIVATE plume d3d12 dxgi dxguid)
+endif()
+
 # Separate diagnostic build: instrument actual generated loads/stores, never time it.
 option(BM64_TRACE_MEMORY "Trace framebuffer consumers in generated game code" OFF)
 if(BM64_TRACE_MEMORY)

@@ -8,6 +8,24 @@ open. No server has been rented or deployed.
 
 ## Implementation record
 
+- Windows descriptor layout (2026-10-25): fixed Plume counting static samplers
+  as buffer/texture heap entries, while its pipeline layout correctly skipped
+  them. Resources after those samplers were consequently bound at the wrong
+  offsets. The explicit-interpolation probe exposed this as zero/invalid buffer
+  reads. The common RT64 set also has existing textures after static samplers,
+  so this is a general binding fix rather than a shader-math workaround.
+  `patches/plume-descriptor-layout.patch` preserves the isolated fix; the Mac
+  preparation recipe applies it and the Windows source bundle exports it.
+  `bm64_d3d12_descriptor_test` passes on the Windows PC for mixed/static-only
+  sets, arrays, and a boundless final range. Temporarily restoring the original
+  bug makes that same test fail at the expected buffer-offset assertion; restoring
+  the checked fix makes it pass again. No game window or ROM is needed for this
+  regression. Logs: `build/experiments/windows-descriptor-test-fixed-run.log`
+  and `windows-descriptor-negative-run.log` (detailed positive/negative logs on
+  the Windows machine). The diagnostic game passes four boundaries on three
+  restores after the fix; normal-color startup/battle/round/match validation of
+  the changed Windows bindings remains required before certifying a build pair.
+
 - Windows shader diagnostics (2026-10-25): failed DXC compile/link validation
   now prints its existing diagnostic text to stderr before throwing, so release
   test logs retain the cause even when RT64 file logging is disabled. The
