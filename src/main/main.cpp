@@ -45,7 +45,7 @@
 #include "librecomp/helpers.hpp"
 #include "../online/match_settings.hpp"
 #include "../online/local_input.hpp"
-#if defined(__APPLE__)
+#if defined(__APPLE__) || defined(_WIN32)
 #include "../online/fingerprint.hpp"
 #endif
 
@@ -596,7 +596,7 @@ int main(int argc, char** argv) {
         else { fprintf(stderr, "Unknown option: %s\n", argv[i]); return EXIT_FAILURE; }
     }
     if (print_fingerprint) {
-#if defined(__APPLE__)
+#if defined(__APPLE__) || defined(_WIN32)
         try {
             auto value = online::lobby::client_fingerprint(online::lobby::current_executable(),
                 zelda64::get_app_folder_path() / "bm64_us.z64");

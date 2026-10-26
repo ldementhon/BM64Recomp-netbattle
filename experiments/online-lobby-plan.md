@@ -7,6 +7,45 @@ open. No server has been rented or deployed.
 
 ## Implementation record
 
+- Windows foundation (2026-10-25): SSH access to `dosktep2025` is verified.
+  Its original workspace contained only `access-check`; all new files are isolated
+  under `C:\Users\ldeme\Dev\bomberman64\online-port`. The host is Windows 11 x64,
+  Ryzen 7 9800X3D, 64 GB RAM, Radeon RX 9070 XT, with Visual Studio 2022 17.14
+  and Windows SDK 10.0.26100.0. Portable CMake 3.31.6, Ninja 1.12.1, and LLVM
+  19.1.3 were downloaded from their official releases into that workspace.
+  Windows fingerprinting now uses the OS SHA-256 provider and a growing UTF-16
+  executable-path buffer. Its explicit Windows x64 domain remains incompatible
+  with Mac fingerprints until the exact pair passes game-state comparisons.
+  The standalone server needed `NOMINMAX` to avoid Windows header collisions.
+  All six Windows Release CTests pass with MSVC 19.44 and Clang 19.1.3: room
+  lifecycle, real UDP lobby, clocks, input history, independent-loss relay
+  recovery, and fingerprints.
+  Fingerprint checks include known SHA-256/profile vectors, streaming, changed
+  files, missing ROM, Unicode filenames, and executable identity; a relocated
+  258-character executable path also passes, exercising buffer growth. All eight Mac
+  lobby CTests pass; the rebuilt native Mac fingerprint also agrees with Python
+  (executable SHA-256 `5bb47b6175483d97bd6f08d44dc9ba01a56c27c774cbc135a1f912badad4e8de`).
+  Windows process/IPC ownership and the full game are still unported; these
+  component passes do not establish cross-platform determinism or playability.
+  LLVM's `llvm-mt` lacks libxml2, so use the installed Windows SDK's `mt.exe`
+  explicitly through `CMAKE_MT` when configuring the Clang build.
+  `tests/run_coroutine_replay.ps1` also passes with Clang at `/Od` and `/O2`,
+  including 100 repeated 12-update restores, changed-input and omitted-stack
+  controls, natural termination, retained destroy/recreate generations, and all
+  80 process slots. Windows currently uses the correct full-native-stack copy
+  fallback (about 40 MiB for this synthetic pool), not the arm64 live-tail
+  optimization. This test excludes the game's OS scheduler, RAM, renderer, and
+  audio. Logs are local under `build/experiments/windows-{lobby-msvc,clang-checks}.log`.
+  Reproduce from an x64 Visual Studio developer PowerShell with CMake, Ninja,
+  and portable LLVM on PATH:
+  ```powershell
+  cmake -S server -B build/lobby -G Ninja -DCMAKE_BUILD_TYPE=Release `
+    -DCMAKE_C_COMPILER=clang-cl -DCMAKE_CXX_COMPILER=clang-cl `
+    "-DCMAKE_MT=${env:WindowsSdkDir}bin/${env:WindowsSDKVersion}x64/mt.exe"
+  cmake --build build/lobby
+  ctest --test-dir build/lobby --output-on-failure
+  ./tests/run_coroutine_replay.ps1
+  ```
 - The macOS launcher now includes Online Battle with server/name/local-port fields,
   four player/CPU rows, Ready, P1-only Start gating, Cancel, Leave, Back, and server
   round-trip display. It uses the background worker, actual fingerprints, and
@@ -590,7 +629,8 @@ desynchronization does block a valid match.
 
 Multiple rooms, player-selected slots, multiple local humans per client, spectators,
 join-in-progress, seamless reconnect, public matchmaking/accounts, ranked play,
-server-authoritative simulation, cross-platform support, and adaptive input delay.
+server-authoritative simulation, platforms beyond the requested Mac/Windows pair,
+and adaptive input delay.
 The fixed four-seat roster already supports two through four players without any
 of these features. The immediate next implementation is step 1, followed by the
 small server/lobby; further renderer optimization is deferred pending playtest data.

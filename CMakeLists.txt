@@ -146,6 +146,9 @@ add_custom_command(OUTPUT
 
 # Main executable
 add_executable(BM64Recompiled)
+if(WIN32)
+    target_link_libraries(BM64Recompiled PRIVATE bcrypt)
+endif()
 if(APPLE)
     include(cmake/Enet.cmake)
     target_sources(BM64Recompiled PRIVATE src/online/game_session.cpp)

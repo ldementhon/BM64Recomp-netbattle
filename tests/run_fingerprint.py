@@ -1,16 +1,23 @@
 """Check the native compatibility command against an independent SHA-256 implementation."""
+import argparse
 import hashlib
 import os
 from pathlib import Path
 import platform
+import shutil
 import subprocess
 import tempfile
 
 ROOT = Path(__file__).resolve().parents[1]
-GAME = ROOT / "build/BM64Recompiled.app/Contents/MacOS/BM64Recompiled"
-ROM = ROOT.parent / "Bomberman 64 (USA).z64"
-architecture = {"arm64": "arm64", "x86_64": "x86_64"}[platform.machine()]
-profile = f"BM64 online v1; macOS {architecture}; fixed Battle profile 1; delay 2".encode()
+parser = argparse.ArgumentParser(description=__doc__)
+parser.add_argument("--game", type=Path, default=ROOT / ("build/BM64Recompiled.exe" if os.name == "nt"
+                                                     else "build/BM64Recompiled.app/Contents/MacOS/BM64Recompiled"))
+parser.add_argument("--rom", type=Path, default=ROOT.parent / "Bomberman 64 (USA).z64")
+args = parser.parse_args()
+GAME, ROM = args.game.resolve(), args.rom.resolve()
+architecture = {"arm64": "arm64", "x86_64": "x86_64", "AMD64": "x86_64"}[platform.machine()]
+system = {"Darwin": "macOS", "Windows": "Windows"}[platform.system()]
+profile = f"BM64 online v1; {system} {architecture}; fixed Battle profile 1; delay 2".encode()
 game_hash = hashlib.sha256(GAME.read_bytes()).digest()
 rom_hash = hashlib.sha256(ROM.read_bytes()).digest()
 expected = hashlib.sha256(profile + game_hash + rom_hash).hexdigest()
@@ -18,7 +25,7 @@ with tempfile.TemporaryDirectory(prefix="bm64-fingerprint-") as temp:
     environment = {key: value for key, value in os.environ.items() if not key.startswith("BM64_")}
     environment["APP_FOLDER_PATH"] = temp
     stored = Path(temp) / "bm64_us.z64"
-    stored.symlink_to(ROM)
+    shutil.copyfile(ROM, stored)
     result = subprocess.run([str(GAME), "--online-fingerprint"], env=environment,
                             capture_output=True, text=True, timeout=15, check=True)
     assert result.stdout.strip() == expected, (result.stdout, expected)
