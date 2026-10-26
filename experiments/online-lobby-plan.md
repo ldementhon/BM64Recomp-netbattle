@@ -1,10 +1,11 @@
 # Minimal dedicated-server lobby and player assignment
 
-Status: macOS Online Battle screen is wired and locally exercised, 2026-10-25.
+Status: macOS Online Battle screen is wired and locally exercised, 2026-10-26.
 Four-process scripted Mac rollback matches pass; the full Windows x64 client builds.
-Windows lifecycle checks pass, but renewed full-state validation found an
-intermittent framebuffer replay failure despite serialized presentation.
-Cross-platform determinism, physical-controller validation, audio, and human playtests
+Windows lifecycle checks pass, but full-state validation finds an intermittent
+framebuffer replay failure, now localized to GPU ordering between the 2D
+background and the first 3D draws of each pass. Cross-platform determinism,
+physical-controller validation, real-device audio listening, and human playtests
 remain open. Rumble may be disabled for the first online version (user decision,
 2026-10-25); preserve offline behavior. No server has been rented or deployed.
 
@@ -15,29 +16,28 @@ Fresh-session continuation instructions and diagnostic context are in
 below contains historical results; a successful older image does not certify the
 current build.
 
-1. **Recover the interrupted Windows experiment.** The user shut down the PC.
-   When it is available, inspect the existing build, per-case logs, source manifest,
-   and private processes/tasks before restarting anything. Recover the same-image
-   no-trace/barriers/readback comparison, then restore the normal source and build
-   using checked hashes. Do not infer success from the batch's final exit code.
-2. **Close same-machine Windows replay stability.** Establish whether per-draw
-   synchronization masks the failure, isolate the first differing draw/resource,
-   and retain only a minimal demonstrated fix. Require repeated fresh startup,
-   battle, round, and match histories with full-state restores and negative
-   controls. A short control or instrumented pass is insufficient.
-3. **Close cross-platform determinism.** Reuse the archived ordered-arithmetic
+1. **Close same-machine Windows replay stability.** The interrupted control was
+   recovered on 2026-10-26 (see the implementation record). The failure is now
+   localized: one GPU drain anywhere between the first 2D rectangle and the first
+   depth-writing 3D draws of each main pass hides it, in both the diagnostic and
+   normal renderer configurations. Identify the violated ordering requirement,
+   using D3D12 validation if Graphics Tools or an Agility SDK can be installed, or
+   decide explicitly to retain a gated D3D12 drain. Either way, require repeated
+   fresh startup, battle, round, and match histories with full-state restores,
+   negative controls, and a cost measurement. A short or instrumented pass is
+   insufficient.
+2. **Close cross-platform determinism.** Reuse the archived ordered-arithmetic
    prototypes as evidence, then isolate any required changes to native rendering.
    Restore real textures/colors and evaluate interpolation, sampling, depth,
    blending, and writeback separately. Compare complete Mac/Windows histories;
    admit only the exact validated build pair. Never exclude framebuffer RAM to
    make the comparison pass.
-4. **Finish playable two-person integration.** Enable audio with replay-safe
-   output; disable online rumble for this milestone. Check physical controllers,
-   input preferences/calibration, P1 menus, visual recovery, cancellation, and
-   repeated complete Mac/Windows matches. Revalidate the existing lobby and relay
-   against the resulting builds. Audio/rumble work can proceed locally while the
-   Windows PC is unavailable, but cannot satisfy mixed-platform acceptance.
-5. **Complete the remote four-person acceptance.** Prepare the dedicated relay,
+3. **Finish playable two-person integration.** Replay-safe audio output exists
+   and online rumble is silent; listen on real devices and rebuild Windows with
+   them. Check physical controllers, input preferences/calibration, P1 menus,
+   visual recovery, cancellation, and repeated complete Mac/Windows matches.
+   Revalidate the existing lobby and relay against the resulting builds.
+4. **Complete the remote four-person acceptance.** Prepare the dedicated relay,
    arrange four machines/testers, then run at least ten matches and 30 minutes of
    play with delay/loss, disconnect recovery, diagnostics, and human feedback.
    Measure the existing presentation wait and rollback recovery costs before
@@ -80,6 +80,133 @@ current build.
   strength. The guest-visible pak comes from the fixed `checkpoint_device`, so
   rumble state is identical on every peer. Offline play keeps `recomp::set_rumble`.
   No code change was needed; a live controller check remains part of step 4.
+
+- Recovered depth synchronization control (2026-10-26): after the shutdown, the
+  Windows PC had no game process or private test task. The interrupted batch had
+  applied its checked source delta (all 16,912 manifest entries matched) but
+  stopped after the Visual Studio banner, before Ninja ran; its executable was
+  still the earlier readback image and none of its three result files existed.
+  Resuming the build from the same checked source produced image
+  `c64156bd55695dec5a3ecbe47f9522e96d2403a2579c7aeee170b0c428da21ba`; each mode
+  then ran as its own bounded desktop task with its own exit status. All modes
+  use the fallback shader path and no MSAA:
+
+  | Mode | Runs | Result |
+  | --- | --- | --- |
+  | No depth trace | 7 | 7 fail on replay 1, updates 1405–1570 |
+  | Per-draw depth transitions only | 7 | 7 pass, 280 boundaries × 3 restores |
+  | Per-draw transitions plus readback | 1 | Pass |
+
+  The uninstrumented failures are not limited to the three known pixels: pages
+  `0x119000`, `0x11b000`, `0x11c000`, `0x142000`, `0x21b000`, and `0x21c000`
+  appear across runs. Registers always agree. Synchronization on the main depth
+  target alone is therefore sufficient to mask the failure, and copies are not
+  needed. This is attribution evidence, not a fix. Logs:
+  `windows-depth-sync-resume-run.log` and `windows-depth-sync-rate-run.log`
+  under `build/experiments/`.
+
+  A follow-up image
+  (`a6f6e99de0ed282fe8bd27b3eb6c5d007b1f13b0d3255fe2a1d08f680129891a`) selects
+  narrower placements in the same build, three interleaved runs each:
+
+  | Barrier placement | Passes |
+  | --- | --- |
+  | None | 1/3 |
+  | Once at each main-pass start | 1/3 |
+  | After each vertex test-Z dispatch | 1/3 |
+  | Depth round trip after every draw | 3/3 |
+  | Depth round trip after each draw, not at pass start | 3/3 |
+  | Depth round trip only after depth-writing draws | 3/3 |
+  | Depth write → read → write after each draw | 3/3 |
+  | Unrelated 1×1 dummy depth texture after each draw | 3/3 |
+  | Main color target round trip after each draw | 3/3 |
+
+  Failures now also occur on replays 2 and 3. A transition on an unrelated
+  texture is as effective as one on the main depth target, so the effect is an
+  inter-draw GPU drain, not the depth resource's layout. The raster pipelines use
+  `LESS` depth with writes, but the ubershaders used here enable dual-source alpha
+  blending on every pipeline, which rules out the usual out-of-order rasterization
+  explanation. A further image
+  (`41f4cfc020e9412b132dea37a486ff1da0315a59d540e60bc7b523321e92cbc4`) adds:
+
+  | Barrier placement | Passes |
+  | --- | --- |
+  | None | 0/3 |
+  | Depth round trip before each decal (depth-read) draw | 0/3 |
+  | Depth round trip only after non-depth-writing draws | 3/3 |
+  | Null UAV barrier after each draw | 3/3 |
+  | Null aliasing barrier after each draw | 3/3 |
+
+  Either half of the draws suffices, and barriers naming no resource suffice.
+  The interacting work is therefore separated by more than one draw, or the
+  failure needs a long run of draws to overlap. The decal depth-read path is not
+  the missing dependency. Spacing image
+  `d86e2b83d82a9870c8f8f42c274e18c1fcb305a696ecc2da0374dcae4f7ed4d1`:
+
+  | Barrier placement | Passes |
+  | --- | --- |
+  | Before each vertex test-Z dispatch | 1/3 |
+  | Before a draw whose pipeline differs from the previous draw | 3/3 |
+  | After every 2nd, 4th, 8th, or 16th draw | 3/3 each |
+
+  A drain every 16 draws is as effective as one per draw. In ubershader mode the
+  pipeline changes only with depth compare, depth write, or coverage-add state,
+  so those transitions are the next split.
+
+  Image `874e5319b8697e0840f8639178498207b9d227756bed39512c80c72f740ef6c3` drains
+  only where depth write, depth compare, or coverage-add state changes from the
+  previous draw: 3/3 each (none passed 2/3 in that batch, so its control was weaker).
+  Counting image `08dc32da7d8c5bb6bade103b4203a7cf1b623ee530b3f8511a0f476bab88618e`
+  shows main passes of 147, 81, or 68 calls with only two depth-write and two
+  depth-compare changes each. A single drain after call K of each main pass:
+
+  | K | 0 (pass start) | 4, 8, 12, 16, 24, 32 | 48 | 64 | 96 |
+  | --- | --- | --- | --- | --- | --- |
+  | Passes | 1/3 | 2/2 each | 1/2 | 1/2 | 0/2 |
+
+  One drain is enough if it lies between the first few calls and roughly the
+  32nd–64th. A call log (image
+  `d9f6d4fbfe7535fa2d46634d1fd9676d21656e97bbfa58a885b434c30a93cb38`, which only
+  adds the log mode) shows each sampled main pass has the same shape:
+  call 1 clears the whole color target; calls 2–31 are two-face rectangles with no
+  depth test or write; calls 32–33 are translucent coverage-wrap rectangles with
+  depth compare; indexed 3D triangles with depth compare and write follow. Call 40
+  is the indexed draw at face-index offset 120 that the per-draw depth trace
+  attributed the differing pixels to. Further single-drain positions on these two
+  images (identical drain code):
+
+  | Drain after call | 1 (clear) | 2 | 3 | 33 | 39 | 40 |
+  | --- | --- | --- | --- | --- | --- | --- |
+  | Passes | 1/6 | 2/2 | 2/2 | 3/3 | 1/3 | 0/2 |
+
+  The drain must separate the first 2D rectangle (call 2), not just the clear, from
+  the first depth-writing 3D draws (calls 34–40). That is the boundary where the
+  frame switches from the 2D background to depth-tested 3D. No API-visible
+  resource connects those calls: the rectangles neither test nor write depth and
+  the ubershader reads no render target. The violated ordering requirement is
+  still unknown. No barrier has been retained.
+
+  The same effect occurs with the normal renderer (specialized shaders, default
+  MSAA; image `5d6f73d595cfa728e4c3b4ea67017cd4ac9140a4bae22feeb4430477841e596f`):
+  without a drain, 1 of 4 runs pass, and one failure is in a new region (pages
+  `0x12e000`, `0x209000`). A single drain after call 8 passes 3/3, and a drain at
+  each depth-write change (two per pass) passes 3/3. These cheap placements are
+  candidate mitigations, not a diagnosis. Retaining one still needs the violated
+  requirement identified, or an explicit decision to accept a gated D3D12 drain,
+  followed by repeated startup/battle/round/match histories, negative controls,
+  and a cost measurement. D3D12 debug-layer/GPU-based validation would need the
+  Windows Graphics Tools feature or a bundled Agility SDK on the PC.
+
+  Windows was restored to the normal sources by checked hashes (four files).
+  Normal image `c2341a19c02361fbd7d9f0fecfbe4e39c9bd72f4e5431e47be026f7d804ddf07`
+  passes the four-boundary, three-restore control. All 16,912 manifest entries
+  match, and no game process or private task remains. It does not yet include the
+  audio change. The full diagnostic is archived locally as
+  `build/experiments/depth-drain-attribution.patch` and applies to the restored
+  checkout. Logs: `windows-depth-{narrow,hazard,spacing,state,locate,normal}-*.log`,
+  `windows-depth-locate{2,3}-repeats.log`, `windows-restored-depth-drain-run.log`,
+  and `restored-depth-drain-cleanup.log`. The PC has no D3D12 SDK layers (`d3d12SDKLayers.dll`) for
+  debug-layer or GPU-based validation. Log: `windows-depth-narrow-run.log`.
 
 - Per-draw depth attribution and readback fix (2026-10-25): the first Windows
   depth-readback probe exposed a separate Plume null dereference: texture-to-buffer
