@@ -8,6 +8,27 @@ open. No server has been rented or deployed.
 
 ## Implementation record
 
+- First divergent-state attribution (2026-10-25): an opt-in diagnostic writes
+  all 512 MiB at `BM64_DUMP_FRAME` to `BM64_DUMP_PATH` during the baseline
+  comparison pass; missing/unwritable paths fail the probe. Dumps remain private
+  ignored build artifacts. Both rebuilt clients pass a four-boundary, three-restore
+  window spanning 1599–1602 and reproduce the original hashes. Diagnostic images:
+  Mac `513b7825bc1dc8f1952dce98a53db6c226aeeca7ec73bb2a68e8eae7a44c29e7`,
+  Windows `7ee6b1aeecf881673489b77ff089c18fe4c4cd343d55c6c47040829104969acd`.
+  Comparing the entire frame-1601 dumps finds 156 differing 32-bit words in 14
+  pages. Every difference lies in the native color buffer
+  `[0x125800, 0x14b000)` or depth buffer `[0x200000, 0x225800)`; all other RAM
+  agrees. RT64 renders these targets and writes their pixels back into guest RAM.
+  A disposable no-MSAA attribution run still differs in 105 words (83 color,
+  22 depth), so disabling anti-aliasing alone is not a solution. No production
+  graphics setting, framebuffer writeback, or hash coverage was changed.
+  Logs and word differences: `experiments/results/cross-state-mac.txt`,
+  `build/experiments/cross-state-windows.txt`, `cross-state-1601-diff.txt`, and
+  `cross-no-msaa-1601-diff.txt`. Remaining step-1 blocker: establish an identical
+  guest-visible rendering path on the exact Mac/Windows pair, then repeat full
+  startup/battle/round/match histories and negative controls. A matching CPU-only
+  subset would not satisfy the existing full-state acceptance criteria.
+
 - Windows desktop validation (2026-10-25): the user explicitly approved copying
   their ROM to their Windows PC. Its SHA-256 is
   `e6da7c26127788cd894b88b71cc055ff9dec0d0f4f8e10d9b15b40153af2b52a`;

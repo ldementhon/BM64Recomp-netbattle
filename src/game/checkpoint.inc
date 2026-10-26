@@ -405,6 +405,15 @@ static void on_boundary() {
         if (!pass && std::getenv("BM64_COMPARE_STATE")) {
             fprintf(stderr, "COMPARABLE_V1: frame=%llu ram=%016llx registers=%016llx\n",
                     frame, state_hash.ram, comparable_registers());
+            if (frame == setting("BM64_DUMP_FRAME", 0)) {
+                const char* path = std::getenv("BM64_DUMP_PATH");
+                require(path && *path, "RAM diagnostic requires BM64_DUMP_PATH");
+                std::ofstream dump(path, std::ios::binary);
+                dump.write(reinterpret_cast<const char*>(ram), recomp::mem_size);
+                dump.close();
+                require(bool(dump), "RAM diagnostic write failed");
+                fprintf(stderr, "COMPARABLE_DUMP: frame=%llu bytes=%zu\n", frame, recomp::mem_size);
+            }
         }
         uint64_t hash = state_hash.ram;
         size_t index = frame-at-1;
