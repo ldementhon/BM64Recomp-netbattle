@@ -13,7 +13,7 @@ namespace zelda64 {
     // TODO: Move loading configs to the runtime once we have a way to allow per-project customization.
     void load_config();
     void save_config();
-    std::string serialize_online_input();
+    std::string serialize_online_input(int local_port);
     bool load_online_input(const std::filesystem::path& path);
     
     void reset_input_bindings();

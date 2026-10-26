@@ -1,5 +1,6 @@
 #include <atomic>
 #include <mutex>
+#include <stdexcept>
 
 #include "ultramodern/ultramodern.hpp"
 #include "recomp.h"
@@ -64,6 +65,7 @@ static struct {
     // Per-port controller assignment
     std::array<SDL_JoystickID, recomp::max_ports> port_controller_ids = {-1, -1, -1, -1};
     std::array<SDL_GameController*, recomp::max_ports> port_controllers = {nullptr, nullptr, nullptr, nullptr};
+    std::optional<recomp::OnlineController> online_controller;
 
     std::array<float, 2> rotation_delta{};
     std::array<float, 2> mouse_delta{};
@@ -75,6 +77,73 @@ static struct {
     std::array<float, recomp::max_ports> cur_rumble = {0.0f, 0.0f, 0.0f, 0.0f};
     std::array<std::atomic_bool, recomp::max_ports> rumble_active = {false, false, false, false};
 } InputState;
+
+static recomp::ControllerIdentity controller_identity(SDL_GameController* controller) {
+    auto text = [](const char* value) { return value ? value : ""; };
+    char guid[33];
+    SDL_JoystickGetGUIDString(SDL_JoystickGetGUID(SDL_GameControllerGetJoystick(controller)), guid, sizeof(guid));
+    return {guid, text(SDL_GameControllerGetSerial(controller)), text(SDL_GameControllerPath(controller)),
+            text(SDL_GameControllerName(controller))};
+}
+
+// Caller holds cur_controllers_mutex. Never fall back to a different device.
+static void refresh_online_controller() {
+    if (!InputState.online_controller) return;
+    const auto& selection = *InputState.online_controller;
+    SDL_GameController* selected = nullptr;
+    SDL_JoystickID selected_id = -1;
+    unsigned matches = 0;
+    for (const auto& [id, state] : InputState.controller_states) {
+        if (SDL_GameControllerGetAttached(state.controller) && selection.device.matches(controller_identity(state.controller))) {
+            selected = state.controller; selected_id = id; ++matches;
+        }
+    }
+    if (matches != 1 || port_modes[selection.port] != recomp::ControllerPortMode::Controller) {
+        selected = nullptr; selected_id = -1;
+    }
+    for (int port = 0; port < recomp::max_ports; ++port) {
+        if (port != selection.port && (!selected || InputState.port_controllers[port] != selected)) continue;
+        auto previous = InputState.port_controllers[port];
+        auto next = port == selection.port ? selected : nullptr;
+        if (previous != next) {
+            if (previous) SDL_GameControllerRumble(previous, 0, 0, 0);
+            InputState.cur_rumble[port] = 0;
+            InputState.rumble_active[port] = false;
+        }
+        InputState.port_controllers[port] = next;
+        InputState.port_controller_ids[port] = next ? selected_id : -1;
+    }
+}
+
+recomp::ControllerIdentity recomp::get_port_controller_identity(int port) {
+    std::lock_guard lock{InputState.cur_controllers_mutex};
+    if (port < 0 || port >= max_ports || !InputState.port_controllers[port] ||
+        !SDL_GameControllerGetAttached(InputState.port_controllers[port]))
+        throw std::runtime_error("Connect the selected controller before readying up.");
+    auto identity = controller_identity(InputState.port_controllers[port]);
+    unsigned matches = 0;
+    for (const auto& [id, state] : InputState.controller_states)
+        if (SDL_GameControllerGetAttached(state.controller) && identity.matches(controller_identity(state.controller))) ++matches;
+    if (matches != 1)
+        throw std::runtime_error("Cannot distinguish these identical controllers. Disconnect the unused identical controller before readying up.");
+    return identity;
+}
+
+void recomp::set_online_controller(std::optional<OnlineController> selection) {
+    if (selection && (selection->port < 0 || selection->port >= max_ports))
+        throw std::invalid_argument("Invalid online controller port");
+    std::lock_guard lock{InputState.cur_controllers_mutex};
+    InputState.online_controller = std::move(selection);
+    refresh_online_controller();
+}
+
+bool recomp::online_input_ready(int port) {
+    std::lock_guard lock{InputState.cur_controllers_mutex};
+    if (port < 0 || port >= max_ports || (InputState.online_controller && InputState.online_controller->port != port)) return false;
+    if (port_modes[port] == ControllerPortMode::Keyboard) return true;
+    return port_modes[port] == ControllerPortMode::Controller && InputState.online_controller &&
+           InputState.port_controllers[port] && SDL_GameControllerGetAttached(InputState.port_controllers[port]);
+}
 
 static struct {
     std::list<std::filesystem::path> files_dropped;
@@ -184,7 +253,8 @@ bool sdl_event_filter(void* userdata, SDL_Event* event) {
                 // Assign to first port with mode=Controller and no assignment
                 {
                     for (int p = 0; p < recomp::max_ports; p++) {
-                        if (port_modes[p].load() == recomp::ControllerPortMode::Controller && InputState.port_controllers[p] == nullptr) {
+                        if (port_modes[p].load() == recomp::ControllerPortMode::Controller && InputState.port_controllers[p] == nullptr &&
+                            (!InputState.online_controller || InputState.online_controller->port != p)) {
                             InputState.port_controller_ids[p] = instance_id;
                             InputState.port_controllers[p] = controller;
                             printf("  Assigned to port %d\n", p);
@@ -192,6 +262,7 @@ bool sdl_event_filter(void* userdata, SDL_Event* event) {
                         }
                     }
                 }
+                refresh_online_controller();
             }
         }
         break;
@@ -215,6 +286,7 @@ bool sdl_event_filter(void* userdata, SDL_Event* event) {
                 SDL_GameControllerClose(controller);
                 InputState.controller_states.erase(it);
             }
+            refresh_online_controller();
         }
         break;
     case SDL_EventType::SDL_QUIT: {
@@ -691,6 +763,7 @@ void recomp::set_port_mode(int port, ControllerPortMode mode) {
             }
         }
     }
+    refresh_online_controller();
 }
 
 bool recomp::port_controller_connected(int port) {
@@ -728,6 +801,7 @@ int recomp::get_port_controller_index(int port) {
 void recomp::assign_controller_to_port(int port, int controller_index) {
     std::lock_guard lock{InputState.cur_controllers_mutex};
     if (port < 0 || port >= recomp::max_ports || get_port_mode(port) != ControllerPortMode::Controller) return;
+    if (InputState.online_controller && InputState.online_controller->port == port) return;
     auto controllers = get_all_controllers_snapshot();
     if (auto previous = InputState.port_controllers[port]) SDL_GameControllerRumble(previous, 0, 0, 0);
     InputState.cur_rumble[port] = 0;
@@ -749,6 +823,7 @@ void recomp::assign_controller_to_port(int port, int controller_index) {
     }
     InputState.port_controllers[port] = controllers[controller_index].second;
     InputState.port_controller_ids[port] = new_id;
+    refresh_online_controller();
 }
 
 static float smoothstep(float from, float to, float amount) {

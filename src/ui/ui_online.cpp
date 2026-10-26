@@ -53,7 +53,7 @@ struct OnlineMenu {
                             throw std::runtime_error("Enable this local port in Setup controls before readying up.");
                         if (recomp::get_port_mode(port) == recomp::ControllerPortMode::Controller && !recomp::port_controller_connected(port))
                             throw std::runtime_error("Connect a controller for this local port before readying up.");
-                        command.input = {unsigned(port), zelda64::serialize_online_input()};
+                        command.input = {unsigned(port), zelda64::serialize_online_input(port)};
                     }
                 } else if (action == "start") command.action = Worker::Action::Start;
                 else if (action == "cancel") command.action = Worker::Action::Cancel;

@@ -36,3 +36,5 @@ with tempfile.TemporaryDirectory(prefix="bm64-controller-tests-") as temp:
                        + [str(root / s) for s in sources] + sdl_flags + ["-o", executable],
                        cwd=entry["directory"], check=True)
         subprocess.run([executable, temp], check=True)
+        if name == "ports":
+            subprocess.run([executable, temp, "recreate"], check=True)

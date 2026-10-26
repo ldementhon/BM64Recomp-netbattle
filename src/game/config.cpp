@@ -458,9 +458,17 @@ bool save_controls_config(const std::filesystem::path& path) {
     return save_json_with_backups(path, controls_config());
 }
 
-std::string zelda64::serialize_online_input() {
-    return nlohmann::json{{"controls", controls_config()},
-                          {"joystick_deadzone", recomp::get_joystick_deadzone()}}.dump();
+std::string zelda64::serialize_online_input(int local_port) {
+    if (local_port < 0 || local_port >= recomp::max_ports || recomp::get_port_mode(local_port) == recomp::ControllerPortMode::Off)
+        throw std::runtime_error("Enable the selected local port before readying up.");
+    nlohmann::json settings{{"controls", controls_config()},
+                            {"joystick_deadzone", recomp::get_joystick_deadzone()}};
+    if (recomp::get_port_mode(local_port) == recomp::ControllerPortMode::Controller) {
+        auto device = recomp::get_port_controller_identity(local_port);
+        settings["controller"] = {{"port", local_port}, {"guid", device.guid}, {"serial", device.serial},
+                                   {"path", device.path}, {"name", device.name}};
+    }
+    return settings.dump();
 }
 
 bool load_input_device_from_json(const nlohmann::json& config_json, recomp::InputDevice device, const std::string& key, int port,
@@ -618,13 +626,32 @@ bool zelda64::load_online_input(const std::filesystem::path& path) {
     nlohmann::json config_json{};
     if (!read_json(std::ifstream(path), config_json)) return false;
     try {
-        if (!config_json.is_object() || config_json.size() != 2 ||
+        if (!config_json.is_object() || config_json.size() != (config_json.contains("controller") ? 3 : 2) ||
             !config_json.at("controls").is_object() ||
             !config_json.at("joystick_deadzone").is_number_integer()) return false;
         const auto& deadzone_value = config_json.at("joystick_deadzone");
         if (deadzone_value < 0 || deadzone_value > 100) return false;
         auto deadzone = deadzone_value.get<int>();
+        std::optional<recomp::OnlineController> selection;
+        if (config_json.contains("controller")) {
+            const auto& controller = config_json.at("controller");
+            if (!controller.is_object() || controller.size() != 5 || !controller.at("port").is_number_integer() ||
+                controller.at("port") < 0 || controller.at("port") >= recomp::max_ports) return false;
+            for (const char* key : {"guid", "serial", "path", "name"}) {
+                if (!controller.at(key).is_string()) return false;
+                const auto& text = controller.at(key).get_ref<const std::string&>();
+                if (text.size() > 4096 || text.find('\0') != std::string::npos) return false;
+            }
+            auto guid = controller.at("guid").get<std::string>();
+            if (guid.size() != 32 || guid.find_first_not_of("0123456789abcdef") != std::string::npos) return false;
+            selection = recomp::OnlineController{controller.at("port").get<int>(),
+                {guid, controller.at("serial").get<std::string>(), controller.at("path").get<std::string>(),
+                 controller.at("name").get<std::string>()}};
+        }
+        recomp::set_online_controller(std::nullopt);
         if (!set_controls_from_json(config_json.at("controls"))) return false;
+        if (selection && recomp::get_port_mode(selection->port) != recomp::ControllerPortMode::Controller) return false;
+        recomp::set_online_controller(std::move(selection));
         recomp::set_joystick_deadzone(deadzone);
         return true;
     } catch (const nlohmann::json::exception&) { return false; }

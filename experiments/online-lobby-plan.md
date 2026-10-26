@@ -3,11 +3,46 @@
 Status: macOS Online Battle screen is wired and locally exercised, 2026-10-25.
 Four-process scripted rollback matches pass; the full Windows x64 client builds.
 Windows real-game validation, cross-platform
-determinism, physical-device identity, audio/rumble, and human playtests remain
+determinism, physical-controller validation, audio/rumble, and human playtests remain
 open. No server has been rented or deployed.
 
 ## Implementation record
 
+- Controller handoff (2026-10-25): Ready captures the selected local port's SDL
+  GUID, serial/path when available, and model name in the private match input
+  preferences. A fresh child resolves that identity rather than copying a
+  process-local controller number. It requires exactly one match, never falls
+  back from a supplied serial/path to a different device, and keeps the selected
+  assignment locked against automatic discovery or another port stealing it.
+  Disconnects produce neutral local input; missing or ambiguous selection rejects
+  live network Ready or aborts on the next real input sample. Keyboard ports do
+  not require a controller. Offline assignment behavior and persistent personal
+  config remain unchanged. Device identity stays local to the owner/child.
+  Some SDL backends expose neither serial nor path: a unique GUID/model is then
+  the fallback, and indistinguishable duplicates are rejected before readying up.
+  This cannot establish physical identity across replacement by an indistinguishable
+  device; actual USB/Bluetooth and Windows XInput handoff still need manual checks.
+  Mac and Windows both pass 44 calibration checks, 104 routing/config checks, and
+  a second-process test that loads preferences before SDL device discovery,
+  enumerates devices in reverse order, and verifies the manually selected pad
+  and its custom binding. Coverage includes changed instance IDs, duplicates,
+  disconnect/reconnect, immutable assignment, unrelated-port isolation, malformed
+  identity fields, keyboard readiness, and refusal of uncaptured controller input.
+  `tests/run_controller_tests.ps1` uses the configured Windows build's headers
+  and SDL library. Unused Windows shell dependencies fail immediately if called;
+  the exercised SDL, routing, calibration, and config code are real. The tests
+  now locate their virtual devices by instance ID, accommodating the Windows
+  host's two preceding non-gamepad joystick devices.
+  Both full clients build. Mac SHA-256:
+  `0501cac61ad48851cfb460e1ce9bd3c904bac59276af0dfda925b6b3b9434149`;
+  Windows SHA-256:
+  `0effb9e42f059903f86535e364a3c0b8124d8263d9217c6f528f7e6a070b9dec`.
+  Mac real-game loading cancellation and two complete matches with matching Ready
+  digests pass, as do 7,047 input-timing checks at each of O0/O2. Fingerprint and
+  settings-isolation regressions pass on both rebuilt images. Logs under
+  `build/experiments/`: `controller-identity-{tests,mac-build,mac-session}.log`,
+  `windows-controller-{build,tests,fingerprint}.log`. Windows real gameplay and
+  cross-build state comparison still await the ROM-transfer approval recorded below.
 - Cross-build comparison preparation (2026-10-25): the checkpoint runner now
   selects the native Windows executable by default and accepts `BM64_EXECUTABLE`
   and `BM64_ROM` for explicit local paths. It records the copied ROM's SHA-256

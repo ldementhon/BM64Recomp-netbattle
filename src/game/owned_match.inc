@@ -97,7 +97,10 @@ struct OwnedMatch {
             if (now >= due && history->needs_sample()) {
                 uint16_t buttons = 0; float x = 0, y = 0;
                 if (std::getenv("BM64_INPUT_SCRIPT")) recorded_input(int(slot), frame, &buttons, &x, &y);
-                else { recomp::poll_inputs(); recomp::get_n64_input(int(local_port), &buttons, &x, &y); }
+                else {
+                    require(recomp::online_input_ready(int(local_port)), "selected controller is unavailable or ambiguous; return to the lobby and reconnect");
+                    recomp::poll_inputs(); recomp::get_n64_input(int(local_port), &buttons, &x, &y);
+                }
                 history->sample(online::quantize_pad(buttons, x, y)); upload(true);
             } else upload();
             const auto stop = setting("BM64_NETWORK_STOP", 0);
@@ -130,6 +133,8 @@ static bool owned_match_boundary() {
     try {
         static OwnedMatch owner(value);
         if (!owner.started && player_select_ready && overlay == 13) {
+            if (owner.network && !std::getenv("BM64_INPUT_SCRIPT"))
+                require(recomp::online_input_ready(int(owner.local_port)), "selected controller is unavailable or ambiguous; return to the lobby and reconnect");
             finish_presentation(); owner.origin = frame;
             if (owner.network) {
                 owner.history.emplace(owner.match, online::human_players, owner.slot);

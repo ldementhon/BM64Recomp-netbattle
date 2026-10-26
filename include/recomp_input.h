@@ -8,11 +8,13 @@
 #include <span>
 #include <string>
 #include <string_view>
+#include <optional>
 
 #include "ultramodern/input.hpp"
 
 #include "json/json.hpp"
 #include "recomp_stick.h"
+#include "recomp_controller_identity.h"
 
 namespace recomp {
     // x-macros to build input enums and arrays.
@@ -107,6 +109,9 @@ namespace recomp {
 
     ControllerPortMode get_port_mode(int port);
     void set_port_mode(int port, ControllerPortMode mode);
+    ControllerIdentity get_port_controller_identity(int port);
+    void set_online_controller(std::optional<OnlineController> selection);
+    bool online_input_ready(int port);
     int get_port_count();
     // Per-player movement stick sensitivity, from 100 to 200 percent.
     int get_stick_sensitivity(int port);
