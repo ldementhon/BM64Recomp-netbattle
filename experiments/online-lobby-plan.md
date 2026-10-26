@@ -8,6 +8,53 @@ open. No server has been rented or deployed.
 
 ## Implementation record
 
+- Raster-output attribution (2026-10-25): on the ordered-arithmetic diagnostic
+  images, a full 512 MiB dump at boundary 1601 differs in only 50 bytes, all in
+  framebuffer storage (12 pages). This short fixture has just completed its
+  scripted boot handoff; it does **not** establish active-battle coverage.
+  Explicit perspective division and precise arithmetic in the final vertex shader
+  leave both platforms' RAM hashes unchanged. A disposable texture readback then
+  shows that the initial clear texture agrees byte for byte, while the rendered
+  320×240 RGBA16-UNORM color target differs in 1,987 components across 1,303 pixels
+  (maximum difference 116/65,535). The next rendered target has the same differences.
+  Thus color divergence already exists before native framebuffer conversion;
+  changing writeback rounding alone is insufficient. This does not yet distinguish
+  pixel-shader arithmetic, texture sampling, interpolation, and blending.
+  Mac readback image `f7294bf2e0969217e6a843b8c620c0184c29d6e6911fc0e186898fd5f403347f`;
+  Windows color-only readback image
+  `c3ce0f7763685cc4b0702434da0be1f34965d6598c3d320e71bf9e0db7e9ece6`.
+  Both pass the four-boundary, three-restore full-state check with the same RAM
+  hashes as their pre-readback arithmetic candidates.
+
+  The first probe attempt crashed in unsupported texture-to-buffer wrapper paths.
+  Temporary wrapper fixes allow Mac color/depth and Windows color capture; Windows
+  depth capture still fails, including with a device-queried copy footprint.
+  These failures are diagnostic failures, not accepted replay results or evidence
+  of a game regression. No Windows raw depth comparison was obtained.
+  Evidence: `build/experiments/color-target-comparison.json`,
+  `ordered-light-memory-differences.txt`, `color-target-windows.txt`,
+  `target-readback-mac-*`, and `experiments/results/target-readback-mac.txt`.
+  All arithmetic/readback/wrapper changes were removed from production sources
+  using checked hashes and saved baselines; concurrent edits were preserved.
+  Reproducible disposable source is saved as
+  `build/experiments/ordered-native-arithmetic-and-readback.patch`, with the division
+  regression and original files retained beside it. The normal build recipe and
+  full-state acceptance checks are unchanged. Next isolate the raster inputs and
+  interpolation/pixel operations before choosing a deterministic native-rendering
+  implementation; do not promote the insufficient RSP-only candidate.
+  Restored normal images pass the four-boundary, three-restore replay control:
+  Mac `e5e1efaa4549b074c31a325e01373d264152f23f58c5e75070748d2846d86a3f`;
+  Windows `191c39c1f3eb5026fa76bb353bfe1e0dd439f0d16281bf1e0e23e1bacb3a7732`.
+  All nine cleanup entries match saved baseline hashes (including deletion of the
+  two experimental-only files); Windows manifest checks agree, with zero running
+  games and zero private test tasks. The saved diagnostic patch passes
+  `git apply --check` against this restored checkout. Logs:
+  `experiments/results/restored-arithmetic-mac.txt`,
+  `build/experiments/restored-arithmetic-windows.txt`, and
+  `restored-arithmetic-windows-cleanup.log`. The broader previously passed suites
+  were not rerun for this source-identical restoration; no cross-build certificate
+  is claimed for these rebuilt images.
+
 - GPU arithmetic isolation (2026-10-25): explicit ordered matrix arithmetic,
   DXC `-Od`, and strict Metal math produce identical pre-division clip positions
   on the two GPUs. Hardware division still leaves 222 differing screen-position
@@ -29,7 +76,7 @@ open. No server has been rented or deployed.
   framebuffer or cross-platform determinism. Positional lights, texture generation,
   and other scenes also remain uncertified. Next isolate rasterization/writeback;
   retain the full-RAM checks and exact-build admission gate. These shader changes
-  and extra buffer readbacks remain experimental, not accepted production fixes.
+  and extra buffer readbacks were experimental and have been removed from production.
   Evidence: `build/experiments/{clip-trace,integer-divide,color-divide,ordered-light}-*`,
   `windows-float-divide-tests.log`, and matching Mac logs in `experiments/results/`.
 
