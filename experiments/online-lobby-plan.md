@@ -24,7 +24,22 @@ open. No server has been rented or deployed.
   (SHA-256 `3f0f371c2188f0079c40ca2d0afedcea633745328725e5c52097db00315421d2`).
   This first image exposed a real integration issue: Windows ignored
   `APP_FOLDER_PATH`, so fixture-child isolation did not prove game isolation.
-  The fix and full-executable regression are being verified before real launches.
+  Windows now reads that override through the Unicode OS API before portable-mode
+  detection; Mac/Linux also honor explicit isolation before portable markers.
+  Full-executable tests on both platforms verify Unicode isolated paths, normal
+  portable fallback, independent SHA-256, and missing-ROM refusal. Windows uses
+  synthetic fingerprint input, so this check does not require a ROM. The Windows
+  test explicitly captures output and waits for the GUI-subsystem executable.
+  Mac controller checks pass (44 calibration, 79 routing/config), and the isolation
+  image passes loading cancellation plus two complete frame-5401 matches with
+  equal startup digests and folder cleanup (SHA-256
+  `ad25fdafb27c546a36302cc3d8c72fddd5366c48ca49b905383172ec6a217ea8`).
+  Final isolation builds: Windows
+  `64214eb9f3fc6de41a50e09f7293f595aaf571ea85a5de1c6e8921e11158bc91`, Mac
+  `e7058e918a9c5248a0c9145a9d139482a1e7c5e574a25b88f4782653312af2d6`.
+  Both full-executable fingerprint/isolation regressions pass on these images.
+  The Windows source manifest was updated only after checking the old and new
+  hashes for the reviewed delta, then completely reverified before rebuilding.
   Source bundle and logs remain ignored under `build/experiments/`;
   `windows-game-build.log` and `windows-memory-checks.log` record the build/checks.
   Real Windows gameplay is pending an authorized ROM on the remote PC. Automatic

@@ -22,16 +22,24 @@ game_hash = hashlib.sha256(GAME.read_bytes()).digest()
 rom_hash = hashlib.sha256(ROM.read_bytes()).digest()
 expected = hashlib.sha256(profile + game_hash + rom_hash).hexdigest()
 with tempfile.TemporaryDirectory(prefix="bm64-fingerprint-") as temp:
+    isolated = Path(temp) / "isolated-\u6e2c\u8a66"
+    isolated.mkdir()
+    (Path(temp) / "portable.txt").touch()
     environment = {key: value for key, value in os.environ.items() if not key.startswith("BM64_")}
-    environment["APP_FOLDER_PATH"] = temp
-    stored = Path(temp) / "bm64_us.z64"
+    environment["APP_FOLDER_PATH"] = str(isolated)
+    stored = isolated / "bm64_us.z64"
     shutil.copyfile(ROM, stored)
     result = subprocess.run([str(GAME), "--online-fingerprint"], env=environment,
-                            capture_output=True, text=True, timeout=15, check=True)
+                            cwd=temp, capture_output=True, text=True, timeout=15, check=True)
     assert result.stdout.strip() == expected, (result.stdout, expected)
     stored.unlink()
     missing = subprocess.run([str(GAME), "--online-fingerprint"], env=environment,
-                             capture_output=True, text=True, timeout=15)
+                             cwd=temp, capture_output=True, text=True, timeout=15)
     assert missing.returncode != 0 and not missing.stdout.strip()
+    del environment["APP_FOLDER_PATH"]
+    shutil.copyfile(ROM, Path(temp) / "bm64_us.z64")
+    portable = subprocess.run([str(GAME), "--online-fingerprint"], env=environment,
+                              cwd=temp, capture_output=True, text=True, timeout=15, check=True)
+    assert portable.stdout.strip() == expected, (portable.stdout, expected)
 assert hashlib.sha256(GAME.read_bytes()).digest() == game_hash, "executable changed during test"
 print(f"PASS: native fingerprint matches independent SHA-256; missing ROM refused; build={game_hash.hex()}")

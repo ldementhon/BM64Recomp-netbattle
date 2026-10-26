@@ -9,6 +9,7 @@
 #include <filesystem>
 #include <fstream>
 #include <iomanip>
+#include <stdexcept>
 
 #if defined(_WIN32)
 #include <Shlobj.h>
@@ -135,6 +136,24 @@ namespace recomp {
 }
 
 std::filesystem::path zelda64::get_app_folder_path() {
+   // A match's explicit isolation must also override portable installations.
+#if defined(_WIN32)
+   const DWORD capacity = GetEnvironmentVariableW(L"APP_FOLDER_PATH", nullptr, 0);
+   if (capacity != 0) {
+       std::wstring folder(capacity, L'\0');
+       const DWORD length = GetEnvironmentVariableW(L"APP_FOLDER_PATH", folder.data(), capacity);
+       if (length == 0 || length >= capacity) {
+           throw std::runtime_error("Cannot read isolated APP_FOLDER_PATH");
+       }
+       folder.resize(length);
+       return std::filesystem::path{folder};
+   }
+#elif defined(__linux__) || defined(__APPLE__)
+   if (const char* folder = getenv("APP_FOLDER_PATH")) {
+       return std::filesystem::path{folder};
+   }
+#endif
+
    // directly check for portable.txt (windows and native linux binary)
    if (std::filesystem::exists("portable.txt")) {
        return std::filesystem::current_path();
@@ -160,11 +179,6 @@ std::filesystem::path zelda64::get_app_folder_path() {
 
    CoTaskMemFree(known_path);
 #elif defined(__linux__) || defined(__APPLE__)
-   // check for APP_FOLDER_PATH env var
-   if (getenv("APP_FOLDER_PATH") != nullptr) {
-       return std::filesystem::path{getenv("APP_FOLDER_PATH")};
-   }
-
 #if defined(__APPLE__)
    const auto supportdir = zelda64::get_application_support_directory();
    if (supportdir) {
