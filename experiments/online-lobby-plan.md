@@ -9,6 +9,48 @@ open. No server has been rented or deployed.
 
 ## Implementation record
 
+- GPU replay attribution (2026-10-25): the Windows failure persists with GPU
+  readback instrumentation. Position/UV/color output buffers match in all 42
+  compared replay captures, yet depth diverges at update 1385 (native list 10).
+  Extending the trace to indices, raw vertices/colors, and RDP/render parameters
+  fails at update 1542 (native list 167): all ten captured buffers match at that
+  update, as do all 21,429 raster draw records through it. The sampled geometry
+  contains no non-finite values or out-of-range vertex indices. Earlier
+  `renderIndices` differences include unused rectangle face-index fields; these
+  are not differences at the failing update. Images:
+  `11b51652a6f757229301359e40bf30e5dac83ff4089e4db5f3ff0405e4e68c22`
+  and `df45705599810565ef2cfaf040a243976437812a7418e23a44330ff57603383b`.
+
+  A further trace includes actual GPU frame constants and texture-tile records.
+  The frame constants match throughout the replay, including failure at update
+  1557 (native list 182). At that update the only differing captured buffer is
+  `gpuTiles`: eleven texture slot indices have changed, while other tile fields
+  match. Slot reuse can be valid; texture contents and descriptor mapping have
+  not yet been proved equal. This trace's image is
+  `dcc440673bffe25568a745e925a738442c148c63175f4067d5c2273b42961c94`.
+  Evidence: `replay-gpu-comparison.json`, `replay-upload-comparison.json`,
+  `replay-frame-fixed-comparison.json`, and their corresponding Windows logs in
+  `build/experiments/`. Readback files are private, ignored build artifacts.
+
+  Reloading native color/depth targets from guest RAM before each display list
+  still fails (update 1480). Disabling alpha/coverage rejection alone leaves a
+  depth-only failure at 1427; disabling decal depth rejection alone still fails
+  at 1382. None is a fix or accepted gameplay change. The GPU trace initially
+  needed a buffer-pointer type correction and then a guard for unallocated
+  setup buffers; the compile failure/crash runs are excluded from comparisons.
+  All six experimental source files were restored by checked hashes. The full
+  disposable source is saved as `build/experiments/gpu-replay-attribution.patch`
+  and applies cleanly to the restored checkout. Next isolate the first differing
+  depth-writing draw and its texture/resource state; do not drop framebuffer
+  bytes from acceptance checks or treat matching geometry as playable rollback.
+  Restored Windows image
+  `a87f2be3b2418211b5fbfbf7efe84c7c91992ac71de5f4742f5e8872c5e9b37b`
+  passes the four-boundary, three-restore control. All 20 source entries and
+  manifest hashes agree on Windows; no private game/test task remains. The Mac
+  image is unchanged (`4465bed2d32ded468a0b747c9eed07f1417d1a7ae719af76fb00000a091ae990`).
+  Logs: `restored-gpu-replay-windows.txt` and `restored-gpu-cleanup.log` under
+  `build/experiments/`. This short control does not clear the startup blocker.
+
 - Normal-renderer follow-up (2026-10-25): after removing the interpolation probe,
   Mac image `09aa342cab7de2b4616af2002e7d92e7ee38c434f12c95676e7d383273210760`
   passes the short replay control and the full two-process startup suite with its
