@@ -19,6 +19,7 @@ name = os.environ.get('BM64_RESULT_PREFIX', '') + os.environ.get('BM64_RESULT_NA
 if not name.replace('-', '').replace('_', '').isalnum():
     raise SystemExit('Invalid result name')
 log_path = root / f'experiments/results/{name}.txt'
+stdout_path = root / f'experiments/results/{name}-stdout.txt'
 log_path.parent.mkdir(parents=True, exist_ok=True)
 capture = bool(int(os.environ.get('BM64_HOLD_FRAME', '0')))
 helper = scratch / 'capture-game-window'
@@ -35,10 +36,11 @@ with tempfile.TemporaryDirectory(prefix='checkpoint-', dir=scratch) as temporary
     environment = dict(os.environ, APP_FOLDER_PATH=settings)
     if environment.get('BM64_INPUT_EXTRA'):
         combined = Path(temporary) / 'combined-inputs.txt'
-        combined.write_text(Path(environment['BM64_INPUT_SCRIPT']).read_text() + '\n' +
+        with combined.open('w', newline='\n') as recording:
+            recording.write(Path(environment['BM64_INPUT_SCRIPT']).read_text() + '\n' +
                             Path(environment['BM64_INPUT_EXTRA']).read_text())
         environment['BM64_INPUT_SCRIPT'] = str(combined)
-    with log_path.open('w') as log:
+    with log_path.open('w', newline='\n') as log, stdout_path.open('wb') as stdout:
         default_game = root / ('build/BM64Recompiled.exe' if sys.platform == 'win32' else
                                'build/BM64Recompiled.app/Contents/MacOS/BM64Recompiled')
         arguments = [os.environ.get('BM64_EXECUTABLE', str(default_game)), '--checkpoint-test']
@@ -53,13 +55,15 @@ with tempfile.TemporaryDirectory(prefix='checkpoint-', dir=scratch) as temporary
         input_sha = hashlib.sha256(Path(input_path).read_bytes()).hexdigest() if input_path else 'none'
         log.write(f"PROBE_IMAGE: sha256={image_sha} input_sha256={input_sha} palette_batching={int('BM64_COALESCE_PALETTE' in environment)}\n")
         log.write(f'PROBE_ROM: sha256={rom_sha}\n')
+        log.write(f'PROBE_STDOUT: path={stdout_path.name}\n')
         log.flush()
         process = subprocess.Popen(arguments,
-            cwd=root, env=environment, stdout=subprocess.PIPE, stderr=subprocess.STDOUT, text=True)
+            cwd=root, env=environment, stdout=stdout, stderr=subprocess.PIPE, text=True)
         timer = threading.Timer(int(os.environ.get('BM64_RUN_TIMEOUT', '180')), process.kill)
         timer.start()
         try:
-            for line in process.stdout:
+            # Buffered stdout can otherwise split a diagnostic line written to stderr.
+            for line in process.stderr:
                 log.write(line)
                 log.flush()
                 if capture and 'holding frame' in line:

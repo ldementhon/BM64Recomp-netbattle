@@ -180,6 +180,8 @@ int main(int argc, char** argv) {
         assert(!session.poll());
         assert(session.playing(match) && !session.playing(match));
         auto result = wait_exit(session);
+        if (real_game) std::cerr << "REAL_GAME_EXIT: match=" << result.match << " status=" << result.status
+            << " frame=" << result.completed_frame.value_or(0) << " error=" << result.error << '\n';
         assert(result.match == match && !result.loading_timeout);
         assert(result.error.empty() && result.completed_frame == (real_game ? 5401 : 2000));
         assert(!fs::exists(settings));

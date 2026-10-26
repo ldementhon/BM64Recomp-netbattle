@@ -2,11 +2,42 @@
 
 Status: macOS Online Battle screen is wired and locally exercised, 2026-10-25.
 Four-process scripted rollback matches pass; the full Windows x64 client builds.
-Windows real-game validation, cross-platform
+Windows real-game lifecycle validation passes. Cross-platform
 determinism, physical-controller validation, audio/rumble, and human playtests remain
 open. No server has been rented or deployed.
 
 ## Implementation record
+
+- Windows desktop validation (2026-10-25): the user explicitly approved copying
+  their ROM to their Windows PC. Its SHA-256 is
+  `e6da7c26127788cd894b88b71cc055ff9dec0d0f4f8e10d9b15b40153af2b52a`;
+  it is stored privately under `online-port/rom/bm64_us.z64`, never in Git.
+  Direct SSH starts the game in Session 0: DirectX swap-chain creation fails
+  with `0x887A0022`, followed by a renderer crash. Launching the unchanged image
+  in the same signed-in user's interactive desktop resolves that environment
+  issue. `experiments/run-windows-desktop.ps1` registers a unique, unelevated,
+  bounded task, captures its result, and removes the task on completion/failure.
+  No renderer or simulation checks were disabled. With Windows image
+  `0effb9e42f059903f86535e364a3c0b8124d8263d9217c6f528f7e6a070b9dec`,
+  the real-game owner test passes loading cancellation and two complete frame-5401
+  matches with equal Ready digests, isolated settings cleanup, and retained owner
+  connection. Log: `build/experiments/windows-real-desktop-session.log`.
+  Its Player Select frame-1374 digest agrees with Mac image
+  `0501cac61ad48851cfb460e1ce9bd3c904bac59276af0dfda925b6b3b9434149`:
+  RAM `e06c391b113220c2`, canonical registers `28b3c2dfb097f44d`.
+  However, independent recorded-history diagnostics expose a real cross-platform
+  mismatch: RAM agrees at frames 1599 and 1600, then differs at 1601 (Mac
+  `51ac468a7cca5a6a`, Windows `586f8a93d8ecbabe`), while canonical registers
+  still agree (`8b48388e2466d8f6`). Cross-platform admission remains closed.
+  Windows completed its 747-frame full-state replay, but one comparison row was
+  split by buffered stdout in the merged log and the strict parser rejected it.
+  The checkpoint runner now separates game stdout from diagnostic stderr and
+  writes combined input fixtures with canonical LF bytes on both platforms.
+  The rejected log was used only to locate the first mismatch, not to certify
+  compatibility. Mac's two fresh histories and changed-input control pass (first
+  changed-input divergence 1951). Logs: `build/experiments/windows-independent-a.txt`
+  and `cross-build-mac-independent.log`. Next: compare the first divergent RAM
+  state, resolve its cause, and rerun complete histories and transition windows.
 
 - Controller handoff (2026-10-25): Ready captures the selected local port's SDL
   GUID, serial/path when available, and model name in the private match input
@@ -42,7 +73,7 @@ open. No server has been rented or deployed.
   settings-isolation regressions pass on both rebuilt images. Logs under
   `build/experiments/`: `controller-identity-{tests,mac-build,mac-session}.log`,
   `windows-controller-{build,tests,fingerprint}.log`. Windows real gameplay and
-  cross-build state comparison still await the ROM-transfer approval recorded below.
+  cross-build state comparison are recorded in the newer Windows desktop entry above.
 - Cross-build comparison preparation (2026-10-25): the checkpoint runner now
   selects the native Windows executable by default and accepts `BM64_EXECUTABLE`
   and `BM64_ROM` for explicit local paths. It records the copied ROM's SHA-256
@@ -99,11 +130,10 @@ open. No server has been rented or deployed.
   `windows-game-build.log`, `windows-memory-checks.log`,
   `windows-isolation-final-build.log`, and `windows-fingerprint-final.log`
   record the build/checks.
-  Real Windows gameplay is pending an authorized ROM on the remote PC. Automatic
-  approval review rejected its transfer because source/testing access did not
-  explicitly authorize proprietary-ROM transfer; the user approval question is
-  pending and no ROM was copied. Cross-platform compatibility remains closed
-  until the exact build pair passes complete guest-state comparisons.
+  The initially blocked ROM transfer was explicitly approved by the user and
+  completed; see the newer Windows desktop evidence above. Cross-platform
+  compatibility remains closed until the exact build pair passes complete
+  guest-state comparisons.
 - Windows process ownership (2026-10-25): the same `GameSession`, `LobbySession`,
   and background worker now run fixture matches on Windows x64. Each launch uses
   `CreateProcessW`, a fresh settings/ROM folder, quoted arguments, a sanitized
