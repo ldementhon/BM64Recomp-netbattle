@@ -84,7 +84,7 @@ struct OwnedMatch {
                 continue;
             }
             if (relative < history->head()) {
-                replay_pass = 1; catchup_active = true;
+                replay_pass = 1; catchup_active = true; audio_output = false;
                 suppress_render = relative + 1 < history->head();
                 save(1 + relative % online::checkpoint_slots, true);
                 network_pads = history->inputs_for(relative);
@@ -115,6 +115,8 @@ struct OwnedMatch {
             }
             if (now >= due && history->can_advance() && (!verify || confirmed) && !(stop && relative >= stop)) {
                 save(1 + relative % online::checkpoint_slots, true);
+                // Play the first simulation of each boundary; corrected replays stay silent.
+                audio_output = true;
                 network_pads = history->inputs_for(relative);
                 return;
             }

@@ -45,6 +45,42 @@ current build.
 
 ## Implementation record
 
+- Online audio (2026-10-26): checkpoint processes previously discarded all guest
+  audio and reported zero remaining AI bytes. That kept replays deterministic, but
+  enabling output naively showed the guest then overproduces: four Mac clients each
+  queued 633,600 frames in 18.1 s of 32 kHz audio (about 9% fast), and 425–433 of
+  990 host queue calls hit the latency limiter. The runtime now models the AI DMA
+  in simulated VI time (`checkpoint::ticks`): each guest buffer extends a virtual
+  end position, and `osAiGetLength` reports the virtual remainder (zero during fast
+  boot). The position is part of every checkpoint. Host output is a separate,
+  non-guest-visible gate: the network loop enables it only when a boundary is
+  simulated for the first time and silences catch-up replays, so corrected frames
+  keep their originally played audio and nothing plays twice. With the model,
+  output is about 533 frames per simulated boundary (32,000/60). A dummy-driver run
+  still trimmed 126 of 990 calls during wall-clock catch-up bursts; listening on a
+  real device remains required.
+
+  On Mac image `7382b2a06fc30184fbeffcf4b72bbbe2e4e5f18874d66c972e7ba14e7d88f1ee`,
+  with SDL's dummy audio driver, the four-client network match passes
+  (corrections 21/27/28/22), as do the startup, round, and match transition suites
+  with their input/stack negative controls. Replay input timing, controller, and
+  checkpoint unit checks also pass. The zero-delay network baseline, which demands
+  zero prediction corrections, failed in all four runs with one or two isolated
+  corrections. It failed the same way in two runs each with host output disabled
+  and with the previous zero-length guest report, so the cause is not this change. That baseline
+  and its delayed/negative comparisons still need a quiet host. A source-identical
+  rebuild produced `7d42ff5d48b331e9a27a8401ca6492004bb9db61204a429138d2301894c83119`:
+  Mac executables are not bit-reproducible, so exact-build admission must use the
+  distributed binaries' hashes. Windows has not yet been rebuilt with this change.
+
+- Online rumble (2026-10-26): already silent by construction. Every lobby-started
+  game child receives `--checkpoint-test` (`src/online/lobby_session.hpp`), and
+  checkpoint processes register no `set_rumble` callback (`src/main/main.cpp`), so
+  guest rumble requests never set host motor state; `update_rumble` only sends zero
+  strength. The guest-visible pak comes from the fixed `checkpoint_device`, so
+  rumble state is identical on every peer. Offline play keeps `recomp::set_rumble`.
+  No code change was needed; a live controller check remains part of step 4.
+
 - Per-draw depth attribution and readback fix (2026-10-25): the first Windows
   depth-readback probe exposed a separate Plume null dereference: texture-to-buffer
   copies passed the absent destination texture to `setSamplePositions`. The

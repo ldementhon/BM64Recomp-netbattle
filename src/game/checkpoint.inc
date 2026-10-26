@@ -44,6 +44,7 @@ std::atomic<bool> fast_boot = false;
 std::atomic<uint64_t> boot_frame = 0;
 std::atomic<bool> suppress_render = false;
 std::atomic<bool> catchup_active = false;
+std::atomic<bool> audio_output = false;
 std::atomic<uint64_t> presentation_wait_ns = 0;
 
 size_t state_slot = 0;

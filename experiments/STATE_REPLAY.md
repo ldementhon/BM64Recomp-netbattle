@@ -147,8 +147,13 @@ The private owner/game channel carries bounded input records in both directions.
 IPC → ENet relay → IPC, bounded native rollback, and verified state comparisons.
 `python3 tests/run_network_game.py match` completes a three-round match, including
 confirmed completion discovered during replay. These explicit tests use scripted
-inputs and muted audio on one Mac; live-player validation remains unfinished.
-Real audio still needs replay-safe output. Online rumble may stay disabled for the
+inputs on one Mac; live-player validation remains unfinished.
+Checkpoint processes report audio-DMA length from a virtual clock in simulated VI
+time, so guest audio state is independent of host playback and is restored with
+each checkpoint. Network matches play each boundary's audio once, when it is first
+simulated; rollback replays are silent. Listening on real devices remains to be
+done. Set `SDL_AUDIODRIVER=dummy` to keep multi-client tests quiet. Online rumble
+is silent: checkpoint processes register no rumble callback. It may stay disabled for the
 first playable version, per the user's 2026-10-25 scope decision; preserve offline
 behavior.
 `--online-test` is an isolated settings diagnostic, not a playable online mode.

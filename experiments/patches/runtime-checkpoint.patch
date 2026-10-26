@@ -175,36 +175,75 @@ index 43032ea..38f8817 100644
                  virtual uint32_t get_display_framerate() const = 0;
                  virtual float get_resolution_scale() const = 0;
 diff --git a/ultramodern/src/audio.cpp b/ultramodern/src/audio.cpp
-index 3198be0..26bfed1 100644
+index 3198be0..4c92fbf 100644
 --- a/ultramodern/src/audio.cpp
 +++ b/ultramodern/src/audio.cpp
-@@ -1,3 +1,4 @@
+@@ -1,8 +1,17 @@
 +#include "ultramodern/checkpoint.hpp"
  #include "ultramodern/ultra64.h"
  #include "ultramodern/ultramodern.hpp"
++#include <algorithm>
  #include <cassert>
-@@ -29,6 +30,7 @@ void ultramodern::queue_audio_buffer(RDRAM_ARG PTR(int16_t) audio_data_, uint32_
+ 
+ static uint32_t sample_rate = 48000;
++// Checkpointed processes model the AI DMA in simulated VI time, so the length the
++// guest reads is identical on every peer and replay regardless of host playback.
++static uint64_t virtual_audio_end = 0;
++
++static uint64_t virtual_audio_now() {
++    return checkpoint::ticks * sample_rate / 60;
++}
+ 
+ static ultramodern::audio_callbacks_t audio_callbacks;
+ 
+@@ -20,6 +29,7 @@ void ultramodern::set_audio_frequency(uint32_t freq) {
+         audio_callbacks.set_frequency(freq);
+     }
+     sample_rate = freq;
++    virtual_audio_end = 0;
+ }
+ 
+ void ultramodern::queue_audio_buffer(RDRAM_ARG PTR(int16_t) audio_data_, uint32_t byte_count) {
+@@ -29,6 +39,11 @@ void ultramodern::queue_audio_buffer(RDRAM_ARG PTR(int16_t) audio_data_, uint32_
      // Calculate the number of samples from the number of bytes.
      uint32_t sample_count = byte_count / sizeof(int16_t);
  
-+    if (checkpoint::enabled || checkpoint::fast_boot) return; // Do not queue speculative or skipped intro audio.
++    if (checkpoint::enabled && !checkpoint::fast_boot) {
++        virtual_audio_end = std::max(virtual_audio_end, virtual_audio_now()) + sample_count / 2;
++    }
++    // Online matches play each boundary once, when first simulated; replays and skipped intro audio stay silent.
++    if (checkpoint::fast_boot || (checkpoint::enabled && !checkpoint::audio_output)) return;
      // Queue the swapped audio data.
      if (sample_count > 0 && audio_callbacks.queue_samples) {
          audio_callbacks.queue_samples(TO_PTR(int16_t, audio_data_), sample_count);
-@@ -44,6 +46,7 @@ float buffer_offset_frames = 0.5f;
+@@ -44,9 +59,14 @@ float buffer_offset_frames = 0.5f;
  // the remaining sample count and reporting a number that's too high here can lead to issues.
  // Reporting a number that's too low can lead to audio lag in some games.
  uint32_t ultramodern::get_remaining_audio_bytes() {
-+    if (checkpoint::enabled || checkpoint::fast_boot) return 0;
++    if (checkpoint::fast_boot) return 0;
      // Get the number of remaining buffered audio bytes.
      uint32_t buffered_byte_count;
-     if (audio_callbacks.get_frames_remaining != nullptr) {
-@@ -65,3 +68,5 @@ uint32_t ultramodern::get_remaining_audio_bytes() {
+-    if (audio_callbacks.get_frames_remaining != nullptr) {
++    if (checkpoint::enabled) {
++        const uint64_t now = virtual_audio_now();
++        buffered_byte_count = static_cast<uint32_t>(std::min<uint64_t>(virtual_audio_end > now ? virtual_audio_end - now : 0, UINT32_MAX / 4) * 2 * sizeof(int16_t));
++    }
++    else if (audio_callbacks.get_frames_remaining != nullptr) {
+         buffered_byte_count = audio_callbacks.get_frames_remaining() * 2 * sizeof(int16_t);
+     }
+     else {
+@@ -65,3 +85,11 @@ uint32_t ultramodern::get_remaining_audio_bytes() {
      }
      return buffered_byte_count;
  }
 +
-+void checkpoint::audio_state(bool restore) { static uint32_t saved_images[checkpoint::snapshot_slots]; auto& saved = saved_images[checkpoint::state_slot];  if (restore) sample_rate = saved; else saved = sample_rate; }
++void checkpoint::audio_state(bool restore) {
++    struct Image { uint32_t sample_rate; uint64_t virtual_audio_end; };
++    static Image saved_images[checkpoint::snapshot_slots];
++    auto& saved = saved_images[checkpoint::state_slot];
++    if (restore) { sample_rate = saved.sample_rate; virtual_audio_end = saved.virtual_audio_end; }
++    else saved = { sample_rate, virtual_audio_end };
++}
 diff --git a/ultramodern/src/events.cpp b/ultramodern/src/events.cpp
 index 518529d..0b6c225 100644
 --- a/ultramodern/src/events.cpp
@@ -645,10 +684,10 @@ index ee26c45..0983d0e 100644
 +}
 diff --git a/ultramodern/include/ultramodern/checkpoint.hpp b/ultramodern/include/ultramodern/checkpoint.hpp
 new file mode 100644
-index 0000000..d8a0bc0
+index 0000000..6203503
 --- /dev/null
 +++ b/ultramodern/include/ultramodern/checkpoint.hpp
-@@ -0,0 +1,41 @@
+@@ -0,0 +1,43 @@
 +#pragma once
 +#include <cstdint>
 +#include <cstddef>
@@ -666,6 +705,8 @@ index 0000000..d8a0bc0
 +extern std::atomic<uint64_t> boot_frame;
 +extern std::atomic<bool> suppress_render;
 +extern std::atomic<bool> catchup_active;
++// Host output only: guest-visible audio state is identical with or without it.
++extern std::atomic<bool> audio_output;
 +extern std::atomic<uint64_t> presentation_wait_ns;
 +struct RenderCounts { uint64_t drawn, skipped, presented, hidden; };
 +RenderCounts render_counts();
