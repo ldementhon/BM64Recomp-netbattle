@@ -1,5 +1,13 @@
 # Fresh-session prompt: finish Mac/Windows online rollback Battle
 
+> **Update 2026-10-26:** the interrupted Windows control has been recovered and
+> Windows is back on normal sources (image `c2341a19…`). The replay failure is
+> localized to GPU ordering between the first 2D rectangle and the first
+> depth-writing 3D draws of each main pass; see the newest implementation-record
+> entries in `online-lobby-plan.md` before repeating any experiment below. Online
+> audio now uses a virtual AI clock with first-simulation output (commit
+> `f8fee66`), and online rumble is silent by construction.
+
 Continue the work in `/Users/louis/Projects/bomberman64/BM64Recomp` toward a
 playable four-player rollback Battle on Apple Silicon Mac and Windows x64.
 Read `AGENTS.md`, `experiments/online-lobby-plan.md` (especially the current
