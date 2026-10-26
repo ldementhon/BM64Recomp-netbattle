@@ -1,12 +1,15 @@
 # Fresh-session prompt: finish Mac/Windows online rollback Battle
 
-> **Update 2026-10-26:** the interrupted Windows control has been recovered and
-> Windows is back on normal sources (image `c2341a19…`). The replay failure is
-> localized to GPU ordering between the first 2D rectangle and the first
-> depth-writing 3D draws of each main pass; see the newest implementation-record
-> entries in `online-lobby-plan.md` before repeating any experiment below. Online
-> audio now uses a virtual AI clock with first-simulation output (commit
-> `f8fee66`), and online rumble is silent by construction.
+> **Update 2026-10-26 (later):** the Windows replay failure is attributed to the
+> PC's RX 9070 XT (RDNA 4), not to replay state. It is a rare one-frame depth
+> glitch that also occurs outside replay. Re-executing an unchanged native command
+> list reproduces it; the same image on the PC's integrated AMD GPU does not. A
+> dummy bottom-of-pipe timestamp after every draw removes it, matching Mesa's
+> documented GFX12 Hi-Z/Hi-S workaround. No mitigation is retained yet. Read the
+> newest implementation-record entry in `online-lobby-plan.md` and use its
+> re-execution metric instead of replay pass/fail. Windows is back on normal
+> sources. Online audio now uses a virtual AI clock with first-simulation output
+> (commit `f8fee66`), and online rumble is silent by construction.
 
 Continue the work in `/Users/louis/Projects/bomberman64/BM64Recomp` toward a
 playable four-player rollback Battle on Apple Silicon Mac and Windows x64.

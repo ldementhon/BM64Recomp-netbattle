@@ -16,16 +16,17 @@ Fresh-session continuation instructions and diagnostic context are in
 below contains historical results; a successful older image does not certify the
 current build.
 
-1. **Close same-machine Windows replay stability.** The interrupted control was
-   recovered on 2026-10-26 (see the implementation record). The failure is now
-   localized: one GPU drain anywhere between the first 2D rectangle and the first
-   depth-writing 3D draws of each main pass hides it, in both the diagnostic and
-   normal renderer configurations. Identify the violated ordering requirement,
-   using D3D12 validation if Graphics Tools or an Agility SDK can be installed, or
-   decide explicitly to retain a gated D3D12 drain. Either way, require repeated
-   fresh startup, battle, round, and match histories with full-state restores,
-   negative controls, and a cost measurement. A short or instrumented pass is
-   insufficient.
+1. **Close same-machine Windows replay stability.** The cause is now attributed
+   to the test PC's RX 9070 XT (RDNA 4): a rare one-frame depth-ordering glitch
+   that also occurs outside replay, absent on the PC's integrated AMD GPU, and
+   removed by a dummy bottom-of-pipe timestamp after each draw, matching Mesa's
+   GFX12 Hi-Z/Hi-S workaround (see the newest implementation-record entry).
+   Decide whether to retain an RDNA 4-gated workaround (timestamp per draw, or a
+   barrier at depth-write changes) in Plume's D3D12 and Vulkan backends, measure
+   its cost, then require repeated fresh startup, battle, round, and match
+   histories with full-state restores and negative controls. A short or
+   instrumented pass is insufficient. Other GPUs need the same re-execution
+   check before they are trusted for online play.
 2. **Close cross-platform determinism.** Reuse the archived ordered-arithmetic
    prototypes as evidence, then isolate any required changes to native rendering.
    Restore real textures/colors and evaluate interpolation, sampling, depth,
@@ -44,6 +45,89 @@ current build.
    further performance changes. No server has been purchased or deployed.
 
 ## Implementation record
+
+- Windows replay root cause (2026-10-26, Graphics Tools installed): the
+  divergence is attributed to the test PC's AMD Radeon RX 9070 XT (RDNA 4,
+  driver 32.0.32015.7029). It is not replay-state corruption. No mitigation is
+  retained yet.
+
+  *Validation.* The D3D12 debug layer reports no errors in a failing no-MSAA run.
+  GPU-based validation runs pass, but the slowdown changes timing. MSAA runs
+  report only sample-position message 1080, which Plume already treats as a false
+  positive. The Vulkan backend fails on the same pages (no-MSAA 3/4 passes, MSAA
+  0/4; image `cc8188b7…`); the PC has no Vulkan SDK for synchronization
+  validation. Also rejected:
+  - depth enabled on every raster pipeline (4/8, same as its control);
+  - all queue submissions serialized with fence waits (5/8, same as its control);
+  - aliasing: no live placed allocations overlap, and the render and depth
+    targets are committed resources.
+
+  *Symptom.* A full-framebuffer diff (image `7e6b6c55…`) shows each failure is a
+  short run of pixels on one scanline. Four of five failures hit x=48–50, y=183;
+  one hit x=208–214, y=60. Two exact states alternate. At y=183, one has a near
+  depth gradient (0x2290, 0x22b0, 0x22cc); the other has a constant, farther
+  0x2364 with different color. The baseline sometimes holds the second state.
+  A per-frame trace (image `15f0ba84…`) shows both sites stable from boundary
+  1375 except single frames. For example, baseline frame 1538 showed 0x6e98 at
+  the second site and recovered at 1539. The failure is therefore a rare
+  one-frame glitch that also occurs without replay; replay only exposes it. The
+  battle camera is static, so the same edges recur. In a drained per-draw trace,
+  only draw 40 (opaque, 1-cycle, z compare/update) writes the y=183 pixels.
+
+  *Re-execution metric.* After the native fence wait, a disposable probe
+  re-executes the unchanged, closed command list N times and compares the
+  RAM-bound framebuffer outputs with the first execution. Inputs are identical
+  and the game thread is blocked. The probe reproduces the glitch at the same
+  sites: 22–56 differing re-executions per run with 16 repeats, versus a few
+  replay failures per run. The nondeterminism is inside GPU execution of one
+  command list, not in uploads, CPU state, or restore. Ablations by ordinal
+  within each main pass (control 22–56):
+
+  | Change | Diffs |
+  | --- | --- |
+  | Drain after call 1 (color clear) | 31 |
+  | Drain after call 2 (first 2D rectangle), two runs | 0, 0 |
+  | Drain after call 33 (last coverage-wrap rectangle) | 0 |
+  | Drain after call 40 / 41 | 45 / 14 |
+  | Drain at each depth-write change (two per pass) | 0 |
+  | Skip calls 2–33, 2–31, 3–31, or 32–33 | 0 each |
+  | Skip call 2 only | 10 |
+  | Skip calls 42+, two runs | 0, 0 |
+  | Skip calls 42–60 / 61+ | 28 at new sites / 6 |
+  | Dummy bottom-of-pipe timestamp after every draw, two runs | 0, 0 |
+
+  The glitch needs this sequence: the depth-disabled 2D rectangles; then the
+  translucent coverage-wrap rectangles (depth test, no write); then depth-writing
+  3D draws; then later depth-tested draws. A later, farther fragment
+  occasionally beats an earlier nearer one under `LESS`, so its depth test sees
+  stale depth. Removing the later writer of one site moves the glitch to other
+  near/far overlaps, so this is a general depth-ordering failure, not one bad
+  draw.
+
+  *Hardware.* The same image (`ea35aa6b…`) on the PC's integrated
+  `AMD Radeon(TM) Graphics` (driver 32.0.21045.16010) gave 0 differing
+  re-executions in two full runs and passed every replay. On the RX 9070 XT it
+  gave 21. A timestamp query after each draw inserts no barrier or wait, yet
+  removes the glitch (image `fdf3b08f…`; its control gave 56, and 17 without
+  MSAA). That is the workaround Mesa RADV applies for buggy GFX12 Hi-Z/Hi-S
+  ([MR 34381](https://gitlab.freedesktop.org/mesa/mesa/-/merge_requests/34381)).
+  Mesa documents hangs; this wrong-depth symptom is inferred to be the same
+  hardware defect, which AMD's Windows D3D12/Vulkan driver does not fully avoid
+  for this draw pattern. The case is strong but indirect: Hi-Z cannot be disabled
+  from D3D12 to confirm it.
+
+  *Next.* Decide on an RDNA 4-gated workaround in Plume's D3D12 and Vulkan
+  backends. Options are a timestamp per draw, which does not wait, or a barrier at
+  depth-write changes. Measure its cost, then run the full replay matrix. Other
+  GPUs need the same re-execution check before they are trusted. Disposable
+  instrumentation, including the re-execution probe, ablation and adapter
+  switches, and the timestamp mode, is archived locally as
+  `build/experiments/rdna4-hiz-attribution.patch` against the normal sources.
+  Logs: `windows-{pixel-diff-apply,pixel-state,reexec2,rx-ablate,rx-bisect,rx-bisect2,adapter,timestamp,hiz-restore}-run.log`,
+  `pixdiff-*.txt`, `pixstate-*.txt`, and `rx-*.txt`. Windows was restored to the
+  normal sources by checked hashes (six files). Normal image `cfc3adf6…` passes
+  the four-boundary, three-restore control; all 16,912 manifest entries match, and
+  no game process or private task remains. It still lacks the audio change.
 
 - Online audio (2026-10-26): checkpoint processes previously discarded all guest
   audio and reported zero remaining AI bytes. That kept replays deterministic, but

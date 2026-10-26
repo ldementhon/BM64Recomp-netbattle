@@ -84,9 +84,13 @@ before processing the next native display list. This conservative ordering keeps
 concurrent presentation work out of guest-visible rendering; normal offline play
 retains its existing asynchronous behavior. Earlier Windows startup, battle, round,
 and match replay runs passed with this boundary, but later startup restores still
-fail intermittently. The responsible resource or ordering problem remains unknown;
-the added wait's latency cost also needs measurement. Neither Windows replay
-stability nor cross-platform shader/rasterization equivalence is established.
+fail intermittently. Those failures are attributed to the test PC's RX 9070 XT
+(RDNA 4): a rare one-frame depth glitch that also occurs outside replay, absent on
+its integrated AMD GPU, and removed by a bottom-of-pipe timestamp after each draw.
+That is Mesa's GFX12 Hi-Z workaround (see `online-lobby-plan.md`). No workaround is
+retained yet. The added wait's latency cost also needs measurement. Neither
+Windows replay stability nor cross-platform shader/rasterization equivalence is
+established.
 
 The delayed-input fixture treats player 1 as local and players 2–4 as remote,
 holding each remote pad's last input during a simulated delivery gap, then
