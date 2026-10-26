@@ -1,4 +1,5 @@
 #include "recomp_ui.h"
+#include "ui_online.hpp"
 #include "zelda_config.h"
 #include "zelda_support.h"
 #include "librecomp/game.hpp"
@@ -112,6 +113,7 @@ public:
     }
     void make_bindings(Rml::Context* context) override {
         Rml::DataModelConstructor constructor = context->CreateDataModel("launcher_model");
+        recompui::bind_online_menu(constructor);
 
         constructor.Bind("mm_rom_valid", &mm_rom_valid);
 

@@ -5,6 +5,7 @@
 #include <SDL2/SDL_video.h>
 #endif
 #include <chrono>
+#include "ui_online.hpp"
 
 #include "rt64_render_hooks.h"
 
@@ -706,7 +707,26 @@ void draw_hook(plume::RenderCommandList* command_list, plume::RenderFramebuffer*
             }
             else {
                 if (context_capturing_input) {
-                    RmlSDL::InputEventHandler(ui_state->context, cur_event);
+                    if (cur_event.type == SDL_KEYDOWN || cur_event.type == SDL_KEYUP) {
+                        // SDL's current modifiers may already have changed by
+                        // the time this queued event reaches the render thread.
+                        auto mods = cur_event.key.keysym.mod;
+                        int modifiers = 0;
+                        if (mods & KMOD_CTRL) modifiers |= Rml::Input::KM_CTRL;
+#ifdef __APPLE__
+                        if (mods & KMOD_GUI) modifiers |= Rml::Input::KM_CTRL;
+#endif
+                        if (mods & KMOD_SHIFT) modifiers |= Rml::Input::KM_SHIFT;
+                        if (mods & KMOD_ALT) modifiers |= Rml::Input::KM_ALT;
+                        if (mods & KMOD_NUM) modifiers |= Rml::Input::KM_NUMLOCK;
+                        if (mods & KMOD_CAPS) modifiers |= Rml::Input::KM_CAPSLOCK;
+                        auto key = RmlSDL::ConvertKey(cur_event.key.keysym.sym);
+                        if (cur_event.type == SDL_KEYDOWN) {
+                            ui_state->context->ProcessKeyDown(key, modifiers);
+                            if (cur_event.key.keysym.sym == SDLK_RETURN || cur_event.key.keysym.sym == SDLK_KP_ENTER)
+                                ui_state->context->ProcessTextInput('\n');
+                        } else ui_state->context->ProcessKeyUp(key, modifiers);
+                    } else RmlSDL::InputEventHandler(ui_state->context, cur_event);
                 }
             }
         }
@@ -784,6 +804,7 @@ void draw_hook(plume::RenderCommandList* command_list, plume::RenderFramebuffer*
         prev_width = width;
         prev_height = height;
 
+        recompui::update_online_menu();
         ui_state->context->Update();
         ui_state->context->Render();
         ui_state->render_interface.end(command_list, swap_chain_framebuffer);
@@ -791,6 +812,7 @@ void draw_hook(plume::RenderCommandList* command_list, plume::RenderFramebuffer*
 }
 
 void deinit_hook() {
+    recompui::shutdown_online_menu();
     recompui::destroy_all_contexts();
 
     std::lock_guard lock {ui_state_mutex};

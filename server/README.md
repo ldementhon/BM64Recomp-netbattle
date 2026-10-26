@@ -26,10 +26,18 @@ isolated directory containing `bm64_us.z64`. It exits without starting the game.
 the macOS CTest also covers standard vectors and build/ROM changes. The executable
 includes the statically linked recomp, patches, and runtime. This identifies the
 build/profile; it does not certify cross-machine determinism or audit every setting.
-The user-facing game client is still pending. Existing transport fixtures continue
-to use their test token, not the native fingerprint. The application owner supports
-a compatibility check before each Prepare; the upcoming UI must supply it using
-the fingerprint established at connection time.
+The macOS launcher's **Online Battle** screen uses this fingerprint and rechecks
+the executable/ROM before every match. Enter the server address, port, and name;
+choose the local controls to use, then Ready. P1 can start once at least two humans
+are ready. Empty seats are CPUs. The lobby stays connected while a fresh game
+window runs the match; Cancel or Leave tears it down. A failed launch returns the
+room to Lobby. Local input preferences are copied into disposable settings.
+Existing transport fixtures continue to use their test token.
+
+This remains an early playtest: audio is muted, manual physical-device assignment
+is not yet preserved across processes, and real human/cross-machine play has not
+been verified. Windows x64 is now required for the first remote-play version; its
+client backend and the Mac/Windows compatibility gate are still pending.
 
 The server owns one room and serializes membership, Ready, and Start. Roster
 revisions change on membership changes and return to Lobby; Ready flag updates

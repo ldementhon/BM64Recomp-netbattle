@@ -9,11 +9,22 @@
 				width: 100%;
 				height: 100%;
 			}
+            .online-panel { width: 1100dp; margin: 55dp auto; padding: 24dp; font-size: 27dp; }
+            .online-panel h2 { font-size: 44dp; margin-bottom: 12dp; }
+            .online-fields { display: flex; flex-direction: row; margin-top: 20dp; }
+            .online-field { display: block; width: 320dp; flex-shrink: 0; margin-right: 24dp; }
+            .online-field input, .online-field select { display: block; width: 100%; box-sizing: border-box; height: 48dp; padding: 6dp; background-color: #20242e; color: #ffffff; border: 2dp #6f7c92; }
+            .online-field--port { width: 130dp; }
+            .online-seats { margin-top: 22dp; margin-bottom: 18dp; }
+            .online-seat { padding: 12dp; border-bottom: 1dp #667080; }
+            .online-status { min-height: 42dp; margin-top: 16dp; }
+            .online-panel .button { display: inline-block; margin: 12dp 14dp 0 0; padding: 12dp 22dp; }
+            .online-note { font-size: 23dp; color: #bfc7d4; margin-top: 10dp; }
 		</style>
 	</head>
 	<body>
 		<div id="window" data-model="launcher_model">
-			<div class="launcher">
+			<div class="launcher" data-if="!online_visible">
 				<div class="launcher__vertical-split">
 					<div class="launcher__title-quadrant">
 						<button class="subtitle-title" enabled>
@@ -43,6 +54,10 @@
 							<div class="menu-list-item__bullet">•</div>
 							<div class="menu-list-item__label">Setup controls</div>
 						</button>
+                        <button data-if="mm_rom_valid &amp;&amp; online_available" data-event-click="online_action('open')" class="menu-list-item menu-list-item--right">
+                            <div class="menu-list-item__bullet">•</div>
+                            <div class="menu-list-item__label">Online Battle</div>
+                        </button>
 						<button onclick="open_settings" class="menu-list-item menu-list-item--right">
 							<div class="menu-list-item__bullet">•</div>
 							<div class="menu-list-item__label">Settings</div>
@@ -61,6 +76,44 @@
 					<label>v{{version_number}}</label>
 				</div>
 			</div>
-		</div>
+            <div class="online-panel" data-if="online_visible">
+                <h2>Online Battle</h2>
+                <p>Fixed player colors. P1 advances the shared menus. Empty seats use CPUs.</p>
+                <p class="online-note">Early playtest: audio is muted.</p>
+                <div class="online-fields">
+                    <label class="online-field">Server address
+                        <input id="online-address" type="text" data-value="online_address" maxlength="253" data-attrif-disabled="online_connected"/>
+                    </label>
+                    <label class="online-field online-field--port">Port
+                        <input id="online-server-port" type="text" data-value="online_server_port" maxlength="5" data-attrif-disabled="online_connected"/>
+                    </label>
+                    <label class="online-field">Your name
+                        <input id="online-name" type="text" data-value="online_name" maxlength="32" data-attrif-disabled="online_connected"/>
+                    </label>
+                </div>
+                <div class="online-fields">
+                    <label class="online-field">Use local controls for
+                        <select id="online-local-port" data-value="online_port" data-attrif-disabled="online_ready || online_in_match">
+                            <option value="0">Local player 1</option><option value="1">Local player 2</option>
+                            <option value="2">Local player 3</option><option value="3">Local player 4</option>
+                        </select>
+                    </label>
+                    <button class="button" onclick="open_controls" data-attrif-disabled="online_ready || online_in_match">Setup controls</button>
+                </div>
+                <div class="online-seats">
+                    <div class="online-seat">{{online_seat0}}</div><div class="online-seat">{{online_seat1}}</div>
+                    <div class="online-seat">{{online_seat2}}</div><div class="online-seat">{{online_seat3}}</div>
+                </div>
+                <div class="online-status">{{online_status}}</div>
+                <div class="online-note">{{online_latency}}</div>
+                <button id="online-connect" class="button" data-if="!online_connected" data-event-click="online_action('connect')">Connect</button>
+                <button id="online-ready" class="button" data-if="online_joined &amp;&amp; !online_in_match &amp;&amp; !online_ready" data-event-click="online_action('ready')">Ready</button>
+                <button class="button" data-if="online_joined &amp;&amp; !online_in_match &amp;&amp; online_ready" data-event-click="online_action('ready')">Not ready</button>
+                <button id="online-start" class="button" data-if="online_joined &amp;&amp; !online_in_match" data-attrif-disabled="!online_can_start" data-event-click="online_action('start')">Start battle (P1)</button>
+                <button class="button" data-if="online_in_match" data-event-click="online_action('cancel')">Cancel battle</button>
+                <button id="online-leave" class="button" data-if="online_connected" data-event-click="online_action('leave')">Leave</button>
+                <button class="button" data-event-click="online_action('back')">Back</button>
+            </div>
+        </div>
 	</body>
 </rml>

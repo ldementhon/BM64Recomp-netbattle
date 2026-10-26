@@ -146,6 +146,13 @@ add_custom_command(OUTPUT
 
 # Main executable
 add_executable(BM64Recompiled)
+if(APPLE)
+    include(cmake/Enet.cmake)
+    target_sources(BM64Recompiled PRIVATE src/online/game_session.cpp)
+    target_link_libraries(BM64Recompiled PRIVATE enet)
+    # Refresh and re-sign bundled UI resources when the lobby markup changes.
+    set_property(TARGET BM64Recompiled APPEND PROPERTY LINK_DEPENDS "${CMAKE_SOURCE_DIR}/assets/launcher.rml")
+endif()
 
 set (SOURCES
     ${CMAKE_SOURCE_DIR}/src/main/main.cpp
@@ -170,6 +177,7 @@ set (SOURCES
     ${CMAKE_SOURCE_DIR}/src/ui/ui_renderer.cpp
     ${CMAKE_SOURCE_DIR}/src/ui/ui_state.cpp
     ${CMAKE_SOURCE_DIR}/src/ui/ui_launcher.cpp
+    ${CMAKE_SOURCE_DIR}/src/ui/ui_online.cpp
     ${CMAKE_SOURCE_DIR}/src/ui/ui_config.cpp
     ${CMAKE_SOURCE_DIR}/src/ui/ui_prompt.cpp
     ${CMAKE_SOURCE_DIR}/src/ui/ui_config_sub_menu.cpp

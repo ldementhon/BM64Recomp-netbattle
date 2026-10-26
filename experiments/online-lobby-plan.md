@@ -1,11 +1,32 @@
 # Minimal dedicated-server lobby and player assignment
 
-Status: local four-process scripted rollback battle passes, 2026-10-25. Step 1's
-cross-machine gate and the user-facing parts of steps 2–3 remain open. No server
-has been rented or deployed.
+Status: macOS Online Battle screen is wired and locally exercised, 2026-10-25.
+Four-process scripted rollback matches pass. Windows x64 support, cross-platform
+determinism, physical-device identity, audio/rumble, and human playtests remain
+open. No server has been rented or deployed.
 
 ## Implementation record
 
+- The macOS launcher now includes Online Battle with server/name/local-port fields,
+  four player/CPU rows, Ready, P1-only Start gating, Cancel, Leave, Back, and server
+  round-trip display. It uses the background worker, actual fingerprints, and
+  input-preference snapshots. Visual interaction verified connection, readiness
+  clearing on a join, disabled one-player Start, a two-client real-game start with
+  matching Ready digests, cancellation back to Lobby, Leave, and Back. The local
+  port/Setup controls overlap was fixed and reinspected. Keyboard events now retain
+  their queued modifier state, including Command editing shortcuts on Mac;
+  Command-A replacement and invalid-port feedback were verified in the screen.
+  Lobby asset changes trigger bundle refresh/re-signing. Full reconfiguration on
+  this host required `TOOLCHAINS=com.apple.dt.toolchain.Metal.32023.883` because
+  Xcode's default Metal lookup failed despite its component being installed.
+  Final executable SHA-256:
+  `e3823373cb6ff959e991394368e07286f105a3c102070395c6228ddbaf4793da`.
+  On that unchanged image, `python3 tests/run_network_game.py match` passes all
+  four complete three-round histories (corrections 19/36/32/34, finish 5403),
+  `sh tests/run_battle_replay.sh` passes the full legacy suite and negative
+  controls, and `python3 tests/run_fingerprint.py` agrees with independent SHA-256.
+  This is a Mac prototype: audio remains muted, manual device assignments still
+  need preservation across fresh processes, and live human matches are unverified.
 - The application now has `LobbyWorker`, a background owner with a bounded
   16-command UI queue and copied roster/status views. It computes the actual
   executable/ROM fingerprint at Connect and rechecks both before every Prepare.
@@ -17,7 +38,8 @@ has been rented or deployed.
   Windows backend is the next platform task.
 - Scope decision (2026-10-25): the user wants the first remote-play version to
   support both Apple Silicon macOS and an Intel/AMD Windows PC. Remote access to
-  the Windows PC is available; the connection method/address is pending. This
+  the Windows PC is available through SSH alias `dosktep2025`, with work under
+  `C:\Users\ldeme\Dev\bomberman64`. Inspect existing files before uploading. This
   replaces the initial same-platform-only target, not the determinism gate.
   Port and test the process/IPC, snapshot/runtime, build, and fingerprint paths;
   compare the exact Mac/Windows build pair through the same startup, battle,
