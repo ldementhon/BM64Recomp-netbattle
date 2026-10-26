@@ -2,11 +2,59 @@
 
 Status: macOS Online Battle screen is wired and locally exercised, 2026-10-25.
 Four-process scripted Mac rollback matches pass; the full Windows x64 client builds.
-Windows real-game lifecycle validation passes, but Windows full-state replay
-is intermittent. Cross-platform determinism, physical-controller validation, audio/rumble, and human playtests remain
+Windows real-game lifecycle and full-state replay suites pass with presentation
+serialized before native rendering. Cross-platform determinism, physical-controller validation, audio/rumble, and human playtests remain
 open. No server has been rented or deployed.
 
 ## Implementation record
+
+- Presentation ordering (2026-10-25): the checkpoint/online path now drains
+  previously submitted presentation work before processing each native display
+  list. Display output and interpolation remain enabled; the normal offline path
+  is unchanged. This is a conservative correctness boundary, not proof of the
+  exact shared resource responsible for the earlier Windows failures. Its added
+  wait needs latency measurement before performance claims.
+  Retained images: Mac
+  `8f5354b48654f893ae704dcb7e82a2084d53c68503f286457f82c8e5fd698720`;
+  Windows `35790d7525fbd890de30fd450a68ee048341bc72b452dc1133e0f22df9765968`.
+  Both pass two fresh startup histories (280 boundaries), independent battle
+  histories (747), next-round histories (240), and match-completion histories
+  (160), with three full-RAM/register restores per positive run. Input-negative
+  controls pass for startup/battle; skipped-stack controls pass for round/match.
+  Both also pass real loading cancellation and two complete frame-5401 matches,
+  equal Ready digests, isolated settings cleanup, and retained owner connection.
+  One Windows Finished child exits with status 1 at frame 5401 without an error,
+  the previously observed owner-termination race.
+
+  The original Windows match negative-control process exited cleanly at frame
+  2100 before its checkpoint, so that run is incomplete, not a pass. After the
+  SSH observation connection timed out, remote inspection confirmed no running
+  test; only the missing negative control was rerun. It reaches all 160 baseline
+  records and deliberately diverges on restore at 5381. Its executable, ROM,
+  input, complete baseline history, and finish marker match the positive runs.
+  Mac logs: `build/experiments/serial-present-mac-{startup,independent,round,match,session}.log`.
+  Windows logs there: `windows-serial-{present,independent,round,match,session}-desktop.log`,
+  `windows-serial-match-{a,b,negative-resumed}.txt`, and
+  `windows-serial-match-validation.log`.
+
+  The same Mac image also passes `python3 tests/run_network_game.py match`: four
+  local real-ROM clients agree at all 22 recorded full-RAM/register boundaries
+  through confirmed finish 5403, with 120 ms configured delivery delay and 119
+  dropped packets. Corrections per client are 24/39/41/39, maximum depth 9; three
+  clients discover completion during replay. This exercises suppressed replay
+  display work with the new ordering, not four remote humans. Evidence:
+  `build/experiments/serial-present-mac-network-match.log` and `network-rom-match/`
+  (including image/harness/fixture identities). Final fingerprint and isolated
+  settings checks pass on both images; Windows has zero running games and zero
+  private test tasks. Logs: `serial-present-mac-fingerprint.log` and
+  `windows-serial-fingerprint-cleanup.log`.
+
+  Strict comparison of the complete successful startup histories still first
+  differs at 1375: Mac RAM `8fbd32fb67d17a91`, Windows `116ba18a08857b91`, equal
+  registers `bd455789a084498b`. Evidence: `serial-cross-startup.log` and
+  `windows-serial-startup-{a,b}.txt`. Step 1 remains open for identical native
+  rendering across this exact build pair, followed by full cross-platform
+  battle/round/match certification. Unlike builds remain rejected by admission.
 
 - GPU-output attribution (2026-10-25): a disposable readback probe captures the
   completed native RSP compute outputs before guest RAM comparison. At the first

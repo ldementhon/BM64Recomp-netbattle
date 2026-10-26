@@ -361,6 +361,7 @@ zelda64::renderer::RT64Context::~RT64Context() {
 }
 
 void zelda64::renderer::RT64Context::send_dl(const OSTask* task) {
+    if (checkpoint::enabled) wait_for_checkpoint_present();
     app->state->suppressPresentation = checkpoint::suppress_render;
     app->state->forceSingleFrame = checkpoint::catchup_active;
     const auto previous_workload = app->state->workloadId;

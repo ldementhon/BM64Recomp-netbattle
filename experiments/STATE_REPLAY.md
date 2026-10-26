@@ -64,6 +64,16 @@ of simulation update N: every controller read during that update uses input N,
 and boundary N+1 checks the resulting state. Rendering and controller reads do not
 advance this counter. Restoring a checkpoint restores the frame and fast-boot
 input clock; replay reads historical scripted inputs, never live controllers.
+
+The checkpoint/online renderer waits for previously submitted presentation work
+before processing the next native display list. This conservative ordering keeps
+concurrent presentation work out of guest-visible rendering; normal offline play
+retains its existing asynchronous behavior. Windows startup, battle, round, and
+match replay checks pass with this boundary. The exact shared resource responsible
+for the earlier intermittent failures is not yet identified, and the added wait's
+latency cost still needs measurement. This does not resolve cross-platform shader
+or rasterization differences.
+
 The delayed-input fixture treats player 1 as local and players 2–4 as remote,
 holding each remote pad's last input during a simulated delivery gap, then
 replaying the corrected inputs. It simulates a shared delivery gap, not a network
