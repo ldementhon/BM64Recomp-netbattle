@@ -80,21 +80,17 @@ and boundary N+1 checks the resulting state. Rendering and controller reads do n
 advance this counter. Restoring a checkpoint restores the frame and fast-boot
 input clock; replay reads historical scripted inputs, never live controllers.
 
-The checkpoint/online renderer waits for previously submitted presentation work
-before processing the next native display list. This conservative ordering keeps
-concurrent presentation work out of guest-visible rendering; normal offline play
-retains its existing asynchronous behavior. Earlier Windows startup, battle, round,
-and match replay runs passed with this boundary, but later startup restores still
-fail intermittently. Those failures are attributed to the test PC's RX 9070 XT
-(RDNA 4): a rare one-frame depth glitch that also occurs outside replay, absent on
-its integrated AMD GPU, and removed by a bottom-of-pipe timestamp after each draw.
-That is Mesa's GFX12 Hi-Z workaround (see `online-lobby-plan.md`). No workaround is
-retained. Instead, `BM64_DISPLAY_ONLY=1` turns RT64's render-to-RAM off in
-checkpoint/online processes. The GPU then only draws the screen, and game RAM
-holds no GPU output. An audit found nothing in the game consuming that output.
-In this mode the Windows replays pass, and Mac/Windows histories match on the
-scripted fixtures; it is not yet the default. The added wait's latency cost
-still needs measurement.
+Checkpoint/online processes render display-only: RT64's render-to-RAM is off, so
+the GPU only draws the screen and game RAM holds no GPU output. All of RAM is
+still hashed. An audit found nothing in the game consuming that output, and
+display-only histories match render-to-RAM histories outside the GPU-written
+bytes. In this mode the test PC's RX 9070 XT replays pass, and complete
+Mac/Windows startup, round, and match histories match. That GPU has a rare depth
+glitch that made render-to-RAM replays fail (see `online-lobby-plan.md`).
+`BM64_RENDER_TO_RAM=1` restores render-to-RAM for diagnostics and older
+performance experiments; owned online matches refuse it. Only that mode keeps
+the wait for submitted presentation work before each display list. Normal
+offline play is unchanged.
 
 The delayed-input fixture treats player 1 as local and players 2–4 as remote,
 holding each remote pad's last input during a simulated delivery gap, then

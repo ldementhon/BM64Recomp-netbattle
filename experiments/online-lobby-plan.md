@@ -2,10 +2,10 @@
 
 Status: macOS Online Battle screen is wired and locally exercised, 2026-10-26.
 Four-process scripted Mac rollback matches pass; the full Windows x64 client builds.
-With display-only rendering (`BM64_DISPLAY_ONLY=1`, opt-in), GPU output stays out
-of game RAM. Windows RX 9070 XT replays then pass, and scripted Mac/Windows
-histories match on every boundary, including a 20,994-boundary session. In the
-default render-to-RAM mode, Windows replays still fail intermittently. Physical
+Online processes render display-only by default, keeping GPU output out of game
+RAM. Windows RX 9070 XT replays pass, and scripted Mac/Windows histories match on
+every boundary, including a 20,994-boundary session. The cross-build transition
+checks match too. Physical
 controllers, real-device audio listening, and human playtests remain open. Rumble
 may be disabled for the first online version (user decision, 2026-10-25);
 preserve offline behavior. No server has been rented or deployed.
@@ -17,16 +17,11 @@ Fresh-session continuation instructions and diagnostic context are in
 below contains historical results; a successful older image does not certify the
 current build.
 
-1. **Adopt display-only rendering for online processes.** It removes GPU output
-   from game state (newest implementation-record entry), so neither the RX 9070 XT
-   depth glitch nor Mac/Windows rendering differences reach determinism. Make it
-   the default for checkpoint/online processes, carrying
-   `patches/rt64-display-textures.patch`. Then decide whether the presentation
-   wait and native-path work it makes unnecessary can go; measure before
-   removing them. Spot-check visuals with MSAA and scaled resolutions, Player
-   Select and the other stages. Keep the full-RAM checks unchanged. The
-   RDNA 4 attribution and per-GPU workarounds are only needed if render-to-RAM
-   online play is ever required.
+1. **Finish display-only follow-ups.** Display-only is now the online default,
+   and the per-frame presentation wait is gone (newest implementation-record
+   entry). Spot-check visuals with MSAA and scaled resolutions, Player Select and
+   the other stages. Measure rollback timing on Windows. Keep the full-RAM checks
+   unchanged.
 2. **Extend cross-platform determinism to the network path.** Display-only
    Mac/Windows histories match for the scripted fixtures (startup, match,
    Pyramid, pause, long session). Next: a real Mac/Windows network match through
@@ -44,6 +39,42 @@ current build.
    further performance changes. No server has been purchased or deployed.
 
 ## Implementation record
+
+- Display-only by default; per-frame presentation wait dropped (2026-10-26).
+  Checkpoint/online processes now render display-only unless
+  `BM64_RENDER_TO_RAM=1`, which is kept for render-to-RAM diagnostics and older
+  performance runners. Owned (network) matches refuse that override, so clients
+  on one build cannot run different modes. The wait for submitted presentation
+  work before each display list now applies only to render-to-RAM, the only mode
+  where GPU output is guest state. Offline play is unchanged.
+
+  *Timing* (`run_catchup.sh perf` setup, Mac, serial, two runs of 100 windows
+  each). Median replay work per rollback window, excluding the final presentation
+  wait that this harness paces to the display (ms):
+
+  | Updates replayed | Render-to-RAM + wait | Display-only + wait | Display-only, no wait |
+  | --- | --- | --- | --- |
+  | 4 | 9.5 | 6.9 | 3.6 |
+  | 8 | 16.1 | 11.5 | 6.6 |
+  | 12 | 22.4 | 17.2 | 9.6 |
+
+  Display-only skips the native render, its GPU sync, and the RAM writeback.
+  Dropping the wait also stops the simulation from stalling on presentation, so
+  replay costs about 0.8 ms per update instead of about 1.9. Tails are noisier:
+  some no-wait runs have p95 near 18–21 ms, so measure on Windows and on lower-end
+  machines before relying on the margin. Window totals including the paced final
+  present stayed near 32 ms in every mode.
+
+  *Validation.* With these defaults, Mac image `820e4b3b…` passed all 22 suites
+  in `STATE_REPLAY.md`. That covers the unit suites, lobby, startup and
+  single-battle probes, battle replay, catch-up verification, real session-owner
+  matches, independent clients, match settings, match layouts,
+  `run_network_game.py all` and `match`, and the real-game lobby. Windows image
+  `849d35c5…` passed startup, round, and match transitions twice each. Its
+  histories match the Mac's under `run_online_transition_tests.py --cross-build`
+  for all three. The final sources (temporary A/B switch removed; Mac `60702fe4…`,
+  Windows `f20e2f7d…`) passed startup on both and `run_network_game.py all` on Mac,
+  and the cross-build startup comparison still matches.
 
 - Display-only online rendering (2026-10-26): with `BM64_DISPLAY_ONLY=1`,
   checkpoint/online processes set RT64's `renderToRAM` off. The GPU still draws
