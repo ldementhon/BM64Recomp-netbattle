@@ -45,6 +45,12 @@ if ! git -C lib/rt64 apply --reverse --check "$rsp_patch" 2>/dev/null; then
     git -C lib/rt64 apply "$rsp_patch"
 fi
 
+display_patch="$recomp_root/experiments/patches/rt64-display-textures.patch"
+if ! git -C lib/rt64 apply --reverse --check "$display_patch" 2>/dev/null; then
+    git -C lib/rt64 apply --check "$display_patch"
+    git -C lib/rt64 apply "$display_patch"
+fi
+
 descriptor_patch="$recomp_root/experiments/patches/plume-descriptor-layout.patch"
 if ! git -C lib/rt64/src/contrib/plume apply --reverse --check "$descriptor_patch" 2>/dev/null; then
     git -C lib/rt64/src/contrib/plume apply --check "$descriptor_patch"

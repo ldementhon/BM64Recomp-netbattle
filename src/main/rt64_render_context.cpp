@@ -301,6 +301,8 @@ zelda64::renderer::RT64Context::RT64Context(uint8_t* rdram, ultramodern::rendere
     app->enhancementConfig.f3dex.forceBranch = true;
     // Set postBlendNoiseNegative
     app->emulatorConfig.dither.postBlendNoiseNegative = true;
+    // Keep host GPU output out of rollback state; the game does not read its framebuffers.
+    if (checkpoint::enabled && std::getenv("BM64_DISPLAY_ONLY")) app->emulatorConfig.framebuffer.renderToRAM = false;
     // Scale LODs based on the output resolution.
     app->enhancementConfig.textureLOD.scale = true;
     // Pick an API if the user has set an override.

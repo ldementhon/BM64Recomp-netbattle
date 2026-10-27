@@ -1,0 +1,18 @@
+--- a/src/hle/rt64_state.cpp
++++ b/src/hle/rt64_state.cpp
+@@ -1583,6 +1583,15 @@
+             ext.framebufferGraphicsWorker->execute();
+             ext.framebufferGraphicsWorker->wait();
+             ext.textureCache->waitForGPUUploads();
++
++            // Mark sampled textures as used by this submission, as the native renderer does. Otherwise eviction
++            // below can remove a texture the workload queue has yet to draw.
++            for (const DrawCallTile &callTile : workload.drawData.callTiles) {
++                if (callTile.valid && !callTile.tileCopyUsed) {
++                    uint32_t textureIndex;
++                    ext.textureCache->useTexture(callTile.tmemHashOrID, workload.submissionFrame, textureIndex);
++                }
++            }
+         }
+ 
+         if (nativeProbeStart) RollbackProbe::native += RollbackProbe::now()-nativeProbeStart;
