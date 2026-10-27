@@ -12,6 +12,7 @@ struct OwnedMatch {
     explicit OwnedMatch(const char* text) {
         require(online::match_settings_locked, "owned match requires --online-test");
         require(!setting("BM64_CHECKPOINT_FRAME", 0), "owned match cannot use diagnostic restores");
+        require(!std::getenv("BM64_RENDER_TO_RAM"), "owned match requires display-only rendering");
         auto end = text + std::strlen(text);
         auto parsed = std::from_chars(text, end, match);
         if (parsed.ec != std::errc{} || parsed.ptr != end || !match)

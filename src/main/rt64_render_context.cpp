@@ -24,6 +24,7 @@ static RT64::UserConfiguration::Antialiasing device_max_msaa = RT64::UserConfigu
 static bool sample_positions_supported = false;
 static bool high_precision_fb_enabled = false;
 static std::atomic<RT64::State*> checkpoint_renderer = nullptr;
+static bool checkpoint_render_to_ram = false;
 
 void checkpoint::render_state(bool restore) {
     auto* state = checkpoint_renderer.load();
@@ -302,7 +303,9 @@ zelda64::renderer::RT64Context::RT64Context(uint8_t* rdram, ultramodern::rendere
     // Set postBlendNoiseNegative
     app->emulatorConfig.dither.postBlendNoiseNegative = true;
     // Keep host GPU output out of rollback state; the game does not read its framebuffers.
-    if (checkpoint::enabled && std::getenv("BM64_DISPLAY_ONLY")) app->emulatorConfig.framebuffer.renderToRAM = false;
+    // BM64_RENDER_TO_RAM=1 restores RT64's writeback for render-to-RAM diagnostics.
+    checkpoint_render_to_ram = checkpoint::enabled && std::getenv("BM64_RENDER_TO_RAM");
+    if (checkpoint::enabled && !checkpoint_render_to_ram) app->emulatorConfig.framebuffer.renderToRAM = false;
     // Scale LODs based on the output resolution.
     app->enhancementConfig.textureLOD.scale = true;
     // Pick an API if the user has set an override.
@@ -363,7 +366,8 @@ zelda64::renderer::RT64Context::~RT64Context() {
 }
 
 void zelda64::renderer::RT64Context::send_dl(const OSTask* task) {
-    if (checkpoint::enabled) wait_for_checkpoint_present();
+    // Render-to-RAM output is guest state, so it must not overlap the next display list.
+    if (checkpoint_render_to_ram) wait_for_checkpoint_present();
     app->state->suppressPresentation = checkpoint::suppress_render;
     app->state->forceSingleFrame = checkpoint::catchup_active;
     const auto previous_workload = app->state->workloadId;
