@@ -40,6 +40,20 @@ current build.
 
 ## Implementation record
 
+- Cross-machine rehearsal (2026-10-26). `tests/network_peer.cpp` (CMake target
+  `network_peer`, Mac and Windows) is one scripted player that joins a real
+  `bm64-lobby`. Over the home LAN, the server ran on the Mac and accepted the
+  validated pair's two fingerprints. A Mac peer and a Windows peer joined,
+  loaded, and played through the relay. A 1,000-frame run matched on every
+  common checkpoint. A longer run, two humans plus two CPUs, matched on all 88
+  checkpoints to frame 17,400 (about five minutes). That run then stalled on a
+  medal screen, as expected: its four-human script's P1 A presses no longer lined
+  up with the rounds. All 10 lobby CTests pass on Windows with current sources.
+  Note: the Windows game resolves assets from its working directory, and a
+  match child inherits the launcher's. Start the Windows game from its own
+  folder; setting the child's working directory to the executable's folder
+  would remove this trap, but it changes the Windows fingerprint.
+
 - Online stage choice and Mac/Windows pair admission (2026-10-26). In the
   single-battle route, overlay 13 shows Player Select, then Stage Select. A new
   checkpointed flag, `player_select_passed`, is set when Player Select is left,
