@@ -22,10 +22,10 @@ current build.
    entry). Spot-check visuals with MSAA and scaled resolutions, Player Select and
    the other stages. Measure rollback timing on Windows. Keep the full-RAM checks
    unchanged.
-2. **Extend cross-platform determinism to the network path.** Display-only
-   Mac/Windows histories match for the scripted fixtures (startup, match,
-   Pyramid, pause, long session). Next: a real Mac/Windows network match through
-   the relay, more GPUs and machines, and exact-build-pair admission. Never
+2. **Play a live Mac/Windows match.** P1 now chooses the stage online, and a
+   validated Mac/Windows build pair can share a room (newest implementation-record
+   entry). Next: a real Mac/Windows match through the relay with physical
+   controllers, first on a home network, then more GPUs and machines. Never
    exclude framebuffer RAM to make a comparison pass.
 3. **Finish playable two-person integration.** Replay-safe audio output exists
    and online rumble is silent; listen on real devices and rebuild Windows with
@@ -39,6 +39,31 @@ current build.
    further performance changes. No server has been purchased or deployed.
 
 ## Implementation record
+
+- Online stage choice and Mac/Windows pair admission (2026-10-26). In the
+  single-battle route, overlay 13 shows Player Select, then Stage Select. A new
+  checkpointed flag, `player_select_passed`, is set when Player Select is left,
+  and it is part of the full-state digest and comparable state (format word 3).
+  After it is set, P1's A and left/right on the stick or D-pad pass the online
+  filter; every other menu input stays neutral. Stage index is settings
+  `+0xa0` (`0x802ac700`: 0 Rock Garden, 1 Up and Down, 2 Pyramid), found by
+  diffing RAM dumps. `run_match_layouts.py stage` checks P1 picking Pyramid
+  (overlay 88) and P2's identical presses changing nothing, each with full-state
+  replay across Stage Select. The interference fixture now tries only up/down
+  for P1 after Player Select.
+
+  `bm64-lobby` accepts one to four client fingerprints, so one validated
+  Mac/Windows build set can share a room. Duplicates and bad values are refused.
+  `run_fingerprint.py` now prints the verified fingerprint; `server/README.md`
+  gives the pair validation steps. Validated pair: Mac executable `9c13e03a…`
+  (fingerprint `0d8480e7…`) and Windows executable `1548dc14…` (fingerprint
+  `c90b4fd0…`), with the US ROM. Their startup, round, and match histories
+  match under `--cross-build`. On the Mac image all suites pass, including
+  layouts, match settings, network games, and lobby tests. `run_network_game.py
+  all` failed once on its baseline-has-zero-corrections timing guard while the
+  host was busy, then passed alone; `replay_input_timing.cpp` needed the new
+  flag. Windows passed startup, round, and match transitions. A live
+  Mac/Windows lobby match has not been played.
 
 - Display-only by default; per-frame presentation wait dropped (2026-10-26).
   Checkpoint/online processes now render display-only unless

@@ -8,6 +8,9 @@
 > applies only to render-to-RAM, which roughly halves replay cost on the Mac.
 > `patches/rt64-display-textures.patch` fixes a texture-eviction race in this
 > mode. Windows runs the current build.
+> Later the same day: P1 can choose the stage online, and `bm64-lobby` accepts up
+> to four fingerprints so a validated Mac/Windows pair shares a room (steps in
+> `server/README.md`). The next step is a live Mac/Windows match.
 
 > **Update 2026-10-26 (later):** the Windows replay failure is attributed to the
 > PC's RX 9070 XT (RDNA 4), not to replay state. It is a rare one-frame depth
