@@ -54,6 +54,8 @@ static uint64_t frame = 0;
 static int32_t players, player_stride, overlay;
 static unsigned replay_pass = 0;
 static bool player_select_ready = false;
+// Set when Player Select is left; online P1 may then steer the stage carousel.
+static bool player_select_passed = false;
 struct Fiber { mco_coro* co; int32_t thread, entry, arg; bool dead; recomp_context* ctx; };
 static std::array<Fiber, 64> fibers{};
 static size_t fiber_count = 0;
@@ -146,7 +148,7 @@ int32_t saved_next, saved_yield, saved_resume;
 int32_t saved_players, saved_player_stride, saved_overlay;
 uint64_t saved_frame, saved_ticks;
 uint64_t saved_boot_frame;
-bool saved_fast_boot, saved_player_select_ready;
+bool saved_fast_boot, saved_player_select_ready, saved_player_select_passed;
 bool saved_initialized;
 uint8_t* saved_entry_rdram;
 CheckpointMemory saved_ram;
@@ -184,6 +186,7 @@ static double save(size_t index = 0, bool quiet = false) {
     s.saved_players = players; s.saved_player_stride = player_stride; s.saved_overlay = overlay;
     s.saved_boot_frame = boot_frame.load(); s.saved_fast_boot = fast_boot.load();
     s.saved_player_select_ready = player_select_ready;
+    s.saved_player_select_passed = player_select_passed;
     s.saved_yield = g_yield_reason; s.saved_resume = g_resume_value;
     s.saved_initialized = g_initialized; s.saved_entry_rdram = g_entry_rdram;
     trace.mark("metadata");
@@ -212,6 +215,7 @@ static double restore(size_t index = 0, bool quiet = false) {
     players = s.saved_players; player_stride = s.saved_player_stride; overlay = s.saved_overlay;
     boot_frame = s.saved_boot_frame; fast_boot = s.saved_fast_boot;
     player_select_ready = s.saved_player_select_ready;
+    player_select_passed = s.saved_player_select_passed;
     g_yield_reason = s.saved_yield; g_resume_value = s.saved_resume;
     trace.mark("metadata");
     runtime_state(true); trace.mark("runtime");
@@ -263,6 +267,7 @@ static Digest digest() {
     }
     for (size_t i=0; i<fiber_count; ++i) if (!fibers[i].dead && fibers[i].ctx) XXH3_64bits_update(&state, fibers[i].ctx, sizeof(recomp_context));
     XXH3_64bits_update(&state, &player_select_ready, sizeof(player_select_ready));
+    XXH3_64bits_update(&state, &player_select_passed, sizeof(player_select_passed));
     auto context_hash = XXH3_64bits_digest(&state);
     return {XXH3_64bits(ram, recomp::mem_size), context_hash};
 }
@@ -476,6 +481,7 @@ void switch_thread(int32_t thread) {
 }
 }
 extern "C" void bm64_player_select_ready(int ready) {
+    if (checkpoint::player_select_ready && !ready) checkpoint::player_select_passed = true;
     checkpoint::player_select_ready = ready != 0;
 }
 

@@ -66,6 +66,6 @@ bool input(int controller, uint16_t* buttons, float* x, float* y) {
         *buttons = pad.buttons; *x = online::pad_axis(pad.x); *y = online::pad_axis(pad.y);
     } else recorded_input(controller, input_frame(controller), buttons, x, y);
     if (controller == 0 && replay_pass && std::getenv("BM64_NEGATIVE_INPUT")) { *buttons ^= 0x8000; *x = std::clamp(-*x + 0.1f, -1.0f, 1.0f); }
-    if (online::match_settings_locked) online::filter_match_input(controller, overlay, *buttons, *x, *y);
+    if (online::match_settings_locked) online::filter_match_input(controller, overlay, player_select_passed, *buttons, *x, *y);
     return true;
 }

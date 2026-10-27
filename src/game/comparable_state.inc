@@ -13,7 +13,7 @@ static uint64_t comparable_registers() {
             require(false, "unsupported comparable register reference");
         }
     };
-    word(2); word(player_select_ready); word(frame); word(ticks); word(boot_frame); word(fast_boot);
+    word(3); word(player_select_ready); word(player_select_passed); word(frame); word(ticks); word(boot_frame); word(fast_boot);
     word(uint32_t(next_thread)); word(uint32_t(overlay));
     for (const auto& slot : g_slots) {
         word(uint64_t(slot.state)); word(slot.process_id); word(slot.entry_func); word(slot.mips_sp);

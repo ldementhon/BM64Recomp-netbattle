@@ -1,0 +1,3 @@
+# Append with BM64_INPUT_EXTRA: P2 repeats P1's Pyramid presses; online, only P1 chooses the stage.
+1616 1620 0000 0.7 0 1
+1652 1656 0000 0.7 0 1

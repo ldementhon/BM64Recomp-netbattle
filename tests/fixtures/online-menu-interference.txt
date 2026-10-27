@@ -1,7 +1,8 @@
 # Append to battle-active-inputs.txt. These must not change an online preset.
 # P1 attempts directions, B, Start and costume buttons, without pressing A.
+# After Player Select, left/right is P1's stage choice, so only up/down is tried.
 1400 1420 7fff 0.7 -0.7 0
-1540 1560 7fff -0.7 0.7 0
+1540 1560 7cff 0 0.7 0
 # Other players attempt to advance and change the shared selection/stage screens.
 1400 1670 ffff 0.7 -0.7 1
 1400 1670 ffff -0.7 0.7 2

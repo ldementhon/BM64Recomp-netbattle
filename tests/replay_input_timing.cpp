@@ -17,6 +17,7 @@ std::atomic<bool> fast_boot = false;
 std::atomic<uint64_t> boot_frame = 0;
 static uint64_t frame = 0;
 static int overlay = 86;
+static bool player_select_passed = false;
 static unsigned replay_pass = 0;
 static void require(bool ok, const char* message) {
     if (!ok) throw std::runtime_error(message);

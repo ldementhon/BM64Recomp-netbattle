@@ -14,15 +14,15 @@ environment = {key: value for key, value in os.environ.items() if not key.starts
 
 
 def run(name, humans, noise, first=1300, length=800, online=True,
-        recording="tests/fixtures/battle-active-inputs.txt"):
+        recording="tests/fixtures/battle-active-inputs.txt", extra=None, stage_overlay=86):
     env = dict(environment, BM64_SINGLE_BATTLE="1", BM64_ONLINE_TEST="1" if online else "0",
                BM64_ONLINE_HUMANS=str(humans), BM64_BOOT_TO_PLAYER_SELECT="1", BM64_TRACE_MENU="1",
                BM64_INPUT_SCRIPT=recording, BM64_COMPARE_STATE="1",
                BM64_CHECKPOINT_FRAME=str(first), BM64_REPLAY_LENGTH=str(length),
                BM64_STOP_FRAME=str(first + length + 1), BM64_RESULT_NAME=name,
                BM64_EXPECTED_EXECUTABLE_SHA=sha, BM64_RUN_TIMEOUT="240")
-    if noise:
-        env["BM64_INPUT_EXTRA"] = "tests/fixtures/online-menu-interference.txt"
+    if noise or extra:
+        env["BM64_INPUT_EXTRA"] = extra or "tests/fixtures/online-menu-interference.txt"
     with (ROOT / f"build/experiments/{name}.log").open("w") as log:
         subprocess.run([sys.executable, "tests/run_checkpoint_probe.py"], cwd=ROOT, env=env,
                        stdout=log, stderr=subprocess.STDOUT, check=True, timeout=260)
@@ -34,13 +34,13 @@ def run(name, humans, noise, first=1300, length=800, online=True,
         assert "PLAYER_SELECT: frame=1374 ready=1" in text
         assert "PLAYER_SELECT: frame=1501 ready=0" in text
         controls = "1:[0-9a-f]{8}," * humans + "2:[0-9a-f]{8}," * (4 - humans)
-        assert re.search(r"BATTLE: frame=1800 overlay=86 stride=200 controls=" + controls + " active=4", text)
+        assert re.search(rf"BATTLE: frame=1800 overlay={stage_overlay} stride=200 controls=" + controls + " active=4", text)
     print(f"PASS: {name}", flush=True)
     return text, rows
 
 
-if len(sys.argv) > 2 or (len(sys.argv) == 2 and sys.argv[1] not in ("round", "negative")):
-    raise SystemExit("Usage: run_match_layouts.py [round|negative]")
+if len(sys.argv) > 2 or (len(sys.argv) == 2 and sys.argv[1] not in ("round", "stage", "negative")):
+    raise SystemExit("Usage: run_match_layouts.py [round|stage|negative]")
 mode = sys.argv[1] if len(sys.argv) == 2 else "all"
 
 if mode == "all":
@@ -63,6 +63,13 @@ if mode in ("all", "round"):
             if baseline is not None:
                 assert rows == baseline, "P2 acknowledged the round or P1 escaped the fixed preset"
             baseline = rows
+
+# P1 picks the third stage (Pyramid, overlay 88); the same presses from P2 change nothing.
+if mode in ("all", "stage"):
+    _, baseline = run("layout-stage-baseline", 4, False)
+    run("layout-stage-p1", 4, False, extra="tests/fixtures/single-battle-stage-third.txt", stage_overlay=88)
+    _, other = run("layout-stage-p2", 4, False, extra="tests/fixtures/online-stage-other-player.txt")
+    assert other == baseline, "a non-P1 player changed the stage"
 
 # Without the online policy, the same recording must alter the guest state.
 # This guards against a vacuous interference fixture.

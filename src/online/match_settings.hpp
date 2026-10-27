@@ -15,9 +15,14 @@ inline unsigned parse_human_players(std::string_view value) {
     return unsigned(value[0] - '0');
 }
 
-inline void filter_match_input(int port, int overlay, uint16_t& buttons, float& x, float& y) {
+// Stage Select is the only overlay-13 screen after Player Select in the single-battle route.
+inline void filter_match_input(int port, int overlay, bool stage_select, uint16_t& buttons, float& x, float& y) {
     if (port < 0 || unsigned(port) >= human_players) {
         buttons = 0; x = y = 0;
+    } else if (overlay == 13 && stage_select && port == 0) {
+        // P1 chooses the stage: A plus left/right on the stick or D-pad.
+        buttons &= 0x8300;
+        y = 0;
     } else if (overlay == 13 || overlay == 17) {
         // P1 confirms the fixed preset; no client edits seats, costumes or rules.
         buttons = port == 0 ? buttons & 0x8000 : 0;
