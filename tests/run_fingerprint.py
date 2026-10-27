@@ -43,3 +43,4 @@ with tempfile.TemporaryDirectory(prefix="bm64-fingerprint-") as temp:
     assert portable.stdout.strip() == expected, (portable.stdout, expected)
 assert hashlib.sha256(GAME.read_bytes()).digest() == game_hash, "executable changed during test"
 print(f"PASS: native fingerprint matches independent SHA-256; missing ROM refused; build={game_hash.hex()}")
+print(f"FINGERPRINT: {expected}")

@@ -6,13 +6,16 @@ Build independently of the game, ROM, renderer, and game submodules:
 cmake -S server -B build/lobby -DCMAKE_BUILD_TYPE=Release
 cmake --build build/lobby -j 4
 ctest --test-dir build/lobby --output-on-failure
-build/lobby/bm64-lobby 127.0.0.1 6464 CLIENT_FINGERPRINT_HEX
+build/lobby/bm64-lobby 127.0.0.1 6464 CLIENT_FINGERPRINT_HEX [CLIENT_FINGERPRINT_HEX ...]
 ```
 
 ENet 1.3.18 is pinned to upstream commit
 `2662c0de09e36f2a2030ccc2c528a3e4c9e8138a`. CMake fetches it during configuration.
-The final argument must be 64 hexadecimal digits identifying the accepted client
+Each fingerprint argument is 64 hexadecimal digits identifying one accepted client
 build. The server compares the complete 32-byte value before allocating a seat.
+Pass one fingerprint for a single-platform room, or up to four for a set of
+platform builds validated together, such as one Mac and one Windows build made
+from the same source. Duplicates are refused.
 On macOS, obtain that value from the exact client bundle after selecting its ROM:
 
 ```sh
@@ -34,10 +37,25 @@ window runs the match; Cancel or Leave tears it down. A failed launch returns th
 room to Lobby. Local input preferences are copied into disposable settings.
 Existing transport fixtures continue to use their test token.
 
+To admit a Mac/Windows pair, build both from the same commit and run
+`python3 tests/run_online_transition_tests.py startup`, then `round`, then `match`
+on each machine. Copy the Windows `experiments/results/{startup,round,match}-transition-a.txt`
+logs to the Mac and run, for each phase:
+
+```sh
+python3 tests/run_online_transition_tests.py --cross-build PHASE MAC_LOG WINDOWS_LOG
+```
+
+Only if all three pass, run `python3 tests/run_fingerprint.py --rom PATH_TO_ROM`
+on each machine. It checks the native fingerprint command and prints a
+`FINGERPRINT:` line. Start the server with both values. Rebuilding either side
+changes its fingerprint and requires validating the pair again.
+
 This remains an early playtest: audio is muted, manual physical-device assignment
 is not yet preserved across processes, and real human/cross-machine play has not
-been verified. Windows x64 is now required for the first remote-play version; its
-client backend and the Mac/Windows compatibility gate are still pending.
+been verified. Windows x64 is required for the first remote-play version; a
+validated Mac/Windows pair can share a room as above, but a live Mac/Windows
+match has not been played yet.
 
 The server owns one room and serializes membership, Ready, and Start. Roster
 revisions change on membership changes and return to Lobby; Ready flag updates

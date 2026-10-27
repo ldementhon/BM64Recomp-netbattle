@@ -54,6 +54,18 @@ int main() {
     cancel_wire.reason = Reason::None;
     malformed(encode(cancel_wire));
 
+    {
+        Fingerprint windows{43}, other{44};
+        Room room(std::vector<Fingerprint>{fingerprint, windows});
+        auto mac = hello(); auto pc = hello(); pc.fingerprint = windows; auto stranger = hello(); stranger.fingerprint = other;
+        reject(room.handle(9, stranger, 0), Reason::Incompatible, true);
+        assert(room.handle(1, mac, 0).size() == 1 && room.handle(2, pc, 0).size() == 2 && room.count() == 2);
+        for (auto bad : {std::vector<Fingerprint>{}, std::vector<Fingerprint>{windows, windows},
+                         std::vector<Fingerprint>(5, Fingerprint{})}) {
+            try { Room invalid(bad); assert(false); } catch (const std::invalid_argument&) {}
+        }
+    }
+
     for (unsigned count : {2, 3, 4}) {
         Room room(fingerprint);
         auto wrong = hello(); wrong.fingerprint[0] ^= 1;

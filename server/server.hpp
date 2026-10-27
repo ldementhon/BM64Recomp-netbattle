@@ -9,8 +9,10 @@ namespace online::lobby {
 // One serialized room. Pending handshakes have their own bounded transport slots.
 class Server {
 public:
+    Server(const ENetAddress& address, std::vector<Fingerprint> accepted)
+        : host_(make_host(&address, 8)), room_(std::move(accepted)) {}
     Server(const ENetAddress& address, Fingerprint fingerprint)
-        : host_(make_host(&address, 8)), room_(fingerprint) {}
+        : Server(address, std::vector<Fingerprint>{fingerprint}) {}
     unsigned port() const { return host_->address.port; }
     const Room& room() const { return room_; }
     uint64_t input_confirmed() const { return inputs_ ? inputs_->confirmed() : 0; }

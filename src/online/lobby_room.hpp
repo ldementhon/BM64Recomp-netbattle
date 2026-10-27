@@ -2,6 +2,8 @@
 #include "lobby_protocol.hpp"
 #include <algorithm>
 #include <optional>
+#include <stdexcept>
+#include <vector>
 
 namespace online::lobby {
 struct Delivery { uint64_t peer; Packet packet; bool disconnect = false; };
@@ -9,7 +11,15 @@ struct Delivery { uint64_t peer; Packet packet; bool disconnect = false; };
 // The transport serializes calls. Peer IDs come from the server, never a packet.
 class Room {
 public:
-    explicit Room(Fingerprint fingerprint) : fingerprint_(fingerprint) {}
+    // Accepted client builds: one exact build, or a platform build set whose
+    // histories were validated together (for example one Mac and one Windows build).
+    explicit Room(std::vector<Fingerprint> accepted) : accepted_(std::move(accepted)) {
+        if (accepted_.empty() || accepted_.size() > 4) throw std::invalid_argument("room accepts 1 to 4 client builds");
+        for (size_t i = 0; i < accepted_.size(); ++i)
+            for (size_t j = i + 1; j < accepted_.size(); ++j)
+                if (accepted_[i] == accepted_[j]) throw std::invalid_argument("duplicate accepted client build");
+    }
+    explicit Room(Fingerprint fingerprint) : Room(std::vector<Fingerprint>{fingerprint}) {}
     Phase phase() const { return phase_; }
     uint64_t revision() const { return revision_; }
     uint64_t match() const { return match_; }
@@ -36,7 +46,7 @@ public:
         }
         if (p.op == Op::Hello) {
             if (!peer || slot != count_ || !valid_name(p.name)) reject(Reason::Protocol, true);
-            else if (p.fingerprint != fingerprint_) reject(Reason::Incompatible, true);
+            else if (std::find(accepted_.begin(), accepted_.end(), p.fingerprint) == accepted_.end()) reject(Reason::Incompatible, true);
             else if (phase_ != Phase::Lobby) reject(Reason::InProgress, true);
             else if (count_ == 4) reject(Reason::Full, true);
             else {
@@ -127,7 +137,7 @@ private:
         uint64_t frame, ram, registers;
         bool operator==(const Digest&) const = default;
     };
-    Fingerprint fingerprint_;
+    std::vector<Fingerprint> accepted_;
     std::array<Player, 4> players_{};
     std::array<std::optional<Digest>, 4> loaded_{};
     std::array<std::optional<uint64_t>, 4> finished_{};
