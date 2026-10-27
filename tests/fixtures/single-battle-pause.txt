@@ -1,0 +1,5 @@
+# Append with BM64_INPUT_EXTRA (single battle): pause mid-battle, move the cursor, resume.
+2400 2401 1000 0 0 0
+2440 2446 0000 0 -0.7 0
+2470 2476 0000 0 0.7 0
+2520 2521 1000 0 0 0

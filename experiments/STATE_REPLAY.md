@@ -18,6 +18,7 @@ and renderer changes are stored in these patches:
   writeback, and timing instrumentation.
 - `patches/rt64-rsp-rounding.patch`: separate multiply/add rounding in CPU RSP
   transforms, matching the Windows x64 path on Apple Silicon.
+- `patches/rt64-display-textures.patch`: with render-to-RAM off, sampled textures are marked used at submission so eviction cannot drop one before it is drawn.
 - `patches/plume-presentation-probe.patch`: Metal presentation timing.
 - `patches/plume-descriptor-layout.patch`: Windows buffer bindings after static samplers.
 - `patches/plume-texture-readback.patch`: Windows texture-to-buffer copies use the source texture's sample positions.
@@ -88,9 +89,12 @@ fail intermittently. Those failures are attributed to the test PC's RX 9070 XT
 (RDNA 4): a rare one-frame depth glitch that also occurs outside replay, absent on
 its integrated AMD GPU, and removed by a bottom-of-pipe timestamp after each draw.
 That is Mesa's GFX12 Hi-Z workaround (see `online-lobby-plan.md`). No workaround is
-retained yet. The added wait's latency cost also needs measurement. Neither
-Windows replay stability nor cross-platform shader/rasterization equivalence is
-established.
+retained. Instead, `BM64_DISPLAY_ONLY=1` turns RT64's render-to-RAM off in
+checkpoint/online processes. The GPU then only draws the screen, and game RAM
+holds no GPU output. An audit found nothing in the game consuming that output.
+In this mode the Windows replays pass, and Mac/Windows histories match on the
+scripted fixtures; it is not yet the default. The added wait's latency cost
+still needs measurement.
 
 The delayed-input fixture treats player 1 as local and players 2–4 as remote,
 holding each remote pad's last input during a simulated delivery gap, then

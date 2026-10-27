@@ -2,12 +2,13 @@
 
 Status: macOS Online Battle screen is wired and locally exercised, 2026-10-26.
 Four-process scripted Mac rollback matches pass; the full Windows x64 client builds.
-Windows lifecycle checks pass, but full-state validation finds an intermittent
-framebuffer replay failure, now localized to GPU ordering between the 2D
-background and the first 3D draws of each pass. Cross-platform determinism,
-physical-controller validation, real-device audio listening, and human playtests
-remain open. Rumble may be disabled for the first online version (user decision,
-2026-10-25); preserve offline behavior. No server has been rented or deployed.
+With display-only rendering (`BM64_DISPLAY_ONLY=1`, opt-in), GPU output stays out
+of game RAM. Windows RX 9070 XT replays then pass, and scripted Mac/Windows
+histories match on every boundary, including a 20,994-boundary session. In the
+default render-to-RAM mode, Windows replays still fail intermittently. Physical
+controllers, real-device audio listening, and human playtests remain open. Rumble
+may be disabled for the first online version (user decision, 2026-10-25);
+preserve offline behavior. No server has been rented or deployed.
 
 ## Remaining work, in priority order
 
@@ -16,26 +17,21 @@ Fresh-session continuation instructions and diagnostic context are in
 below contains historical results; a successful older image does not certify the
 current build.
 
-1. **Close same-machine Windows replay stability.** The cause is now attributed
-   to the test PC's RX 9070 XT (RDNA 4): a rare one-frame depth-ordering glitch
-   that also occurs outside replay, absent on the PC's integrated AMD GPU, and
-   removed by a dummy bottom-of-pipe timestamp after each draw, matching Mesa's
-   GFX12 Hi-Z/Hi-S workaround (see the newest implementation-record entry).
-   Decide whether to retain an RDNA 4-gated workaround (timestamp per draw, or a
-   barrier at depth-write changes) in Plume's D3D12 and Vulkan backends, measure
-   its cost, then require repeated fresh startup, battle, round, and match
-   histories with full-state restores and negative controls. A short or
-   instrumented pass is insufficient. Other GPUs need the same re-execution
-   check before they are trusted for online play. The framebuffer-consumer audit
-   below found no consumer of GPU output in game state. That makes a display-only
-   online mode (`renderToRAM` off) the preferred alternative to per-GPU
-   workarounds; prototype and validate it first.
-2. **Close cross-platform determinism.** Reuse the archived ordered-arithmetic
-   prototypes as evidence, then isolate any required changes to native rendering.
-   Restore real textures/colors and evaluate interpolation, sampling, depth,
-   blending, and writeback separately. Compare complete Mac/Windows histories;
-   admit only the exact validated build pair. Never exclude framebuffer RAM to
-   make the comparison pass.
+1. **Adopt display-only rendering for online processes.** It removes GPU output
+   from game state (newest implementation-record entry), so neither the RX 9070 XT
+   depth glitch nor Mac/Windows rendering differences reach determinism. Make it
+   the default for checkpoint/online processes, carrying
+   `patches/rt64-display-textures.patch`. Then decide whether the presentation
+   wait and native-path work it makes unnecessary can go; measure before
+   removing them. Spot-check visuals with MSAA and scaled resolutions, Player
+   Select and the other stages. Keep the full-RAM checks unchanged. The
+   RDNA 4 attribution and per-GPU workarounds are only needed if render-to-RAM
+   online play is ever required.
+2. **Extend cross-platform determinism to the network path.** Display-only
+   Mac/Windows histories match for the scripted fixtures (startup, match,
+   Pyramid, pause, long session). Next: a real Mac/Windows network match through
+   the relay, more GPUs and machines, and exact-build-pair admission. Never
+   exclude framebuffer RAM to make a comparison pass.
 3. **Finish playable two-person integration.** Replay-safe audio output exists
    and online rumble is silent; listen on real devices and rebuild Windows with
    them. Check physical controllers, input preferences/calibration, P1 menus,
@@ -48,6 +44,56 @@ current build.
    further performance changes. No server has been purchased or deployed.
 
 ## Implementation record
+
+- Display-only online rendering (2026-10-26): with `BM64_DISPLAY_ONLY=1`,
+  checkpoint/online processes set RT64's `renderToRAM` off. The GPU still draws
+  the screen, but no GPU output is written into game RAM, so all 512 MiB stay
+  hashed and none of it depends on the host GPU. Offline play is unchanged.
+  Audit image `ba747c60…` (writeback probe plus the switch); "masked" is normal
+  mode with GPU-written bytes masked, as in the audit below.
+
+  | Fixture (boundaries) | Display-only vs normal (masked) | Windows RX 9070 XT vs Mac, display-only |
+  | --- | --- | --- |
+  | Startup through Player Select (1,584) | identical RAM and registers | identical full RAM and registers |
+  | Three-round match to scene 21 (5,474) | identical; same `MATCH_COMPLETE` 5401 | identical |
+  | `rollback-inputs` default stage and CPU extra (3,254 each) | identical | — |
+  | Pyramid (3,254) | identical | identical |
+  | Pause mid-battle on Pyramid (2,462) | identical | identical |
+  | Generated nine-round Pyramid session, match end at 10,669, post-match menus (20,994) | identical | identical to Mac normal-masked on all 20,994 |
+
+  Each run also passed its checkpoint replay. On the same Windows image, the
+  display-only startup transition test passed 9/9 against 2/8 for normal mode.
+  Normal-mode failures were the known framebuffer-page divergence (0x11c000,
+  0x21c000). Normal versus poisoned writeback also stayed identical on the new
+  fixtures (Pyramid, pause, and the 20,994-boundary session).
+
+  *Visuals.* A disposable readback dumped the target the present queue shows.
+  The first comparison, 401 frames every 30 boundaries of the long session at 1x
+  without MSAA, found two differing frames. A flashing player's gray phase,
+  every 6th boundary, was missing in display-only mode. Cause: RT64 evicts
+  textures on the HLE thread right after submission, by last-use age. The native
+  renderer marks textures used during submission; display-only marks them only
+  when the workload queue draws later. A texture used every 6 boundaries was
+  evicted just before its draw. `patches/rt64-display-textures.patch` marks
+  sampled textures used at submission in the display-only branch. With it, all
+  401 frames are pixel-identical to normal mode, and display-only histories still
+  match normal masked RAM (match, pause). Remaining visual gaps are MSAA and
+  scaled resolutions (only one 1280×960 spot check), Player Select (not
+  presentable at the dumped boundaries), and other stages.
+
+  *Coverage notes.* `single-battle-stage-third.txt` and `single-battle-pause.txt`
+  are new single-battle fixtures. Pause is blocked online, so it is covered only
+  for safety. The older `rollback-stage-*` extras are timed for the full-boot
+  route and do nothing after the single-battle handoff. Each online match runs in
+  a fresh game process (`MATCH_FINISHED` exits), so rematches from the lobby start
+  from boot and carry no prior-match state. The host settings menu cannot reach
+  guest state in this mode. Diagnostics are archived locally in
+  `build/experiments/display-only-diagnostics.patch`; clean Mac image
+  `32492b43…` passes the display-only startup, round, and match transition tests.
+  Clean Windows image `f18c2745…` passes them too: startup 3/3, round 2/2, and
+  match 2/2, each with full-state replay and its negative control.
+  The checkpoint presentation wait is still in place; with no GPU writes to
+  guest RAM, it may now be removable, which needs measuring.
 
 - Framebuffer-consumer audit (2026-10-26): no game state observed consuming GPU
   output. RT64's default `renderToRAM` writes native color/depth results into
@@ -76,8 +122,9 @@ current build.
   (1500 at startup, 2000 in the match).
 
   *Limits.* The `rollback-stage-next` and `rollback-stage-third` extras produced
-  histories identical to their base fixture in this build, so they add no stage
-  coverage. Fast-boot frames are not rendered, so they are not covered either;
+  histories identical to their base fixture here: they are timed for the
+  full-boot route, not the single-battle handoff. The display-only entry above
+  covers Pyramid, pause, and a long session. Fast-boot frames are not rendered, so they are not covered either;
   online play uses the same fast boot. Pause/settings, other stages and items,
   longer sessions, and the lobby's repeated-match path are untested. The probe
   is archived locally as `build/experiments/writeback-audit.patch`, with runner

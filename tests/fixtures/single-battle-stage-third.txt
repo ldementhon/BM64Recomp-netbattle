@@ -1,0 +1,4 @@
+# Append to rollback-inputs.txt or battle-active-inputs.txt with BM64_INPUT_EXTRA and BM64_SINGLE_BATTLE=1.
+# Two right presses on Stage Select pick the third stage (Pyramid).
+1616 1620 0000 0.7 0 0
+1652 1656 0000 0.7 0 0

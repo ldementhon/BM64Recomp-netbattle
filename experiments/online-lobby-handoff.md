@@ -1,5 +1,13 @@
 # Fresh-session prompt: finish Mac/Windows online rollback Battle
 
+> **Update 2026-10-26 (latest):** display-only rendering (`BM64_DISPLAY_ONLY=1`)
+> keeps GPU output out of game RAM. With it, Windows RX 9070 XT replays pass and
+> scripted Mac/Windows histories match on every boundary, so the RDNA 4 note
+> below no longer blocks determinism. Remaining-work item 1 in
+> `online-lobby-plan.md` is making it the online default.
+> `patches/rt64-display-textures.patch` fixes a texture-eviction race in that
+> mode. Windows runs the clean display-only build.
+
 > **Update 2026-10-26 (later):** the Windows replay failure is attributed to the
 > PC's RX 9070 XT (RDNA 4), not to replay state. It is a rare one-frame depth
 > glitch that also occurs outside replay. Re-executing an unchanged native command
