@@ -14,6 +14,8 @@ and renderer changes are stored in these patches:
 
 - `patches/runtime-checkpoint.patch`: deterministic scheduling, checkpoint state,
   and diagnostic runtime hooks.
+- `patches/runtime-write-watch.patch`: Windows allocates guest RAM with write
+  tracking, so snapshots copy only the pages written since the previous one.
 - `patches/rt64-catchup.patch`: replay presentation suppression, changed-block
   writeback, and timing instrumentation.
 - `patches/rt64-rsp-rounding.patch`: separate multiply/add rounding in CPU RSP

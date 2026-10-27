@@ -20,6 +20,8 @@ struct CheckpointStack {
         uintptr_t sp = 0;
 #if defined(__aarch64__) && defined(MCO_USE_ASM)
         sp = reinterpret_cast<uintptr_t>(static_cast<_mco_context*>(co->context)->ctx.sp);
+#elif (defined(__x86_64__) || defined(_M_X64)) && defined(MCO_USE_ASM)
+        sp = reinterpret_cast<uintptr_t>(static_cast<_mco_context*>(co->context)->ctx.rsp);
 #endif
         // An OS continuation can be suspended on a nested Hudson stack. In that
         // case retain its whole outer stack; its saved SP does not bound it.

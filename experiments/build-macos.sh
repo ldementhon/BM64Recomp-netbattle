@@ -33,6 +33,12 @@ if ! git -C lib/N64ModernRuntime apply --reverse --check "$runtime_patch" 2>/dev
     git -C lib/N64ModernRuntime apply "$runtime_patch"
 fi
 
+watch_patch="$recomp_root/experiments/patches/runtime-write-watch.patch"
+if ! git -C lib/N64ModernRuntime apply --reverse --check "$watch_patch" 2>/dev/null; then
+    git -C lib/N64ModernRuntime apply --check "$watch_patch"
+    git -C lib/N64ModernRuntime apply "$watch_patch"
+fi
+
 renderer_patch="$recomp_root/experiments/patches/rt64-catchup.patch"
 if ! git -C lib/rt64 apply --reverse --check "$renderer_patch" 2>/dev/null; then
     git -C lib/rt64 apply --check "$renderer_patch"

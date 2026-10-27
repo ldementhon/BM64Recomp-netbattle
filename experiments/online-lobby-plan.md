@@ -20,8 +20,9 @@ current build.
 1. **Finish display-only follow-ups.** Display-only is now the online default,
    and the per-frame presentation wait is gone (newest implementation-record
    entry). Spot-check visuals with MSAA and scaled resolutions, Player Select and
-   the other stages. Measure rollback timing on Windows. Keep the full-RAM checks
-   unchanged.
+   the other stages. Windows rollback timing is now measured on a fast desktop
+   (newest implementation-record entry); measure it on lower-end PCs too. Keep
+   the full-RAM checks unchanged.
 2. **Play a live Mac/Windows match.** P1 now chooses the stage online, and a
    validated Mac/Windows build pair can share a room (newest implementation-record
    entry). Next: a real Mac/Windows match through the relay with physical
@@ -39,6 +40,58 @@ current build.
    further performance changes. No server has been purchased or deployed.
 
 ## Implementation record
+
+- Windows snapshots copy only changes (2026-10-27). The first live match over
+  the internet (Mac host, Windows friend) ran at about 5 fps. The host's log
+  showed every rollback pinned at the 12-frame prediction limit, waiting on the
+  Windows peer. On Windows, each snapshot copied all 512 MiB of guest RAM and the
+  whole of every coroutine stack; the 16-slot ring held 8.9 GB. Mac snapshots
+  share RAM pages through `mach_vm_remap` and copy only live stack tails, so they
+  were unaffected.
+
+  With `patches/runtime-write-watch.patch`, Windows allocates guest RAM with
+  `MEM_WRITE_WATCH`. `CheckpointMemory` then stores pages as reference-counted
+  blocks shared between images, and stores all-zero pages as nothing. A table
+  keeps the newest block that still matches each source page, so a written page
+  is copied once and later captures share it. A restore copies back only pages
+  that may differ, and the restored pages stay shared. `CheckpointStack` now reads
+  minicoro's saved `rsp` on x86-64, as it already read `sp` on arm64, so only the
+  live tail of each stack is copied. In a battle, guest RAM holds 2.1 MiB of
+  non-zero pages and about 0.3 MiB change over 16 frames, identically on both
+  platforms. The Mac paths are unchanged; the rebuilt Mac binary has identical
+  code and data sections, so the Mac build `9c13e03a…` stays valid.
+
+  *Windows timing* (Ryzen 7 9800X3D, 64 GB; `run_checkpoint_performance.sh` and
+  `run_catchup.sh perf` setups, display-only, ms):
+
+  | | Full copies (`1548dc14…`) | Shared pages, stack tails (`ff0c553d…`) |
+  | --- | --- | --- |
+  | Snapshot, p50 / p99 | 15.9 / 39.0 | 0.31 / 0.69 |
+  | Restore, p50 | 16.0 | 0.56 |
+  | 4-update rollback window, median | 83.8 | 5.5 |
+  | 12-update rollback window, median / p95 | 215.0 / 226.9 | 10.2 / 13.7 |
+  | 16-slot ring memory | 8.9 GB | 7.6 MB |
+
+  An intermediate build that tracked written pages per image without sharing
+  them (`75298878…`, briefly distributed) took 0.72 ms per snapshot and 408 MB,
+  almost all of it full stack copies.
+
+  *Validation.* `checkpoint_memory.cpp` runs the shared-page path on Windows. It
+  covers restoring a slot, then capturing and restoring it again. It also checks
+  that ring images share pages and that pages written back to zero store
+  nothing. It passes on both platforms, as do the coroutine stack replay tests
+  (Windows `/Od` and `/O2`). On Windows image `ff0c553d…`, these pass:
+  - startup, match, and round transitions, including their negative stack
+    controls; each matches the Mac histories under `--cross-build`;
+  - the 400-frame rolling ring replay;
+  - continuous 4- and 12-update rollbacks with full RAM/register verification;
+  - 34 verified 12-update catch-up windows;
+  - the negative input control, which diverges at frame 2083 as on the Mac.
+
+  A live LAN match through `bm64-lobby` matched on all 31 checkpoints to frame
+  6,000. The LAN was too fast to trigger rollbacks, so rollbacks over a real
+  network are still unexercised. New validated pair: Mac `9c13e03a…`
+  (fingerprint `0d8480e7…`) and Windows `ff0c553d…` (fingerprint `0ed3dd6b…`).
 
 - Cross-machine rehearsal (2026-10-26). `tests/network_peer.cpp` (CMake target
   `network_peer`, Mac and Windows) is one scripted player that joins a real

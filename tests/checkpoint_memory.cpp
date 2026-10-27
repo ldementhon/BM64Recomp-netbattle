@@ -14,7 +14,7 @@ int main() {
 #ifdef _WIN32
     SYSTEM_INFO info; GetSystemInfo(&info);
     size_t page = info.dwPageSize;
-    auto* allocation = static_cast<uint8_t*>(VirtualAlloc(nullptr, size+2*page, MEM_RESERVE|MEM_COMMIT, PAGE_READWRITE));
+    auto* allocation = static_cast<uint8_t*>(VirtualAlloc(nullptr, size+2*page, MEM_RESERVE|MEM_COMMIT|MEM_WRITE_WATCH, PAGE_READWRITE));
     check(allocation != nullptr);
 #else
     size_t page = getpagesize();
@@ -35,6 +35,26 @@ int main() {
         ram[0]=255; ram[size-1]=255;
         check(allocation[0]==91 && ram[size]==92);
     }
+#ifdef _WIN32
+    // The ring holds about 80 distinct pages; unshared images would hold over 600.
+    auto stored = [&] { size_t bytes = 0; for (auto& image : ring) bytes += image.copied_bytes(); return bytes; };
+    check(stored() < 200*page);
+    // Pages written back to zero store nothing.
+    for (unsigned j=0;j<100;++j) { ram[size/4+j*page]=1; ram[size/4+j*page]=0; }
+    size_t before = stored(); ring[7].capture(ram,size);
+    check(stored() < before + 10*page);
+#endif
+    // Rollback reuses a slot right after restoring it: restore, replay, capture, restore.
+    ring[5].restore(ram); check(ram[0]==37);
+    ram[0]=200; ram[size/2+60*page]=7; ring[5].capture(ram,size);
+    ram[0]=201; ram[size/2+60*page]=8; ram[size/2+61*page]=9;
+    ring[6].restore(ram); check(ram[0]==38 && ram[size/2+60*page]==0 && ram[size/2+61*page]==0);
+    ring[5].restore(ram); check(ram[0]==200 && ram[size/2+60*page]==7 && ram[size/2+61*page]==0);
+#ifdef _WIN32
+    // Write-watched images hold only pages the source has written.
+    check(ring[5].copied_bytes() < size/64);
+#endif
+    ram[0]=255; ram[size-1]=255;
     CheckpointMemory reference; reference.capture(ram,size,true); ram[0]=3; reference.restore(ram);check(ram[0]==255);
     // Replacing an existing snapshot must not mutate snapshots that share its
     // old pages. Exercise both storage-mode transitions and a size change.
