@@ -14,6 +14,9 @@
 #include <unordered_map>
 #include <map>
 #include <tuple>
+#include <deque>
+#include <future>
+#include <optional>
 #ifdef __APPLE__
 #include <mach/mach_time.h>
 #endif
@@ -28,6 +31,7 @@
 #include <charconv>
 #include "zelda_cheats.h"
 #include "zelda_sound.h"
+#include "zelda_config.h"
 #include "recomp_input.h"
 #include "recomp_render_checkpoint.h"
 
@@ -271,6 +275,40 @@ static Digest digest() {
     XXH3_64bits_update(&state, &player_select_passed, sizeof(player_select_passed));
     auto context_hash = XXH3_64bits_digest(&state);
     return {XXH3_64bits(ram, recomp::mem_size), context_hash};
+}
+// Online state checks hash all 512 MiB in 128 KiB sections, so a desync log
+// shows where clients differ. Null pages are zeros; the result does not depend
+// on page size, so Mac and Windows hashes are comparable.
+constexpr size_t check_section = 128 * 1024;
+struct StateHash { uint64_t ram = 0; std::vector<uint64_t> sections; double ms = 0; };
+static const std::vector<uint8_t> check_zeros(check_section);
+static const uint64_t zero_section = XXH3_64bits(check_zeros.data(), check_section);
+template <class Page> static StateHash state_hash(size_t page_size, Page&& page) {
+    require(page_size && check_section % page_size == 0, "unsupported state-check page size");
+    auto start = std::chrono::steady_clock::now();
+    StateHash hash; hash.sections.resize(recomp::mem_size / check_section);
+    const size_t pages = check_section / page_size;
+    for (size_t s = 0; s < hash.sections.size(); ++s) {
+        bool any = false;
+        for (size_t i = 0; i < pages && !any; ++i) any = page(s * pages + i) != nullptr;
+        if (!any) { hash.sections[s] = zero_section; continue; }
+        XXH3_state_t state;
+        XXH3_64bits_reset(&state);
+        for (size_t i = 0; i < pages; ++i) {
+            const uint8_t* bytes = page(s * pages + i);
+            XXH3_64bits_update(&state, bytes ? bytes : check_zeros.data(), page_size);
+        }
+        hash.sections[s] = XXH3_64bits_digest(&state);
+    }
+    hash.ram = XXH3_64bits(hash.sections.data(), hash.sections.size() * sizeof(uint64_t));
+    hash.ms = std::chrono::duration<double, std::milli>(std::chrono::steady_clock::now() - start).count();
+    return hash;
+}
+static StateHash state_hash(const CheckpointMemory& image) {
+    return state_hash(image.page_size(), [&](size_t index) { return image.page(index); });
+}
+static StateHash live_state_hash() {
+    return state_hash(4096, [](size_t index) -> const uint8_t* { return ram + index * 4096; });
 }
 #include "comparable_state.inc"
 static bool benchmark(unsigned at) {

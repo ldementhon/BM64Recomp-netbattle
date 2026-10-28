@@ -118,6 +118,8 @@ namespace zelda64 {
     void set_invert_y_axis_mode(AimInvertMode mode);
 
     void open_quit_game_prompt();
+    // An online match keeps running after a desync; P1 may restart it.
+    void show_online_desync(bool player_one);
 };
 
 #endif

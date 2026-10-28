@@ -7,6 +7,7 @@
 #include <map>
 #include <optional>
 #include <string>
+#include <utility>
 #include <vector>
 #ifndef _WIN32
 #include <sys/types.h>
@@ -46,7 +47,9 @@ public:
     bool send_inputs(const InputBatch& batch);
     std::vector<InputBatch> take_inputs() { auto result = std::move(inputs_); inputs_.clear(); return result; }
     std::vector<MatchMessage> take_states() { auto result = std::move(states_); states_.clear(); return result; }
-    bool state_checked(uint64_t frame);
+    bool state_checked(uint64_t frame, bool desync = false);
+    // True once after P1 confirms a restart in the match window.
+    bool take_restart() { return std::exchange(restart_, false); }
 
 private:
     int reap();
@@ -69,6 +72,7 @@ private:
     std::vector<InputBatch> inputs_;
     std::vector<MatchMessage> states_;
     std::optional<uint64_t> pending_state_;
+    bool restart_ = false;
     unsigned humans_ = 4, local_slot_ = 0;
 };
 }

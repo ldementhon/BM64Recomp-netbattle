@@ -56,10 +56,15 @@ int main(int argc, char** argv) {
                 channel.send({online::match_channel_version, online::MatchEvent::State, match, 1376,
                               std::string(argv[1]) == "--desync-child" ? 999u : 123u, 456});
                 for (;;) {
-                    if (auto checked = channel.receive(); checked && checked->event == online::MatchEvent::StateChecked) {
+                    auto checked = channel.receive();
+                    if (checked && checked->event == online::MatchEvent::StateChecked) {
                         assert(checked->frame == 1376);
                         break;
                     }
+                    // A desync keeps the game running; P1's window asks for a restart.
+                    if (checked && checked->event == online::MatchEvent::Desync && input.slot == 0)
+                        channel.send({online::match_channel_version, online::MatchEvent::Restart, match, 1377});
+                    channel.flush();
                     std::this_thread::sleep_for(std::chrono::milliseconds(1));
                 }
                 channel.send({online::match_channel_version, online::MatchEvent::Finished, match, 1376});
@@ -293,10 +298,15 @@ int main(int argc, char** argv) {
         launch.arguments = {"--desync-child"};
         b = std::make_unique<LobbySession>("127.0.0.1", uint16_t(server.port()), "Bob", fingerprint, launch);
         until([&] { return a.connection().roster().count == 2 && b->connection().roster().count == 2; });
+        auto desync_match = a.connection().roster().match + 1;
         prepare();
-        until([&] { return a.connection().roster().phase == Phase::Lobby && b->connection().roster().phase == Phase::Lobby; });
-        assert(a.error().starts_with(reason_text(Reason::Mismatch)) && b->error().starts_with(reason_text(Reason::Mismatch)));
-        assert(a.error().find("Frame 1376") != std::string::npos && b->error().find("Frame 1376") != std::string::npos);
+        // Differing states keep both games running until P1 restarts with the same roster.
+        until([&] { return a.connection().roster().match == desync_match + 1 && b->connection().roster().match == desync_match + 1 &&
+            a.game().state() != online::GameSession::State::Lobby && b->game().state() != online::GameSession::State::Lobby; });
+        assert(a.error().empty() && b->error().empty());
+        a.cancel();
+        until([&] { return a.connection().roster().phase == Phase::Lobby && b->connection().roster().phase == Phase::Lobby &&
+            a.game().state() == online::GameSession::State::Lobby && b->game().state() == online::GameSession::State::Lobby; });
         assert(a.connection().joined() && b->connection().joined() && a.game().settings().empty() && b->game().settings().empty());
         // A reconnect may reuse a server match ID; it must not erase the last attempt.
         auto log_base = scratch / "retention.log";

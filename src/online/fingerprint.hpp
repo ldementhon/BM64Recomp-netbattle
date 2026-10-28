@@ -105,11 +105,11 @@ inline Fingerprint client_fingerprint(const std::filesystem::path& executable, c
     auto game_hash = file_sha256(executable), rom_hash = file_sha256(rom);
     // Domain separation includes the wire/profile version and native architecture.
 #if defined(_WIN32) && (defined(_M_X64) || defined(__x86_64__))
-    constexpr std::string_view profile = "BM64 online v2; Windows x86_64; fixed Battle profile 1; delay 2";
+    constexpr std::string_view profile = "BM64 online v3; Windows x86_64; fixed Battle profile 1; delay 2";
 #elif defined(__APPLE__) && defined(__aarch64__)
-    constexpr std::string_view profile = "BM64 online v2; macOS arm64; fixed Battle profile 1; delay 2";
+    constexpr std::string_view profile = "BM64 online v3; macOS arm64; fixed Battle profile 1; delay 2";
 #elif defined(__APPLE__) && defined(__x86_64__)
-    constexpr std::string_view profile = "BM64 online v2; macOS x86_64; fixed Battle profile 1; delay 2";
+    constexpr std::string_view profile = "BM64 online v3; macOS x86_64; fixed Battle profile 1; delay 2";
 #else
 #error Unsupported online client architecture
 #endif

@@ -48,12 +48,13 @@ public:
                     game_.start(match_, launch_.executable, launch_.rom, log_,
                                 launch_.arguments, launch_.diagnostics, event.count, connection_.slot(), input_);
                 } else if (event.op == Op::End) {
-                    if (error_.empty() && event.reason != Reason::None && event.reason != Reason::Cancelled && !log_.empty())
+                    if (error_.empty() && event.reason != Reason::None && event.reason != Reason::Cancelled &&
+                        event.reason != Reason::Restarted && !log_.empty())
                         error_ = connection_.error() + match_log_location(log_);
                     game_.cancel(match_);
                     stopping_ = true;
-                } else if (event.op == Op::StateChecked) {
-                    game_.state_checked(event.frame);
+                } else if (event.op == Op::StateChecked || event.op == Op::Desync) {
+                    game_.state_checked(event.frame, event.op == Op::Desync);
                 }
             }
             if (connection_.disconnected()) {
@@ -75,6 +76,7 @@ public:
             }
             for (const auto& input : game_.take_inputs()) connection_.send_inputs(input);
             for (const auto& state : game_.take_states()) connection_.check_state(state.frame, state.ram, state.registers);
+            if (game_.take_restart()) connection_.restart();
             for (const auto& input : relays) game_.send_inputs(input);
             if (game_.ready() && !loaded_ && connection_.clock()) {
                 const auto& ready = *game_.ready();

@@ -46,6 +46,8 @@ static void run(int argc, char** argv) {
                 game.cancel(event.match);
             } else if (event.op == Op::StateChecked) {
                 check(game.state_checked(event.frame), "state acknowledgment arrived outside play");
+            } else if (event.op == Op::Desync) {
+                throw std::runtime_error("peers desynchronized at guest frame " + std::to_string(event.frame) + " (" + log.string() + ")");
             } else if (event.op == Op::Reject) throw std::runtime_error(reason_text(event.reason));
         }
         check(!client.disconnected(), client.error());

@@ -67,8 +67,12 @@ def run(mode):
                            cwd=ROOT, env=environment, stdout=log, stderr=subprocess.STDOUT, check=True, timeout=170)
     assert sha(GAME) == metadata["game"] and sha(HARNESS) == metadata["harness"], "executable changed during run"
     if mode == "desync":
-        assert "PASS: live desync detected; all 4 clients returned to lobby" in (directory / "runner.log").read_text()
-        print("PASS: desync: one client's altered replay is detected and all four games close", flush=True)
+        assert "PASS: live desync reported to all 4 clients; play continued to 1000; P1 restarted the match" in (directory / "runner.log").read_text()
+        for slot in range(4):
+            text = (directory / f"player-{slot}.log").read_text()
+            assert "NETWORK_DESYNC:" in text and "NETWORK_SECTIONS:" in text and "MATCH_ERROR:" not in text
+            assert "NETWORK_STATE: frame=1000 " in text, "play stopped at the desync"
+        print("PASS: desync: one client's altered replay is reported to all four games, which keep playing until P1 restarts", flush=True)
         return
     rows = histories(directory, rematch=mode == "match")
     if mode == "baseline":

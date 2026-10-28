@@ -117,6 +117,20 @@ int main(int argc, char** argv) {
                 std::this_thread::sleep_for(1ms);
             }
         }
+        if (std::string(argv[1]) == "--child-desync") {
+            channel.send({online::match_channel_version, online::MatchEvent::State, match, 1574, 789, 1011});
+            for (;;) {
+                if (auto checked = channel.receive()) {
+                    assert(checked->event == online::MatchEvent::Desync && checked->frame == 1574);
+                    break;
+                }
+                std::this_thread::sleep_for(1ms);
+            }
+            // The game keeps running after a desync; P1 asks the owner for a restart.
+            channel.send({online::match_channel_version, online::MatchEvent::Restart, match, 1575});
+            while (!channel.flush()) std::this_thread::sleep_for(1ms);
+            for (;;) std::this_thread::sleep_for(1s);
+        }
         if (std::string(argv[1]) == "--child-left") {
             channel.send({online::match_channel_version, online::MatchEvent::Left, match, 1380});
             while (!channel.flush()) std::this_thread::sleep_for(1ms);
@@ -348,6 +362,19 @@ int main(int argc, char** argv) {
         try { session.state_checked(1575); assert(false); } catch (const std::runtime_error&) {}
         assert(session.state_checked(1574));
         assert(wait_exit(session).completed_frame && session.take_states().empty());
+        start(22, "--child-desync"); wait_ready(session); assert(session.playing(22));
+        states.clear(); state_deadline = std::chrono::steady_clock::now() + 2s;
+        while (states.empty() && std::chrono::steady_clock::now() < state_deadline) {
+            assert(!session.poll()); states = session.take_states(); std::this_thread::sleep_for(1ms);
+        }
+        assert(states.size() == 1 && session.state_checked(1574, true));
+        bool restart = false;
+        for (auto restart_deadline = std::chrono::steady_clock::now() + 2s;
+             !restart && std::chrono::steady_clock::now() < restart_deadline; std::this_thread::sleep_for(1ms)) {
+            assert(!session.poll()); restart = session.take_restart();
+        }
+        assert(restart && !session.take_restart() && session.state() == online::GameSession::State::Playing);
+        assert(session.cancel(22) && session.state() == online::GameSession::State::Lobby);
 #ifdef _WIN32
         CloseHandle(sentinel);
 #endif

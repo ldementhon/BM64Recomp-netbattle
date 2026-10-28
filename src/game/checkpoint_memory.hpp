@@ -246,6 +246,26 @@ public:
 #endif
         std::memcpy(target, copy_.data(), size_);
     }
+    // A page of the image, or null for a page of zeros. Another thread may read
+    // an image while its owner neither recaptures nor clears it.
+    size_t page_size() const {
+#ifdef __APPLE__
+        if (image_) return vm_page_size;
+#endif
+#ifdef _WIN32
+        if (watched_) return watch().page;
+#endif
+        return 4096;
+    }
+    const uint8_t* page(size_t index) const {
+#ifdef __APPLE__
+        if (image_) return reinterpret_cast<const uint8_t*>(image_) + index * vm_page_size;
+#endif
+#ifdef _WIN32
+        if (watched_) { Block* block = blocks_.get(index); return block ? block->data() : nullptr; }
+#endif
+        return copy_.data() + index * 4096;
+    }
     size_t copied_bytes() const {
 #ifdef _WIN32
         // Images share blocks, so each reports an equal share of the stored pages.

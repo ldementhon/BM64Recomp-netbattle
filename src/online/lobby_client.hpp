@@ -71,6 +71,8 @@ public:
         require_phase(Phase::Playing);
         auto p = command(Op::State); p.frame = frame; p.ram = ram; p.registers = registers; send(p);
     }
+    // Only P1 may restart; the relay ends this match and prepares another.
+    void restart() { require_phase(Phase::Playing); send(command(Op::Restart)); }
 
     std::vector<Packet> poll() {
         std::vector<Packet> events;
@@ -128,7 +130,7 @@ public:
                         if (p.match != roster_.match || start_at_) throw std::runtime_error("unexpected match start");
                         try { start_at_ = clock_.local_start(p.time, now()); }
                         catch (const std::runtime_error& e) { error_ = e.what(); cancel(Reason::LoadFailed); continue; }
-                    } else if (p.op == Op::StateChecked) {
+                    } else if (p.op == Op::StateChecked || p.op == Op::Desync) {
                         require_phase(Phase::Playing);
                         if (p.match != roster_.match || !p.frame || p.frame <= checked_frame_)
                             throw std::runtime_error("unexpected state-check acknowledgment");
@@ -136,7 +138,7 @@ public:
                     } else if (p.op == Op::End) {
                         if (p.match != roster_.match) throw std::runtime_error("unexpected match termination");
                         start_at_.reset(); input_events_.clear();
-                        if (p.reason != Reason::None && error_.empty()) error_ = reason_text(p.reason);
+                        if (p.reason != Reason::None && p.reason != Reason::Restarted && error_.empty()) error_ = reason_text(p.reason);
                         if (p.reason == Reason::Mismatch && p.frame) error_ += " Frame " + std::to_string(p.frame) + ".";
                     } else if (p.op == Op::Reject) error_ = reason_text(p.reason);
                     else throw std::runtime_error("unexpected server message");

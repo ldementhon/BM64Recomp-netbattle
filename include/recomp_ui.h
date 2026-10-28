@@ -118,6 +118,8 @@ namespace recompui {
     );
     void close_prompt();
     bool is_prompt_open();
+    // A message across the top of the game that never takes input.
+    void show_banner(const std::string& text);
     void update_mod_list(bool scan_mods = true);
     void process_game_started();
 

@@ -68,24 +68,18 @@ public:
             } else if (slot != 0) reject(Reason::NotP1);
             else if (count_ < 2 || !std::all_of(players_.begin(), players_.begin() + count_,
                                              [](const Player& player) { return player.ready; })) reject(Reason::NotReady);
-            else {
-                ++match_;
-                phase_ = Phase::Loading;
-                deadline_ = now + 30000;
-                loaded_.fill(std::nullopt); finished_.fill(std::nullopt);
-                states_.fill(std::nullopt); checked_.reset(); state_deadline_ = 0;
-                publish(out);
-                Packet prepare{Op::Prepare};
-                prepare.revision = revision_; prepare.match = match_; prepare.count = uint8_t(count_);
-                broadcast(out, prepare);
-            }
+            else prepare(out, now);
             return out;
         }
-        if (p.op != Op::Loaded && p.op != Op::Cancel && p.op != Op::Finished && p.op != Op::State) {
+        if (p.op != Op::Loaded && p.op != Op::Cancel && p.op != Op::Finished && p.op != Op::State && p.op != Op::Restart) {
             reject(Reason::Protocol, true); return out;
         }
         if (p.match != match_ || phase_ == Phase::Lobby) return out;
-        if (p.op == Op::Cancel) {
+        if (p.op == Op::Restart) {
+            // Same roster, fresh game processes: the only way back from a desync.
+            if (slot != 0) reject(Reason::NotP1);
+            else if (phase_ == Phase::Playing) { end(out, Reason::Restarted); prepare(out, now); }
+        } else if (p.op == Op::Cancel) {
             end(out, p.reason == Reason::LoadFailed ? Reason::LoadFailed : Reason::Cancelled);
         } else if (p.op == Op::Loaded && phase_ == Phase::Loading) {
             Digest digest{p.frame, p.ram, p.registers};
@@ -107,18 +101,22 @@ public:
             }
         } else if (p.op == Op::State && phase_ == Phase::Playing) {
             Digest digest{p.frame, p.ram, p.registers};
+            // Every client checks the same frames in order, so a skipped or
+            // misaligned frame is a protocol fault, not a game desync.
             if (now < start_epoch_ || p.frame <= checked_->frame ||
                 p.frame - checked_->frame > state_check_interval) {
                 end(out, Reason::Mismatch, p.frame); return out;
             }
             for (const auto& state : states_) {
-                if (state && *state != digest) { end(out, Reason::Mismatch, p.frame); return out; }
+                if (state && state->frame != p.frame) { end(out, Reason::Mismatch, p.frame); return out; }
             }
             states_[slot] = digest;
-            if (!state_deadline_) state_deadline_ = now + 5000;
             if (std::all_of(states_.begin(), states_.begin() + count_, [](const auto& s) { return s.has_value(); })) {
-                checked_ = digest; states_.fill(std::nullopt); state_deadline_ = 0;
-                Packet checked{Op::StateChecked}; checked.match = match_; checked.frame = p.frame;
+                // A differing state cannot be repaired, so play continues and the
+                // players decide whether to restart.
+                bool equal = std::all_of(states_.begin(), states_.begin() + count_, [&](const auto& s) { return *s == digest; });
+                checked_ = digest; states_.fill(std::nullopt);
+                Packet checked{equal ? Op::StateChecked : Op::Desync}; checked.match = match_; checked.frame = p.frame;
                 broadcast(out, checked);
             }
         } else if (p.op == Op::Finished && phase_ == Phase::Playing) {
@@ -148,7 +146,6 @@ public:
     std::vector<Delivery> tick(uint64_t now) {
         std::vector<Delivery> out;
         if (phase_ != Phase::Lobby && deadline_ && now >= deadline_) end(out, Reason::Timeout);
-        if (phase_ == Phase::Playing && state_deadline_ && now >= state_deadline_) end(out, Reason::Timeout);
         return out;
     }
 
@@ -163,7 +160,6 @@ private:
     std::array<std::optional<uint64_t>, 4> finished_{};
     std::array<std::optional<Digest>, 4> states_{};
     std::optional<Digest> checked_;
-    uint64_t state_deadline_ = 0;
     unsigned count_ = 0;
     Phase phase_ = Phase::Lobby;
     uint64_t revision_ = 0, match_ = 0, deadline_ = 0, start_epoch_ = 0;
@@ -190,12 +186,23 @@ private:
         for (auto& player : players_) player.ready = false;
         publish(out);
     }
+    void prepare(std::vector<Delivery>& out, uint64_t now) {
+        ++match_;
+        phase_ = Phase::Loading;
+        deadline_ = now + 30000;
+        loaded_.fill(std::nullopt); finished_.fill(std::nullopt);
+        states_.fill(std::nullopt); checked_.reset();
+        publish(out);
+        Packet prepare{Op::Prepare};
+        prepare.revision = revision_; prepare.match = match_; prepare.count = uint8_t(count_);
+        broadcast(out, prepare);
+    }
     void end(std::vector<Delivery>& out, Reason reason, uint64_t frame = 0) {
         Packet end{Op::End}; end.match = match_; end.reason = reason; end.frame = frame;
         broadcast(out, end);
         phase_ = Phase::Lobby; deadline_ = 0;
         loaded_.fill(std::nullopt); finished_.fill(std::nullopt);
-        states_.fill(std::nullopt); checked_.reset(); state_deadline_ = 0;
+        states_.fill(std::nullopt); checked_.reset();
         changed_roster(out);
     }
 };

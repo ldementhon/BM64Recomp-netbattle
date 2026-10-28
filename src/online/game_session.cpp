@@ -23,7 +23,7 @@ void GameSession::cleanup() {
     channel_ = MatchChannel{};
     ready_.reset();
     inputs_.clear();
-    states_.clear(); pending_state_.reset();
+    states_.clear(); pending_state_.reset(); restart_ = false;
     if (!settings_.empty()) {
         std::error_code ignored;
         std::filesystem::remove_all(settings_, ignored);
@@ -194,10 +194,10 @@ bool GameSession::send_inputs(const InputBatch& batch) {
     return true;
 }
 
-bool GameSession::state_checked(uint64_t frame) {
+bool GameSession::state_checked(uint64_t frame, bool desync) {
     if (state_ != State::Playing) return false;
     if (pending_state_ != frame) throw std::runtime_error("unexpected state-check acknowledgment");
-    channel_.send({match_channel_version, MatchEvent::StateChecked, match_, frame});
+    channel_.send({match_channel_version, desync ? MatchEvent::Desync : MatchEvent::StateChecked, match_, frame});
     pending_state_.reset();
     return true;
 }
@@ -223,6 +223,8 @@ std::optional<GameSession::Exit> GameSession::poll(std::chrono::steady_clock::ti
                 auto status = reap();
                 cleanup();
                 return Exit{match_, status, false, message->frame, {}};
+            } else if (message->event == MatchEvent::Restart && state_ == State::Playing && local_slot_ == 0) {
+                restart_ = true;
             } else if (message->event == MatchEvent::Left && state_ != State::Lobby) {
                 auto status = reap();
                 cleanup();

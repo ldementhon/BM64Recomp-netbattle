@@ -7,13 +7,13 @@
 #include <vector>
 
 namespace online::lobby {
-constexpr uint16_t protocol_version = 2;
+constexpr uint16_t protocol_version = 3;
 constexpr size_t packet_limit = 1199;
 constexpr uint8_t control_channel = 0, channel_count = 5;
 using Fingerprint = std::array<uint8_t, 32>;
 enum class Phase : uint8_t { Lobby, Loading, Playing };
-enum class Op : uint8_t { Hello = 1, Roster, Ready, Start, Prepare, Loaded, Commit, Cancel, Finished, End, Reject, Ping, Pong, State, StateChecked };
-enum class Reason : uint8_t { None, Protocol, Incompatible, Full, InProgress, StaleRoster, NotReady, NotP1, LoadFailed, Mismatch, Timeout, Left, Cancelled };
+enum class Op : uint8_t { Hello = 1, Roster, Ready, Start, Prepare, Loaded, Commit, Cancel, Finished, End, Reject, Ping, Pong, State, StateChecked, Desync, Restart };
+enum class Reason : uint8_t { None, Protocol, Incompatible, Full, InProgress, StaleRoster, NotReady, NotP1, LoadFailed, Mismatch, Timeout, Left, Cancelled, Restarted };
 struct Player { uint64_t id = 0; std::string name; bool ready = false; };
 
 // Only fields selected by op are serialized. No native padding or pointers cross the wire.
@@ -119,7 +119,9 @@ inline std::vector<uint8_t> encode(const Packet& p) {
     case Op::Commit: w.number(p.match, 8); w.number(p.time, 8); break;
     case Op::Cancel: w.number(p.match, 8); w.number(uint8_t(p.reason), 1); break;
     case Op::Finished:
-    case Op::StateChecked: w.number(p.match, 8); w.number(p.frame, 8); break;
+    case Op::StateChecked:
+    case Op::Desync: w.number(p.match, 8); w.number(p.frame, 8); break;
+    case Op::Restart: w.number(p.match, 8); break;
     case Op::End: w.number(p.match, 8); w.number(p.frame, 8); w.number(uint8_t(p.reason), 1); break;
     case Op::Reject: w.number(uint8_t(p.reason), 1); break;
     case Op::Ping: w.number(p.identity, 8); break;
@@ -169,14 +171,16 @@ inline Packet decode(std::span<const uint8_t> bytes) {
             throw std::invalid_argument("invalid cancellation reason");
         break;
     case Op::Finished:
-    case Op::StateChecked: p.match = r.number(8); p.frame = r.number(8); break;
+    case Op::StateChecked:
+    case Op::Desync: p.match = r.number(8); p.frame = r.number(8); break;
+    case Op::Restart: p.match = r.number(8); break;
     case Op::End: p.match = r.number(8); p.frame = r.number(8); p.reason = Reason(r.number(1)); break;
     case Op::Reject: p.reason = Reason(r.number(1)); break;
     case Op::Ping: p.identity = r.number(8); break;
     case Op::Pong: p.identity = r.number(8); p.time = r.number(8); break;
     default: throw std::invalid_argument("unknown lobby message");
     }
-    if (p.reason > Reason::Cancelled || !r.end()) throw std::invalid_argument("invalid lobby packet tail");
+    if (p.reason > Reason::Restarted || !r.end()) throw std::invalid_argument("invalid lobby packet tail");
     return p;
 }
 
@@ -195,6 +199,7 @@ inline const char* reason_text(Reason reason) {
     case Reason::Timeout: return "The match timed out.";
     case Reason::Left: return "A player disconnected.";
     case Reason::Cancelled: return "A player left or cancelled the match.";
+    case Reason::Restarted: return "Player 1 restarted the match.";
     }
     return "Invalid protocol.";
 }

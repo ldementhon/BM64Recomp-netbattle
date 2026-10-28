@@ -2,8 +2,8 @@
 
 > **Update 2026-10-27:** the six Windows multiplayer review fixes are implemented.
 > See the current status and newest entry in `online-lobby-plan.md`; everything
-> below is historical context. The relay now uses protocol 2 and the private
-> game channel uses version 4. Windows regressions, a cross-platform startup
+> below is historical context. The relay now uses protocol 3 and the private
+> game channel uses version 5; desync checks warn instead of ending the match. Windows regressions, a cross-platform startup
 > comparison, and a 1,000-update Mac/Windows LAN match now pass. The latest plan
 > entry records the tested fingerprints and limits; earlier fingerprints are
 > obsolete. Mixed-platform delay, physical controllers, and audio still need

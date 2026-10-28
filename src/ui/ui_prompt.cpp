@@ -358,3 +358,47 @@ bool recompui::is_prompt_open() {
 
 	return recompui::is_context_shown(prompt_state.ui_context);
 }
+
+void recompui::show_banner(const std::string& text) {
+    static std::mutex mutex;
+    static ContextId context = ContextId::null();
+    static Label* label = nullptr;
+    std::lock_guard lock{ mutex };
+
+    ContextId prev_context = try_close_current_context();
+
+    if (context == ContextId::null()) {
+        context = create_context();
+        context.open();
+        context.set_captures_input(false);
+        context.set_captures_mouse(false);
+
+        Element* window = context.create_element<Element>(context.get_root_element());
+        window->set_display(Display::Flex);
+        window->set_flex_direction(FlexDirection::Column);
+        window->set_align_items(AlignItems::Center);
+        window->set_padding_top(24, Unit::Dp);
+
+        label = context.create_element<Label>(window, "", LabelStyle::Small);
+        label->set_max_width(900, Unit::Dp);
+        label->set_padding(16, Unit::Dp);
+        label->set_text_align(TextAlign::Center);
+        label->set_border_width(1.1, Unit::Dp);
+        label->set_border_radius(12, Unit::Dp);
+        label->set_border_color(Color{ 233, 205, 53, 204 });
+        label->set_background_color(Color{ 8, 7, 13, 229 });
+    }
+    else {
+        context.open();
+    }
+    label->set_text(text);
+    context.close();
+
+    if (prev_context != ContextId::null()) {
+        prev_context.open();
+    }
+
+    if (!recompui::is_context_shown(context)) {
+        recompui::show_context(context, "");
+    }
+}

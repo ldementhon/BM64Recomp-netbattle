@@ -58,15 +58,20 @@ completed a human Mac/Windows internet match and scripted LAN rematches. Repeate
 physical-controller sessions, wider hardware coverage, and the four-person remote
 acceptance run remain open. Historical passes do not certify a rebuilt pair.
 
-The current wire protocol is version 2 (private owner/game channel version 4).
+The current wire protocol is version 3 (private owner/game channel version 5).
 Rebuild the relay and every client together, then revalidate their fingerprints.
-Old version-1 peers are rejected. Every 300 game updates, the game hashes full RAM
-and comparable registers at a confirmed boundary. The relay compares every
-player's report and ends the match on disagreement, with the guest frame in the
-error. A missing peer report times out after five seconds. Play continues while
-the acknowledgment is in flight, but a second check waits for the first one.
-`NETWORK_CHECK_COST` logs the hash and presentation-drain cost in milliseconds;
-these checks are a diagnostic guard, not a proof that native continuations match.
+Older peers are rejected. Every 300 game updates, the game takes a separate
+copy-on-write image of that boundary, and hashes all 512 MiB plus comparable
+registers on another thread once the boundary is confirmed. Play never waits for
+a check. The hash is built from 128 KiB section hashes. Each player reports one
+check at a time. Once every player has reported, the relay acknowledges equal
+states or sends `Desync`. A desync is not repaired: play continues, the match
+window shows a banner, and P1's next window close offers **Restart**, which
+reloads a fresh match with the same roster. A misaligned check frame is a protocol
+fault and ends the match. `NETWORK_DESYNC` and `NETWORK_SECTIONS` log the frame
+and the nonzero section hashes, so comparing player logs shows where states
+differ. `NETWORK_CHECK_COST` logs the background hash time. These checks are a
+diagnostic guard, not a proof that native continuations match.
 
 The launcher's `online-match-logs` directory keeps the ten most recent attempts,
 including across reconnects. Failure messages include the corresponding log path.
@@ -86,12 +91,12 @@ numbers and bounded simulation lead still need the input protocol; clock estimat
 alone cannot synchronize gameplay over asymmetric routes.
 
 Control messages use reliable ordered channel 0, explicit big-endian fields,
-protocol version 2, and a 1,199-byte maximum. Channels 1–4 carry separate unreliable
+protocol version 3, and a 1,199-byte maximum. Channels 1–4 carry separate unreliable
 sequenced input streams, with 32 recent inputs per upload. There are eight transport slots (four
 playable seats plus pending/rejected joins), a five-second handshake deadline,
 120 incoming messages per connection per second, a 64-KiB incoming wait
 limit, and a 128-command outgoing queue limit. Slow or invalid peers are removed.
-Loading has a 30-second deadline; partial state/finish agreement and stalled input
+Loading has a 30-second deadline; partial finish agreement and stalled input
 confirmation each have five seconds. Input repeats are forwarded immediately,
 even if previously accepted, so a receiver can repair a lost relay while stalled.
 
@@ -110,7 +115,7 @@ fixture proves startup/cancel, not normal match completion or live inputs.
 The ordinary test uses disposable fixture children to verify finish agreement
 after exchanging assigned inputs through the private IPC channel and ENet relay,
 and verifies that no UDP sockets are inherited by game processes. Private channel
-version 4 queues at most 2,048 fixed 240-byte records, supports partial nonblocking
+version 5 queues at most 2,048 fixed 240-byte records, supports partial nonblocking
 writes, and fails if that bound is exceeded. The owner drains at most 128 child
 records per poll. These input records are separate from checkpoints. Windows uses a private named pipe and an owned child-process job; its lifecycle
 tests run on Windows too.
@@ -129,8 +134,8 @@ non-network lifecycle fixtures; live network games continue after a win.
 After building the native game and this server's test targets, run
 `python3 tests/run_network_game.py all` to compare four real ROM clients under
 normal delivery, independent delay/loss, and a changed-input negative control.
-It also changes just one client's replay and requires the live desync check to
-close all four games and return their connections to the lobby.
+It also changes just one client's replay. All four games must be told about the
+desync and keep playing to the stop frame; then P1 restarts and the fresh match loads.
 `python3 tests/run_network_game.py match` completes a full first-to-three match
 and enters a rematch with delayed delivery. These explicit macOS tests require a local ROM and open
 four game processes. They hash full RAM at verification boundaries, use recorded

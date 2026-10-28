@@ -14,6 +14,7 @@ struct Peer {
     GameSession game;
     fs::path log, settings;
     bool acknowledged = false, started = false, reached = false;
+    unsigned matches = 0, desyncs = 0;
     std::optional<uint64_t> finished;
     uint64_t sampled = 0;
     Peer(unsigned port, const Fingerprint& fingerprint)
@@ -34,9 +35,9 @@ static void run(int argc, char** argv) {
     for (unsigned i = 0; i < humans; ++i) peers.push_back(std::make_unique<Peer>(server.port(), fingerprint));
     struct Pending { uint64_t due; unsigned peer; bool upload; InputBatch input; };
     std::vector<Pending> pending;
-    bool ready_sent = false, start_sent = false, cancel_sent = false, loss_triggered = false;
+    bool ready_sent = false, start_sent = false, cancel_sent = false, restart_sent = false, loss_triggered = false;
     uint64_t loss_end = 0, last_log_read = 0, dropped = 0;
-    unsigned mismatches = 0;
+    unsigned restarts = 0;
     const auto deadline = monotonic_ms() + 150000;
     while (monotonic_ms() < deadline) {
         server.service();
@@ -46,7 +47,9 @@ static void run(int argc, char** argv) {
             auto& peer = *peers[i]; auto& client = peer.connection;
             for (const auto& event : client.poll()) {
                 if (event.op == Op::Prepare) {
-                    peer.log = output / ("player-" + std::to_string(client.slot()) + ".log");
+                    // A restart keeps the first match's logs.
+                    peer.log = output / ("player-" + std::to_string(client.slot()) + (peer.matches++ ? "-restart" : "") + ".log");
+                    peer.acknowledged = peer.started = peer.reached = false;
                     std::map<std::string, std::string> diagnostics{
                         {"BM64_INPUT_SCRIPT", recording.string()}, {"BM64_NETWORK_INPUT", "1"},
                         {"BM64_NETWORK_VERIFY_EVERY", "200"}, {"BM64_NETWORK_STOP", std::to_string(stop)}};
@@ -57,12 +60,14 @@ static void run(int argc, char** argv) {
                         {"--checkpoint-test", "--single-battle", "--online-test"}, diagnostics, humans, client.slot());
                     peer.settings = peer.game.settings();
                 } else if (event.op == Op::End) {
-                    check(expect_desync ? event.reason == Reason::Mismatch :
-                          event.reason == Reason::None || (cancel_sent && event.reason == Reason::Cancelled), reason_text(event.reason));
-                    if (event.reason == Reason::Mismatch) ++mismatches;
+                    check(event.reason == Reason::None || (cancel_sent && event.reason == Reason::Cancelled) ||
+                          (restart_sent && event.reason == Reason::Restarted), reason_text(event.reason));
+                    if (event.reason == Reason::Restarted) ++restarts;
                     peer.game.cancel(event.match);
-                } else if (event.op == Op::StateChecked) {
-                    check(peer.game.state_checked(event.frame), "state acknowledgment arrived outside play");
+                } else if (event.op == Op::StateChecked || event.op == Op::Desync) {
+                    check(expect_desync || event.op == Op::StateChecked, "clients desynchronized");
+                    if (event.op == Op::Desync && peer.matches == 1) ++peer.desyncs;
+                    check(peer.game.state_checked(event.frame, event.op == Op::Desync), "state acknowledgment arrived outside play");
                 } else if (event.op == Op::Reject) throw std::runtime_error(reason_text(event.reason));
             }
             check(!client.disconnected(), client.error());
@@ -123,15 +128,23 @@ static void run(int argc, char** argv) {
                 if (all_ready) { peer->connection.start(); start_sent = true; }
             }
         }
-        if (stop && all_reached && !cancel_sent) {
+        // A desync keeps every game running to STOP_FRAME; P1 then restarts with
+        // the same roster, and the harness cancels once the fresh match starts.
+        if (expect_desync && stop && all_reached && !restart_sent) {
+            for (auto& peer : peers) check(peer->desyncs > 0, "not every client was told about the desync");
+            peers[0]->connection.restart(); restart_sent = true;
+        }
+        bool restarted = restart_sent && restarts == humans;
+        for (auto& peer : peers) restarted &= peer->matches == 2 && peer->started;
+        if (stop && !cancel_sent && (expect_desync ? restarted : all_reached)) {
             peers[0]->connection.cancel(); cancel_sent = true;
         }
         bool lobby = start_sent && server.room().phase() == Phase::Lobby;
         for (auto& peer : peers) lobby &= peer->connection.roster().phase == Phase::Lobby && peer->game.state() == GameSession::State::Lobby;
-        if (lobby && expect_desync && mismatches) {
-            check(mismatches == humans, "not every client received the desync failure");
+        if (lobby && expect_desync && cancel_sent) {
             for (const auto& peer : peers) check(!fs::exists(peer->settings), "desync left match settings behind");
-            std::cout << "PASS: live desync detected; all " << humans << " clients returned to lobby\n";
+            std::cout << "PASS: live desync reported to all " << humans << " clients; play continued to " << stop
+                      << "; P1 restarted the match\n";
             return;
         }
         if (lobby && ((stop && cancel_sent) || (!stop && all_done))) {

@@ -37,7 +37,7 @@ int main() {
     assert(decode(encode(h)).name == h.name && decode(encode(h)).fingerprint == fingerprint);
     Packet ready{Op::Ready}; ready.revision = 0x0102030405060708; ready.ready = true;
     auto wire = encode(ready);
-    assert((wire == std::vector<uint8_t>{'B','M','6','4',0,2,3,1,2,3,4,5,6,7,8,1}));
+    assert((wire == std::vector<uint8_t>{'B','M','6','4',0,3,3,1,2,3,4,5,6,7,8,1}));
     auto malformed = [&](const std::vector<uint8_t>& bytes) {
         try { decode(bytes); assert(false); } catch (const std::invalid_argument&) {}
     };
@@ -164,17 +164,30 @@ int main() {
         assert(verified.size() == count && verified[0].packet.op == Op::StateChecked && verified[0].packet.frame == p.frame);
         assert(decode(encode(verified[0].packet)).frame == p.frame);
         assert(checks.phase() == Phase::Playing);
+        // Differing states are reported once every player has checked; play continues.
         p.frame += 200;
         assert(checks.handle(1, p, 1400).empty());
         ++p.registers;
-        auto mismatch = checks.handle(2, p, 1401);
-        assert(mismatch[0].packet.reason == Reason::Mismatch && mismatch[0].packet.frame == p.frame);
-        assert(checks.phase() == Phase::Lobby);
-        playing();
-        assert(checks.handle(1, p, 1500).empty()); // Old match cannot contaminate the next one.
-        p = state(); checks.handle(1, p, 1300);
-        assert(checks.tick(6299).empty());
-        assert(checks.tick(6300)[0].packet.reason == Reason::Timeout);
+        for (unsigned i = 2; i < count; ++i) assert(checks.handle(i, p, 1401).empty());
+        auto desync = checks.handle(count, p, 1401);
+        assert(desync.size() == count && desync[0].packet.op == Op::Desync && desync[0].packet.frame == p.frame);
+        assert(decode(encode(desync[0].packet)).op == Op::Desync && checks.phase() == Phase::Playing);
+        assert(checks.tick(100000).empty()); // A missing report never times out the match.
+        // Only P1 can restart: the same roster loads a fresh match without readying again.
+        auto restart = command(Op::Restart, checks);
+        assert(encode(decode(encode(restart))) == encode(restart));
+        reject(checks.handle(2, restart, 1500), Reason::NotP1);
+        auto old_match = checks.match();
+        auto restarted = checks.handle(1, restart, 1500);
+        assert(restarted[0].packet.op == Op::End && restarted[0].packet.reason == Reason::Restarted);
+        assert(restarted.back().packet.op == Op::Prepare && checks.phase() == Phase::Loading && checks.match() == old_match + 1);
+        for (unsigned i = 1; i <= count; ++i) checks.handle(i, loaded(checks), 1600);
+        assert(checks.phase() == Phase::Playing);
+        assert(checks.handle(1, p, 2700).empty()); // Old match cannot contaminate the next one.
+        p = state(); assert(checks.handle(1, p, 2700).empty());
+        auto skewed = p; skewed.frame -= 100;
+        auto misaligned = checks.handle(2, skewed, 2700);
+        assert(!misaligned.empty() && misaligned[0].packet.reason == Reason::Mismatch); // Misaligned check frames.
         playing(); p = state(); p.frame = 1374 + online::state_check_interval + 1;
         assert(checks.handle(1, p, 1300)[0].packet.reason == Reason::Mismatch);
         playing(); p = state(); p.frame = 1374;

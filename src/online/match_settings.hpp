@@ -11,6 +11,9 @@ inline bool match_settings_locked = false;
 inline unsigned human_players = 4;
 // Set by a match window's quit prompt; its game thread leaves at the next boundary.
 inline std::atomic<bool> leave_requested = false;
+// Set by the game thread when the relay reports differing states; the match keeps
+// running. P1's restart prompt sets restart_requested for the game thread to send.
+inline std::atomic<bool> desync_detected = false, restart_requested = false;
 
 inline unsigned parse_human_players(std::string_view value) {
     if (value.size() != 1 || value[0] < '2' || value[0] > '4')

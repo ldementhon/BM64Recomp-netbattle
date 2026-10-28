@@ -4,8 +4,9 @@ Status: Windows multiplayer review follow-up, 2026-10-27. Earlier builds passed
 scripted Mac/Windows comparisons, LAN rematches, and an initial human internet
 match. Audio and controller handoff are implemented; online rumble is disabled.
 The latest source adds Unicode-safe startup validation, executable-relative
-Windows child launch, retained match logs, and periodic confirmed-state checks.
-Protocol version 2 requires rebuilding the relay and all clients. Earlier build
+Windows child launch, retained match logs, and periodic confirmed-state checks
+that run off the game thread and warn instead of ending the match.
+Protocol version 3 requires rebuilding the relay and all clients. Earlier build
 fingerprints do not certify this revision. The updated pair passes Windows
 lifecycle regressions, cross-platform startup comparison, and a 1,000-update
 scripted LAN match (see the newest record below). Repeated human
@@ -25,7 +26,7 @@ current build.
    the other stages. Windows rollback timing is now measured on a fast desktop
    (newest implementation-record entry); measure it on lower-end PCs too. Keep
    the full-RAM checks unchanged.
-2. **Broaden validation of the updated Mac/Windows pair.** Protocol version 2
+2. **Broaden validation of the updated Mac/Windows pair.** Protocol version 3
    builds pass startup and a short LAN match. Repeat round/rematch transitions, delayed-input comparisons, and
    physical-controller matches on the LAN and internet, then more GPUs and machines. Never
    exclude framebuffer RAM to make a comparison pass.
@@ -40,6 +41,45 @@ current build.
    further performance changes. No server has been purchased or deployed.
 
 ## Implementation record
+
+- Desync checks no longer pause or end play (2026-10-27). Each check boundary
+  (every 300 updates) is captured into its own copy-on-write image when it is
+  simulated, and recaptured if a rollback replays it. Once the boundary is
+  confirmed, another thread hashes all 512 MiB as 4,096 section hashes of
+  128 KiB; registers are hashed on the game thread at capture. The game thread no
+  longer waits for confirmation or drains presentation at checks. Only the
+  diagnostic stop frame, which is never saved, hashes live RAM. The relay
+  compares once every player has reported. Equal states are acknowledged;
+  differing states send `Desync`, and play continues. The five-second
+  missing-report timeout is gone; stalled input still times out. The match window
+  shows a banner that takes no input. P1's next window close offers Restart,
+  which ends the match with `Restarted` and prepares a new match ID with the same
+  roster. Logs gain `NETWORK_DESYNC` and `NETWORK_SECTIONS` (nonzero sections only)
+  and `NETWORK_CHECK_WAIT` if the game thread ever waits for a previous hash.
+  Wire protocol 3, private channel 5, and fingerprint domain v3.
+
+  Mac validation: the ten lobby CTests, the session/input suites, fingerprint
+  check and runner unit tests pass. `run_network_game.py` baseline, delayed,
+  negative and match modes pass with four real games (match: all 24 checks equal,
+  29/56/59/63 corrections, Pyramid rematch). In desync mode, the one altered
+  client is reported to all four at frame 200, and every game keeps playing to
+  frame 1000. P1's restart then loads the next match. Its section logs show 12
+  of the 24 nonzero sections differing for the altered player only. No game
+  thread waited on a hash in any mode. Background hash time across four
+  simultaneous Mac processes was 64–87 ms per check (delayed mode); faulting in
+  a fresh 512 MiB copy-on-write image dominates it. Mac build `a071381e…`
+  (fingerprint `72f566d7…`).
+
+  Windows: the hash-checked delta builds; the ten CTests, the real-game
+  lifecycle test (two matches finishing at frame 5401), the native fingerprint
+  check and the startup transition comparison pass. Build `aa60944e…`
+  (fingerprint `1b9b2bae…`). One Mac and one Windows `network_peer` then play
+  through the Mac relay to frame 1000. All six check hashes are identical
+  across platforms, and both peers pass. Background hash time is 64–88 ms on Mac
+  and 0.26–0.36 ms on Windows, where zero pages are null in the image; the live
+  stop-frame hash takes 17 ms there. No game-thread waits on either platform.
+  The banner and P1 restart prompt have not been clicked in a real window, and
+  the LAN run has no rollback corrections.
 
 - Windows multiplayer review fixes (2026-10-27). Checkpoint commit `6b20ece`
   preserves the earlier experiment tooling and dependency patches. Match startup

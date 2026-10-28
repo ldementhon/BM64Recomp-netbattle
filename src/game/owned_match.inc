@@ -2,11 +2,18 @@
 // history stay here; only controller records and lifecycle events cross IPC.
 struct OwnedMatch {
     online::MatchChannel channel = online::MatchChannel::inherited();
-    uint64_t match = 0, origin = 0, logged = UINT64_MAX;
+    uint64_t match = 0, origin = 0;
     unsigned slot = 0, local_port = 0;
     bool started = false, network = std::getenv("BM64_NETWORK_INPUT") != nullptr;
     std::optional<online::RollbackInputs> history;
-    uint64_t pending_check = 0;
+    // Full-RAM checks every check_interval updates. A separate image of each
+    // check frame is hashed on another thread once that frame is confirmed, so
+    // play never waits for a check. The relay compares one report at a time.
+    struct Check { uint64_t relative, guest, registers; int32_t overlay; std::optional<StateHash> hash; };
+    std::deque<Check> checks;
+    CheckpointMemory check_image;
+    std::future<StateHash> hashing;
+    bool reported = false, stop_checked = false;
     unsigned check_interval = online::state_check_interval;
     std::chrono::steady_clock::time_point epoch, sent{}, progress;
     uint64_t corrections = 0, max_depth = 0;
@@ -35,9 +42,10 @@ struct OwnedMatch {
         for (unsigned messages = 0; messages < 128; ++messages) {
             auto message = channel.receive();
             if (!message) break;
-            if (message->event == online::MatchEvent::StateChecked && message->match == match &&
-                pending_check && message->frame == pending_check) {
-                pending_check = 0;
+            if ((message->event == online::MatchEvent::StateChecked || message->event == online::MatchEvent::Desync) &&
+                message->match == match && reported && message->frame == checks.front().guest) {
+                if (message->event == online::MatchEvent::Desync) desync(checks.front());
+                checks.pop_front(); reported = false;
                 continue;
             }
             if (!history || message->event != online::MatchEvent::InputRelay || message->match != match)
@@ -71,9 +79,70 @@ struct OwnedMatch {
         fprintf(stderr, "MATCH_FINISHED: match=%llu frame=%llu corrections=%llu max_depth=%llu replay=%u\n", match, frame, corrections, max_depth, replay_pass);
         fflush(stderr); std::_Exit(0);
     }
+    void desync(const Check& check) {
+        fprintf(stderr, "NETWORK_DESYNC: frame=%llu guest=%llu ram=%016llx registers=%016llx\n",
+                check.relative, check.guest, check.hash->ram, check.registers);
+        // Nonzero sections only; compare them across player logs to find what differs.
+        fprintf(stderr, "NETWORK_SECTIONS: frame=%llu size=%zu", check.relative, check_section);
+        for (size_t i = 0; i < check.hash->sections.size(); ++i)
+            if (check.hash->sections[i] != zero_section) fprintf(stderr, " %zu:%016llx", i, check.hash->sections[i]);
+        fprintf(stderr, "\n"); fflush(stderr);
+        if (!online::desync_detected.exchange(true)) zelda64::show_online_desync(slot == 0);
+    }
+    // Capture a check frame when it is first simulated; a replay captures it again.
+    void record(uint64_t relative) {
+        if (relative % check_interval) return;
+        Check* check = nullptr;
+        for (auto& existing : checks) if (existing.relative == relative) check = &existing;
+        if (check) require(!check->hash, "a confirmed state check was replayed");
+        else {
+            // Confirmation trails by at most the prediction window, far less than an
+            // interval, so the previous image has been hashed or is being hashed.
+            if (hashing.valid()) {
+                auto start = std::chrono::steady_clock::now();
+                collect(true);
+                fprintf(stderr, "NETWORK_CHECK_WAIT: ms=%.3f\n", std::chrono::duration<double, std::milli>(std::chrono::steady_clock::now() - start).count());
+            }
+            require(checks.empty() || checks.back().hash, "a state check was not confirmed within its interval");
+            require(checks.size() < 8, "state checks stopped receiving acknowledgments");
+            check = &checks.emplace_back(Check{relative, frame, 0, 0, {}});
+        }
+        check->registers = comparable_registers(); check->overlay = overlay;
+        check_image.capture(ram, recomp::mem_size, std::getenv("BM64_FULL_COPY") != nullptr);
+    }
+    void collect(bool wait) {
+        if (!hashing.valid() || (!wait && hashing.wait_for(std::chrono::seconds(0)) != std::future_status::ready)) return;
+        auto hash = hashing.get();
+        for (auto& check : checks) if (!check.hash) { finish(check, std::move(hash)); return; }
+    }
+    void finish(Check& check, StateHash hash) {
+        check.hash = std::move(hash);
+        fprintf(stderr, "NETWORK_STATE: frame=%llu guest=%llu ram=%016llx registers=%016llx corrections=%llu max_depth=%llu overlay=%d\n",
+                check.relative, check.guest, check.hash->ram, check.registers, corrections, max_depth, check.overlay);
+        fprintf(stderr, "NETWORK_CHECK_COST: frame=%llu ms=%.3f\n", check.relative, check.hash->ms);
+        fflush(stderr);
+    }
+    // Hash the oldest confirmed check, then report it once the previous one is acknowledged.
+    void check_states(uint64_t relative) {
+        collect(false);
+        for (auto& check : checks) {
+            if (check.hash) continue;
+            if (!hashing.valid() && check.relative < relative && check.relative <= history->confirmed())
+                hashing = std::async(std::launch::async, [this] { return state_hash(check_image); });
+            break;
+        }
+        // Startup was already compared through Ready.
+        if (!checks.empty() && checks.front().hash && !checks.front().relative) checks.pop_front();
+        if (!reported && !checks.empty() && checks.front().hash) {
+            const auto& check = checks.front();
+            channel.send({online::match_channel_version, online::MatchEvent::State, match, check.guest, check.hash->ram, check.registers});
+            reported = true;
+        }
+    }
     void network_boundary() {
         for (;;) {
             if (online::leave_requested) leave();
+            if (online::restart_requested.exchange(false)) report(online::MatchEvent::Restart);
             receive();
             auto relative = frame - origin;
             require(relative <= history->head(), "network simulation advanced without frame inputs");
@@ -86,12 +155,13 @@ struct OwnedMatch {
                 restore(index, true);
                 relative = *first;
             }
+            check_states(relative);
             // A win does not end an online match: P1 continues through the award
             // screens to Player Select and the next battle until a player leaves.
             if (relative < history->head()) {
                 replay_pass = 1; catchup_active = true; audio_output = false;
                 suppress_render = relative + 1 < history->head();
-                save(1 + relative % online::checkpoint_slots, true);
+                save(1 + relative % online::checkpoint_slots, true); record(relative);
                 network_pads = history->inputs_for(relative);
                 upload();
                 return;
@@ -109,26 +179,15 @@ struct OwnedMatch {
                 history->sample(online::quantize_pad(buttons, x, y)); upload(true);
             } else upload();
             const auto stop = setting("BM64_NETWORK_STOP", 0);
-            bool verify = relative % check_interval == 0 || (stop && relative == stop);
-            bool confirmed = relative <= history->confirmed();
-            if (now >= due && confirmed && verify && logged != relative && !pending_check) {
-                const auto check_start = std::chrono::steady_clock::now();
-                finish_presentation();
-                auto ram_hash = digest().ram, registers = comparable_registers();
-                const double check_ms = std::chrono::duration<double, std::milli>(std::chrono::steady_clock::now() - check_start).count();
-                fprintf(stderr, "NETWORK_STATE: frame=%llu guest=%llu ram=%016llx registers=%016llx corrections=%llu max_depth=%llu overlay=%d\n",
-                        relative, frame, ram_hash, registers, corrections, max_depth, overlay);
-                fprintf(stderr, "NETWORK_CHECK_COST: frame=%llu ms=%.3f\n", relative, check_ms);
-                fflush(stderr); logged = relative;
-                // Startup was already compared. Later checks use confirmed state,
-                // and play continues while the reliable acknowledgment is in flight.
-                if (relative) {
-                    channel.send({online::match_channel_version, online::MatchEvent::State, match, frame, ram_hash, registers});
-                    pending_check = frame;
-                }
+            // A diagnostic stop never saves its frame, so check the live state there.
+            if (stop && relative == stop && !stop_checked && relative <= history->confirmed() &&
+                (checks.empty() || checks.back().hash)) {
+                stop_checked = true; finish_presentation();
+                checks.push_back({relative, frame, comparable_registers(), overlay, {}});
+                finish(checks.back(), live_state_hash());
             }
-            if (now >= due && history->can_advance() && (!verify || (confirmed && logged == relative)) && !(stop && relative >= stop)) {
-                save(1 + relative % online::checkpoint_slots, true);
+            if (now >= due && history->can_advance() && !(stop && relative >= stop)) {
+                save(1 + relative % online::checkpoint_slots, true); record(relative);
                 // Play the first simulation of each boundary; corrected replays stay silent.
                 audio_output = true;
                 network_pads = history->inputs_for(relative);
