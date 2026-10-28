@@ -624,7 +624,7 @@ int main(int argc, char** argv) {
             }
         }
         // Local input preferences cannot import gameplay settings, saves, or mods.
-        try { online::validate_match_folder(std::getenv("APP_FOLDER_PATH")); }
+        try { online::validate_match_folder(zelda64::get_app_folder_path()); }
         catch (const std::exception& error) {
             fprintf(stderr, "--online-test %s\n", error.what());
             return EXIT_FAILURE;

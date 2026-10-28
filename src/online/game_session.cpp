@@ -23,6 +23,7 @@ void GameSession::cleanup() {
     channel_ = MatchChannel{};
     ready_.reset();
     inputs_.clear();
+    states_.clear(); pending_state_.reset();
     if (!settings_.empty()) {
         std::error_code ignored;
         std::filesystem::remove_all(settings_, ignored);
@@ -193,6 +194,14 @@ bool GameSession::send_inputs(const InputBatch& batch) {
     return true;
 }
 
+bool GameSession::state_checked(uint64_t frame) {
+    if (state_ != State::Playing) return false;
+    if (pending_state_ != frame) throw std::runtime_error("unexpected state-check acknowledgment");
+    channel_.send({match_channel_version, MatchEvent::StateChecked, match_, frame});
+    pending_state_.reset();
+    return true;
+}
+
 std::optional<GameSession::Exit> GameSession::poll(std::chrono::steady_clock::time_point now) {
     if (child_ == no_child) return std::nullopt;
     try {
@@ -206,6 +215,9 @@ std::optional<GameSession::Exit> GameSession::poll(std::chrono::steady_clock::ti
                 if (message->input.slot != local_slot_ || inputs_.size() >= 128)
                     throw std::runtime_error("invalid or excessive game input uploads");
                 inputs_.push_back(message->input);
+            } else if (message->event == MatchEvent::State && state_ == State::Playing && ready_ &&
+                       message->frame > ready_->frame && !pending_state_ && states_.empty()) {
+                states_.push_back(*message); pending_state_ = message->frame;
             } else if (message->event == MatchEvent::Finished && state_ == State::Playing &&
                        ready_ && message->frame > ready_->frame) {
                 auto status = reap();

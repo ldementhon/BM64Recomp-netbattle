@@ -42,7 +42,7 @@ public:
                     if (event.channelID == control_channel) {
                         if (!(packet->flags & ENET_PACKET_FLAG_RELIABLE)) throw std::invalid_argument("unreliable control message");
                         auto decoded = decode({packet->data, packet->dataLength});
-                        if (decoded.op == Op::Finished && room_.phase() == Phase::Playing && decoded.match == room_.match() &&
+                        if ((decoded.op == Op::Finished || decoded.op == Op::State) && room_.phase() == Phase::Playing && decoded.match == room_.match() &&
                             decoded.frame > room_.initial_frame() && decoded.frame - room_.initial_frame() > input_confirmed())
                             deliver(room_.abort(Reason::Mismatch));
                         else deliver(room_.handle(connection.identity, decoded, now));

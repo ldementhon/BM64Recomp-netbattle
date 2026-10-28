@@ -32,9 +32,9 @@
 #include "input_history.hpp"
 
 namespace online {
-constexpr uint64_t match_channel_version = 3;
+constexpr uint64_t match_channel_version = 4;
 // Left: the player confirmed the quit prompt in the match window.
-enum class MatchEvent : uint64_t { Ready = 1, Start, Finished, InputUpload, InputRelay, Left };
+enum class MatchEvent : uint64_t { Ready = 1, Start, Finished, InputUpload, InputRelay, Left, State, StateChecked };
 struct MatchMessage {
     uint64_t version = match_channel_version;
     MatchEvent event = MatchEvent::Ready;
@@ -201,7 +201,7 @@ public:
         std::memcpy(&message, bytes_.data(), bytes_.size());
         used_ = 0;
         bool input = message.event == MatchEvent::InputUpload || message.event == MatchEvent::InputRelay;
-        if (message.version != match_channel_version || message.event < MatchEvent::Ready || message.event > MatchEvent::Left ||
+        if (message.version != match_channel_version || message.event < MatchEvent::Ready || message.event > MatchEvent::StateChecked ||
             !message.match || (!input && !message.frame))
             throw std::runtime_error("invalid match event");
         if (input) {

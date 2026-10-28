@@ -6,6 +6,8 @@ struct OwnedMatch {
     unsigned slot = 0, local_port = 0;
     bool started = false, network = std::getenv("BM64_NETWORK_INPUT") != nullptr;
     std::optional<online::RollbackInputs> history;
+    uint64_t pending_check = 0;
+    unsigned check_interval = online::state_check_interval;
     std::chrono::steady_clock::time_point epoch, sent{}, progress;
     uint64_t corrections = 0, max_depth = 0;
 
@@ -18,6 +20,8 @@ struct OwnedMatch {
         if (parsed.ec != std::errc{} || parsed.ptr != end || !match)
             throw std::runtime_error("invalid owner match ID");
         if (network) {
+            check_interval = setting("BM64_NETWORK_VERIFY_EVERY", online::state_check_interval);
+            require(check_interval && check_interval <= online::state_check_interval, "invalid network state-check interval");
             const char* local = std::getenv("BM64_ONLINE_SLOT");
             if (!local || std::strlen(local) != 1 || *local < '0' || unsigned(*local - '0') >= online::human_players)
                 throw std::runtime_error("invalid assigned local player");
@@ -31,6 +35,11 @@ struct OwnedMatch {
         for (unsigned messages = 0; messages < 128; ++messages) {
             auto message = channel.receive();
             if (!message) break;
+            if (message->event == online::MatchEvent::StateChecked && message->match == match &&
+                pending_check && message->frame == pending_check) {
+                pending_check = 0;
+                continue;
+            }
             if (!history || message->event != online::MatchEvent::InputRelay || message->match != match)
                 throw std::runtime_error("unexpected owner command during match");
             auto before = history->confirmed();
@@ -100,16 +109,25 @@ struct OwnedMatch {
                 history->sample(online::quantize_pad(buttons, x, y)); upload(true);
             } else upload();
             const auto stop = setting("BM64_NETWORK_STOP", 0);
-            const auto interval = setting("BM64_NETWORK_VERIFY_EVERY", 0);
-            bool verify = (interval && relative % interval == 0) || (stop && relative == stop);
+            bool verify = relative % check_interval == 0 || (stop && relative == stop);
             bool confirmed = relative <= history->confirmed();
-            if (now >= due && confirmed && verify && logged != relative) {
+            if (now >= due && confirmed && verify && logged != relative && !pending_check) {
+                const auto check_start = std::chrono::steady_clock::now();
                 finish_presentation();
+                auto ram_hash = digest().ram, registers = comparable_registers();
+                const double check_ms = std::chrono::duration<double, std::milli>(std::chrono::steady_clock::now() - check_start).count();
                 fprintf(stderr, "NETWORK_STATE: frame=%llu guest=%llu ram=%016llx registers=%016llx corrections=%llu max_depth=%llu overlay=%d\n",
-                        relative, frame, digest().ram, comparable_registers(), corrections, max_depth, overlay);
+                        relative, frame, ram_hash, registers, corrections, max_depth, overlay);
+                fprintf(stderr, "NETWORK_CHECK_COST: frame=%llu ms=%.3f\n", relative, check_ms);
                 fflush(stderr); logged = relative;
+                // Startup was already compared. Later checks use confirmed state,
+                // and play continues while the reliable acknowledgment is in flight.
+                if (relative) {
+                    channel.send({online::match_channel_version, online::MatchEvent::State, match, frame, ram_hash, registers});
+                    pending_check = frame;
+                }
             }
-            if (now >= due && history->can_advance() && (!verify || confirmed) && !(stop && relative >= stop)) {
+            if (now >= due && history->can_advance() && (!verify || (confirmed && logged == relative)) && !(stop && relative >= stop)) {
                 save(1 + relative % online::checkpoint_slots, true);
                 // Play the first simulation of each boundary; corrected replays stay silent.
                 audio_output = true;

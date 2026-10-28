@@ -31,6 +31,7 @@ public:
     const std::string& error() const { return error_; }
     std::optional<ServerClock::Estimate> clock() const { return clock_.estimate(now()); }
     std::optional<uint64_t> start_at() const { return start_at_; }
+    uint64_t checked_frame() const { return checked_frame_; }
     unsigned slot() const {
         if (joined()) for (unsigned i = 0; i < roster_.count; ++i)
             if (roster_.players[i].id == roster_.identity) return i;
@@ -65,6 +66,10 @@ public:
     void finished(uint64_t frame) {
         require_phase(Phase::Playing);
         auto p = command(Op::Finished); p.frame = frame; send(p);
+    }
+    void check_state(uint64_t frame, uint64_t ram, uint64_t registers) {
+        require_phase(Phase::Playing);
+        auto p = command(Op::State); p.frame = frame; p.ram = ram; p.registers = registers; send(p);
     }
 
     std::vector<Packet> poll() {
@@ -117,16 +122,22 @@ public:
                         require_phase(Phase::Loading);
                         if (p.match != roster_.match || p.revision != roster_.revision || p.count != roster_.count)
                             throw std::runtime_error("match preparation differs from locked roster");
-                        start_at_.reset(); error_.clear(); input_events_.clear();
+                        start_at_.reset(); error_.clear(); input_events_.clear(); checked_frame_ = 0;
                     } else if (p.op == Op::Commit) {
                         require_phase(Phase::Playing);
                         if (p.match != roster_.match || start_at_) throw std::runtime_error("unexpected match start");
                         try { start_at_ = clock_.local_start(p.time, now()); }
                         catch (const std::runtime_error& e) { error_ = e.what(); cancel(Reason::LoadFailed); continue; }
+                    } else if (p.op == Op::StateChecked) {
+                        require_phase(Phase::Playing);
+                        if (p.match != roster_.match || !p.frame || p.frame <= checked_frame_)
+                            throw std::runtime_error("unexpected state-check acknowledgment");
+                        checked_frame_ = p.frame;
                     } else if (p.op == Op::End) {
                         if (p.match != roster_.match) throw std::runtime_error("unexpected match termination");
                         start_at_.reset(); input_events_.clear();
                         if (p.reason != Reason::None && error_.empty()) error_ = reason_text(p.reason);
+                        if (p.reason == Reason::Mismatch && p.frame) error_ += " Frame " + std::to_string(p.frame) + ".";
                     } else if (p.op == Op::Reject) error_ = reason_text(p.reason);
                     else throw std::runtime_error("unexpected server message");
                     events.push_back(p);
@@ -158,6 +169,7 @@ private:
     bool connected_ = false, disconnected_ = false;
     std::string error_;
     std::optional<uint64_t> start_at_;
+    uint64_t checked_frame_ = 0;
     std::vector<InputBatch> input_events_;
     Packet command(Op op) const {
         Packet p{op}; p.revision = roster_.revision; p.match = roster_.match; return p;

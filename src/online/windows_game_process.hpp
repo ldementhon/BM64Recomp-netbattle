@@ -60,6 +60,7 @@ inline WindowsGameProcess launch_windows_game(const std::filesystem::path& execu
                                  const std::vector<std::string>& arguments,
                                  const std::map<std::string, std::string>& environment) {
     auto executable_path = std::filesystem::absolute(executable).wstring();
+    auto working_directory = std::filesystem::path(executable_path).parent_path().wstring();
     auto command = quote_argument(executable_path);
     for (const auto& argument : arguments) command += L' ' + quote_argument(wide_utf8(argument));
 
@@ -115,7 +116,7 @@ inline WindowsGameProcess launch_windows_game(const std::filesystem::path& execu
     PROCESS_INFORMATION process{};
     if (!CreateProcessW(executable_path.c_str(), command.data(), nullptr, nullptr, TRUE,
                         EXTENDED_STARTUPINFO_PRESENT | CREATE_UNICODE_ENVIRONMENT | CREATE_NO_WINDOW | CREATE_SUSPENDED,
-                        block.data(), nullptr, &startup.StartupInfo, &process)) windows_fail("launch game");
+                        block.data(), working_directory.c_str(), &startup.StartupInfo, &process)) windows_fail("launch game");
     WindowsHandle process_owner(process.hProcess, CloseHandle), thread_owner(process.hThread, CloseHandle);
     // Attach before any game code can run, including a child that immediately exits.
     if (!AssignProcessToJobObject(job.get(), process.hProcess) || ResumeThread(process.hThread) == DWORD(-1)) {

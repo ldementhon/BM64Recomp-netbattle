@@ -45,6 +45,8 @@ public:
     const std::filesystem::path& settings() const { return settings_; }
     bool send_inputs(const InputBatch& batch);
     std::vector<InputBatch> take_inputs() { auto result = std::move(inputs_); inputs_.clear(); return result; }
+    std::vector<MatchMessage> take_states() { auto result = std::move(states_); states_.clear(); return result; }
+    bool state_checked(uint64_t frame);
 
 private:
     int reap();
@@ -65,6 +67,8 @@ private:
     MatchChannel channel_;
     std::optional<MatchMessage> ready_;
     std::vector<InputBatch> inputs_;
+    std::vector<MatchMessage> states_;
+    std::optional<uint64_t> pending_state_;
     unsigned humans_ = 4, local_slot_ = 0;
 };
 }

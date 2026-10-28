@@ -24,7 +24,7 @@ int main(int argc, char** argv) {
         while (!channel.flush()) std::this_thread::sleep_for(std::chrono::milliseconds(1));
         return 0;
     }
-    if (argc == 2 && std::string(argv[1]) == "--child") {
+    if (argc == 2 && (std::string(argv[1]) == "--child" || std::string(argv[1]) == "--desync-child")) {
 #ifndef _WIN32
         // ENet itself does not set CLOEXEC. Verify the owner helper does.
         for (int fd = 4; fd < 1024; ++fd) {
@@ -50,6 +50,15 @@ int main(int argc, char** argv) {
                             assert(received->input.pads[0].buttons == (input.slot ? 0x8000 : 0x4000));
                             break;
                         }
+                    }
+                    std::this_thread::sleep_for(std::chrono::milliseconds(1));
+                }
+                channel.send({online::match_channel_version, online::MatchEvent::State, match, 1376,
+                              std::string(argv[1]) == "--desync-child" ? 999u : 123u, 456});
+                for (;;) {
+                    if (auto checked = channel.receive(); checked && checked->event == online::MatchEvent::StateChecked) {
+                        assert(checked->frame == 1376);
+                        break;
                     }
                     std::this_thread::sleep_for(std::chrono::milliseconds(1));
                 }
@@ -136,11 +145,19 @@ int main(int argc, char** argv) {
                 a.cancel();
             } else {
                 std::array<std::optional<online::GameSession::Exit>, 2> exits;
+                std::array<bool, 2> state_acknowledged{};
                 until([&] {
                     for (unsigned i = 0; i < games.size(); ++i) {
                         auto& connection = i == 0 ? a : b;
+                        if (connection.checked_frame() && games[i].state() == online::GameSession::State::Playing) {
+                            // The fixture has one state check per match.
+                            if (connection.checked_frame() == 1376 && !state_acknowledged[i]) {
+                                games[i].state_checked(1376); state_acknowledged[i] = true;
+                            }
+                        }
                         if (!exits[i]) exits[i] = games[i].poll();
                         for (auto& input : games[i].take_inputs()) connection.send_inputs(input);
+                        for (auto& state : games[i].take_states()) connection.check_state(state.frame, state.ram, state.registers);
                         for (auto& input : connection.take_inputs()) games[i].send_inputs(input);
                     }
                     return exits[0] && exits[1];
@@ -229,7 +246,9 @@ int main(int argc, char** argv) {
         until([&] { return a.connection().start_at() && b->connection().start_at(); });
         std::this_thread::sleep_for(std::chrono::milliseconds(1200));
         until([&] { return a.connection().roster().phase == Phase::Lobby && b->connection().roster().phase == Phase::Lobby; });
-        assert(a.error() == "local match start missed its deadline" && b->error() == a.error());
+        assert(a.error().starts_with("local match start missed its deadline") &&
+               b->error().starts_with("local match start missed its deadline"));
+        assert(a.error().find("Match log:") != std::string::npos && b->error().find("Match log:") != std::string::npos);
         assert(a.game().state() == online::GameSession::State::Lobby && b->game().state() == online::GameSession::State::Lobby);
         compatible = false;
         prepare(false);
@@ -254,6 +273,7 @@ int main(int argc, char** argv) {
             until([&] { return a.connection().roster().match > previous_match &&
                 a.connection().roster().phase == Phase::Lobby && b->connection().roster().phase == Phase::Lobby; });
             assert(!b->error().empty() && a.connection().joined() && b->connection().joined());
+            assert(b->error().find("Match log:") != std::string::npos);
             assert(a.game().settings().empty() && b->game().settings().empty());
             b.reset();
             until([&] { return a.connection().roster().count == 1; });
@@ -268,6 +288,27 @@ int main(int argc, char** argv) {
             a.connection().roster().phase == Phase::Lobby && b->connection().roster().phase == Phase::Lobby; });
         assert(a.error() == reason_text(Reason::Cancelled) && b->error() == a.error());
         assert(a.game().state() == online::GameSession::State::Lobby && b->game().state() == online::GameSession::State::Lobby);
+        b.reset();
+        until([&] { return a.connection().roster().count == 1; });
+        launch.arguments = {"--desync-child"};
+        b = std::make_unique<LobbySession>("127.0.0.1", uint16_t(server.port()), "Bob", fingerprint, launch);
+        until([&] { return a.connection().roster().count == 2 && b->connection().roster().count == 2; });
+        prepare();
+        until([&] { return a.connection().roster().phase == Phase::Lobby && b->connection().roster().phase == Phase::Lobby; });
+        assert(a.error().starts_with(reason_text(Reason::Mismatch)) && b->error().starts_with(reason_text(Reason::Mismatch)));
+        assert(a.error().find("Frame 1376") != std::string::npos && b->error().find("Frame 1376") != std::string::npos);
+        assert(a.connection().joined() && b->connection().joined() && a.game().settings().empty() && b->game().settings().empty());
+        // A reconnect may reuse a server match ID; it must not erase the last attempt.
+        auto log_base = scratch / "retention.log";
+        auto first_log = online::new_match_log(log_base, 1);
+        std::ofstream(first_log) << "failure evidence";
+        auto second_log = online::new_match_log(log_base, 1);
+        assert(first_log != second_log && fs::file_size(first_log) == 16);
+        for (unsigned i = 0; i < 12; ++i) online::new_match_log(log_base, i + 2);
+        size_t kept = 0;
+        for (const auto& entry : fs::directory_iterator(first_log.parent_path()))
+            kept += entry.path().extension() == ".log";
+        assert(kept == 10);
         std::cout << "PASS: application session owns prepare/start/finish, input transfer, preference handoff, cancel/restart/leave, match-window leave, missed epoch and failed launch/crash cleanup\n";
     }
     enet_deinitialize();

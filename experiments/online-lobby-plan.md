@@ -1,14 +1,14 @@
 # Minimal dedicated-server lobby and player assignment
 
-Status: macOS Online Battle screen is wired and locally exercised, 2026-10-26.
-Four-process scripted Mac rollback matches pass; the full Windows x64 client builds.
-Online processes render display-only by default, keeping GPU output out of game
-RAM. Windows RX 9070 XT replays pass, and scripted Mac/Windows histories match on
-every boundary, including a 20,994-boundary session. The cross-build transition
-checks match too. Physical
-controllers, real-device audio listening, and human playtests remain open. Rumble
-may be disabled for the first online version (user decision, 2026-10-25);
-preserve offline behavior. No server has been rented or deployed.
+Status: Windows multiplayer review follow-up, 2026-10-27. Earlier builds passed
+scripted Mac/Windows comparisons, LAN rematches, and an initial human internet
+match. Audio and controller handoff are implemented; online rumble is disabled.
+The latest source adds Unicode-safe startup validation, executable-relative
+Windows child launch, retained match logs, and periodic confirmed-state checks.
+Protocol version 2 requires rebuilding the relay and all clients. Earlier build
+fingerprints and acceptance results do not certify this revision. Repeated human
+controller/audio sessions, broader hardware coverage, and four-remote-player
+acceptance remain open.
 
 ## Remaining work, in priority order
 
@@ -23,14 +23,12 @@ current build.
    the other stages. Windows rollback timing is now measured on a fast desktop
    (newest implementation-record entry); measure it on lower-end PCs too. Keep
    the full-RAM checks unchanged.
-2. **Play a live Mac/Windows match.** P1 now chooses the stage online, and a
-   validated Mac/Windows build pair can share a room (newest implementation-record
-   entry). Next: a real Mac/Windows match through the relay with physical
-   controllers, first on a home network, then more GPUs and machines. Never
+2. **Revalidate the updated Mac/Windows pair.** Rebuild both clients and the relay
+   for protocol version 2. Repeat transitions, delayed-input comparisons, and
+   physical-controller matches on the LAN and internet, then more GPUs and machines. Never
    exclude framebuffer RAM to make a comparison pass.
 3. **Finish playable two-person integration.** Replay-safe audio output exists
-   and online rumble is silent; listen on real devices and rebuild Windows with
-   them. Check physical controllers, input preferences/calibration, P1 menus,
+   and online rumble is silent; listen on real devices with the current builds. Check physical controllers, input preferences/calibration, P1 menus,
    visual recovery, cancellation, and repeated complete Mac/Windows matches.
    Revalidate the existing lobby and relay against the resulting builds.
 4. **Complete the remote four-person acceptance.** Prepare the dedicated relay,
@@ -40,6 +38,41 @@ current build.
    further performance changes. No server has been purchased or deployed.
 
 ## Implementation record
+
+- Windows multiplayer review fixes (2026-10-27). Checkpoint commit `6b20ece`
+  preserves the earlier experiment tooling and dependency patches. Match startup
+  now uses the existing wide-character settings path on Windows, and the child
+  process starts beside its executable so relative assets resolve correctly.
+  The lifecycle fixture puts Windows temporary folders under a Unicode path and
+  checks the child's working directory. Match logs get unique filenames and
+  retain the latest ten attempts; failure messages point to the saved file.
+
+  Production network games compare full RAM and comparable registers every
+  300 confirmed updates. Only one comparison can be outstanding. The relay
+  acknowledges after every human reports equal state, or aborts on disagreement
+  or a missing report. The lobby displays the mismatch frame and keeps the log.
+  `network_peer` now requires that shared acknowledgment at its final checkpoint
+  before P1 cancels or any peer prints PASS. It rejects a zero stop frame.
+  Wire protocol 2, private channel 4, and fingerprint domain v2 require fresh
+  builds and a newly validated pair; no old fingerprint certifies these changes.
+
+  Mac validation: the full game builds; the ten lobby CTests, O0/O2 input and
+  lifecycle suites, and seven Python runner tests pass. Four real game clients
+  agree under normal delivery, delay/loss, and the changed-input control.
+  A separate one-client replay change triggers the live mismatch and closes all
+  four games. The delayed first-to-three/rematch run reaches Pyramid with all
+  24 hashes equal (26/51/48/52 corrections). Hash plus presentation-drain cost
+  across four simultaneous Mac processes has medians of 18.3 ms without delay
+  and 56.6–57.0 ms with delay/loss; maximum 63.5 ms. Production checks are five
+  seconds apart; slower-machine cost and human feel still need measurement.
+  Two real `network_peer` processes also pass a shared final checkpoint; when
+  P1 stops at 200 and P2 requests 400, P2 rejects the early cancellation and
+  prints no PASS. The final Mac build passes the native fingerprint check
+  (`f1c4f2c3…`, fingerprint `d3d988bf…`).
+
+  Windows execution and a fresh Mac/Windows comparison remain pending. The
+  source/test transfer to the existing Windows PC was blocked by automatic
+  approval review pending explicit authorization; no remote update was applied.
 
 - Online matches continue after a win (2026-10-27). A first-to-three win no
   longer ends a network match; the match window keeps running. After the winner

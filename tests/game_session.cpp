@@ -42,6 +42,9 @@ int main(int argc, char** argv) {
             assert(std::string(std::getenv("BM64_LOCAL_PORT")) == "0");
 #ifdef _WIN32
             wchar_t value[32];
+            wchar_t image[32768];
+            assert(GetModuleFileNameW(nullptr, image, 32768));
+            assert(fs::equivalent(fs::current_path(), fs::path(image).parent_path()));
             assert(GetEnvironmentVariableW(L"BM64_TEST_UNICODE", value, 32) && std::wstring(value) == L"\u00e9\u96ea");
             wchar_t path[32768];
             auto handle = reinterpret_cast<HANDLE>(uintptr_t(std::stoull(std::getenv("BM64_TEST_HANDLE"))));
@@ -51,7 +54,13 @@ int main(int argc, char** argv) {
         }
         if (std::string(argv[1]) == "--child-seats-2")
             assert(std::string(std::getenv("BM64_ONLINE_HUMANS")) == "2");
+#ifdef _WIN32
+        wchar_t settings_path[32768];
+        assert(GetEnvironmentVariableW(L"APP_FOLDER_PATH", settings_path, 32768));
+        fs::path settings = settings_path;
+#else
         fs::path settings = std::getenv("APP_FOLDER_PATH");
+#endif
         assert(fs::exists(settings / "bm64_us.z64"));
         assert(!fs::exists(settings / "personal-marker"));
         if (std::string(argv[1]) == "--child-preferences") {
@@ -98,6 +107,16 @@ int main(int argc, char** argv) {
             std::this_thread::sleep_for(1ms);
         }
         if (std::string(argv[1]) == "--child-play-hold") for (;;) std::this_thread::sleep_for(1s);
+        if (std::string(argv[1]) == "--child-state") {
+            channel.send({online::match_channel_version, online::MatchEvent::State, match, 1574, 789, 1011});
+            for (;;) {
+                if (auto checked = channel.receive()) {
+                    assert(checked->event == online::MatchEvent::StateChecked && checked->frame == 1574);
+                    break;
+                }
+                std::this_thread::sleep_for(1ms);
+            }
+        }
         if (std::string(argv[1]) == "--child-left") {
             channel.send({online::match_channel_version, online::MatchEvent::Left, match, 1380});
             while (!channel.flush()) std::this_thread::sleep_for(1ms);
@@ -124,6 +143,14 @@ int main(int argc, char** argv) {
     }
     auto scratch = fs::absolute("build/experiments/session-tests");
     fs::create_directories(scratch);
+#ifdef _WIN32
+    // Exercise the actual owned game with a folder outside an English code page,
+    // not only the fingerprint command which exits before startup validation.
+    auto unicode_temp = scratch / L"temporary-\u6e2c\u8a66";
+    fs::create_directories(unicode_temp);
+    assert(SetEnvironmentVariableW(L"TMP", unicode_temp.c_str()));
+    assert(SetEnvironmentVariableW(L"TEMP", unicode_temp.c_str()));
+#endif
     auto personal = scratch / "personal";
     fs::create_directories(personal);
     std::ofstream(personal / "personal-marker") << "unchanged";
@@ -311,6 +338,16 @@ int main(int argc, char** argv) {
         start(20, "--child-left"); wait_ready(session); assert(session.playing(20));
         auto left = wait_exit(session);
         assert(left.left && left.error.empty() && !left.completed_frame && session.state() == online::GameSession::State::Lobby);
+        start(21, "--child-state"); wait_ready(session); assert(session.playing(21));
+        std::vector<online::MatchMessage> states;
+        auto state_deadline = std::chrono::steady_clock::now() + 2s;
+        while (states.empty() && std::chrono::steady_clock::now() < state_deadline) {
+            assert(!session.poll()); states = session.take_states(); std::this_thread::sleep_for(1ms);
+        }
+        assert(states.size() == 1 && states[0].frame == 1574 && states[0].ram == 789 && states[0].registers == 1011);
+        try { session.state_checked(1575); assert(false); } catch (const std::runtime_error&) {}
+        assert(session.state_checked(1574));
+        assert(wait_exit(session).completed_frame && session.take_states().empty());
 #ifdef _WIN32
         CloseHandle(sentinel);
 #endif

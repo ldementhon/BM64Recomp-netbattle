@@ -63,9 +63,13 @@ def run(mode):
         with (directory / "runner.log").open("w") as log:
             subprocess.run([str(HARNESS), str(GAME), str(ROOT.parent / "Bomberman 64 (USA).z64"),
                             recording.name, str(directory), "4", "0" if mode == "baseline" else "120",
-                            str(REMATCH_STOP if mode == "match" else 1000)],
+                            str(REMATCH_STOP if mode == "match" else 1000)] + (["desync"] if mode == "desync" else []),
                            cwd=ROOT, env=environment, stdout=log, stderr=subprocess.STDOUT, check=True, timeout=170)
     assert sha(GAME) == metadata["game"] and sha(HARNESS) == metadata["harness"], "executable changed during run"
+    if mode == "desync":
+        assert "PASS: live desync detected; all 4 clients returned to lobby" in (directory / "runner.log").read_text()
+        print("PASS: desync: one client's altered replay is detected and all four games close", flush=True)
+        return
     rows = histories(directory, rematch=mode == "match")
     if mode == "baseline":
         assert all(int(history[-1][4]) == 0 for history in rows), "baseline used prediction corrections; rerun without host contention"
@@ -86,7 +90,7 @@ def run(mode):
 
 if __name__ == "__main__":
     mode = sys.argv[1] if len(sys.argv) == 2 else "all"
-    if len(sys.argv) > 2 or mode not in ("all", "baseline", "delayed", "negative", "match"):
-        raise SystemExit("Usage: run_network_game.py [baseline|delayed|negative|match]")
-    for selected in (("baseline", "delayed", "negative") if mode == "all" else (mode,)):
+    if len(sys.argv) > 2 or mode not in ("all", "baseline", "delayed", "negative", "match", "desync"):
+        raise SystemExit("Usage: run_network_game.py [baseline|delayed|negative|match|desync]")
+    for selected in (("baseline", "delayed", "negative", "desync") if mode == "all" else (mode,)):
         run(selected)

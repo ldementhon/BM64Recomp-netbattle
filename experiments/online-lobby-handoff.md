@@ -1,6 +1,13 @@
 # Fresh-session prompt: finish Mac/Windows online rollback Battle
 
-> **Update 2026-10-26 (latest):** online processes now render display-only by
+> **Update 2026-10-27:** the six Windows multiplayer review fixes are implemented.
+> See the current status and newest entry in `online-lobby-plan.md`; everything
+> below is historical context. The relay now uses protocol 2 and the private
+> game channel uses version 4. Rebuild and validate both clients and the relay
+> before reusing a mixed-platform setup. Windows validation of this revision is
+> pending; earlier fingerprints are obsolete.
+
+> **Update 2026-10-26:** online processes now render display-only by
 > default, which keeps GPU output out of game RAM. `BM64_RENDER_TO_RAM=1` restores
 > the old mode for diagnostics; network matches refuse it. Windows RX 9070 XT
 > replays pass, Mac/Windows cross-build histories match, and the RDNA 4 note

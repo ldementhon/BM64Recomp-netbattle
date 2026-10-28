@@ -9,6 +9,7 @@
 
 namespace online {
 constexpr unsigned input_delay = 2, prediction_limit = 12, checkpoint_slots = 16, input_slots = 32;
+constexpr unsigned state_check_interval = 300; // Five seconds of simulated play.
 constexpr uint64_t last_input_frame = std::numeric_limits<uint64_t>::max() - 64;
 static_assert(prediction_limit + input_delay + 1 < checkpoint_slots);
 static_assert(2 * prediction_limit + 2 * input_delay + 3 <= input_slots);

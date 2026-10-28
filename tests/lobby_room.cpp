@@ -37,14 +37,14 @@ int main() {
     assert(decode(encode(h)).name == h.name && decode(encode(h)).fingerprint == fingerprint);
     Packet ready{Op::Ready}; ready.revision = 0x0102030405060708; ready.ready = true;
     auto wire = encode(ready);
-    assert((wire == std::vector<uint8_t>{'B','M','6','4',0,1,3,1,2,3,4,5,6,7,8,1}));
+    assert((wire == std::vector<uint8_t>{'B','M','6','4',0,2,3,1,2,3,4,5,6,7,8,1}));
     auto malformed = [&](const std::vector<uint8_t>& bytes) {
         try { decode(bytes); assert(false); } catch (const std::invalid_argument&) {}
     };
     for (size_t i = 0; i < wire.size(); ++i) malformed({wire.begin(), wire.begin() + i});
     auto bad = wire; bad.push_back(0); malformed(bad);
     bad = wire; bad.back() = 2; malformed(bad);
-    bad = wire; bad[5] = 2; malformed(bad);
+    bad = wire; bad[5] = 1; malformed(bad);
     bad = wire; bad[6] = 255; malformed(bad);
     malformed(std::vector<uint8_t>(packet_limit + 1));
     Packet cancel_wire{Op::Cancel}; cancel_wire.match = 7; cancel_wire.reason = Reason::LoadFailed;
@@ -142,5 +142,43 @@ int main() {
     auto ping = Packet{Op::Ping}; ping.identity = 42;
     auto pong = room.handle(99, ping, 1234);
     assert(pong[0].packet.op == Op::Pong && pong[0].packet.time == 1234 && pong[0].packet.identity == 42);
+
+    // A completed input history is not a completed simulation: every player
+    // must report the same confirmed state before the relay acknowledges it.
+    for (unsigned count : {2, 3, 4}) {
+        Room checks(fingerprint);
+        for (unsigned i = 1; i <= count; ++i) checks.handle(i, hello(), 0);
+        auto playing = [&] {
+            start(checks);
+            for (unsigned i = 1; i <= count; ++i) checks.handle(i, loaded(checks), 200);
+        };
+        auto state = [&] {
+            auto p = command(Op::State, checks); p.frame = 1574; p.ram = 789; p.registers = 1011;
+            assert(encode(decode(encode(p))) == encode(p));
+            return p;
+        };
+        playing(); auto p = state();
+        for (unsigned i = 1; i < count; ++i) assert(checks.handle(i, p, 1300).empty());
+        assert(checks.handle(1, p, 1301).empty()); // Repeated pending report doesn't finish the check.
+        auto verified = checks.handle(count, p, 1302);
+        assert(verified.size() == count && verified[0].packet.op == Op::StateChecked && verified[0].packet.frame == p.frame);
+        assert(decode(encode(verified[0].packet)).frame == p.frame);
+        assert(checks.phase() == Phase::Playing);
+        p.frame += 200;
+        assert(checks.handle(1, p, 1400).empty());
+        ++p.registers;
+        auto mismatch = checks.handle(2, p, 1401);
+        assert(mismatch[0].packet.reason == Reason::Mismatch && mismatch[0].packet.frame == p.frame);
+        assert(checks.phase() == Phase::Lobby);
+        playing();
+        assert(checks.handle(1, p, 1500).empty()); // Old match cannot contaminate the next one.
+        p = state(); checks.handle(1, p, 1300);
+        assert(checks.tick(6299).empty());
+        assert(checks.tick(6300)[0].packet.reason == Reason::Timeout);
+        playing(); p = state(); p.frame = 1374 + online::state_check_interval + 1;
+        assert(checks.handle(1, p, 1300)[0].packet.reason == Reason::Mismatch);
+        playing(); p = state(); p.frame = 1374;
+        assert(checks.handle(1, p, 1300)[0].packet.reason == Reason::Mismatch);
+    }
     std::cout << "PASS: bounded wire format, compatibility, 2/3/4-seat roster, revisioned readiness, load agreement, repeat matches and disconnects\n";
 }

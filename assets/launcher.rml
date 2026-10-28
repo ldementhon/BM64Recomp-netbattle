@@ -79,7 +79,7 @@
             <div class="online-panel" data-if="online_visible">
                 <h2>Online Battle</h2>
                 <p>Fixed player colors. P1 advances the shared menus. Empty seats use CPUs.</p>
-                <p class="online-note">Early playtest: audio is muted.</p>
+                <p class="online-note">Early playtest: audio enabled; rumble disabled. P1 chooses stages. Leave ends play for everyone.</p>
                 <div class="online-fields">
                     <label class="online-field">Server address
                         <input id="online-address" type="text" data-value="online_address" maxlength="253" data-attrif-disabled="online_connected"/>

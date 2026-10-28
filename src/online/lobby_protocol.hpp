@@ -7,12 +7,12 @@
 #include <vector>
 
 namespace online::lobby {
-constexpr uint16_t protocol_version = 1;
+constexpr uint16_t protocol_version = 2;
 constexpr size_t packet_limit = 1199;
 constexpr uint8_t control_channel = 0, channel_count = 5;
 using Fingerprint = std::array<uint8_t, 32>;
 enum class Phase : uint8_t { Lobby, Loading, Playing };
-enum class Op : uint8_t { Hello = 1, Roster, Ready, Start, Prepare, Loaded, Commit, Cancel, Finished, End, Reject, Ping, Pong };
+enum class Op : uint8_t { Hello = 1, Roster, Ready, Start, Prepare, Loaded, Commit, Cancel, Finished, End, Reject, Ping, Pong, State, StateChecked };
 enum class Reason : uint8_t { None, Protocol, Incompatible, Full, InProgress, StaleRoster, NotReady, NotP1, LoadFailed, Mismatch, Timeout, Left, Cancelled };
 struct Player { uint64_t id = 0; std::string name; bool ready = false; };
 
@@ -110,14 +110,16 @@ inline std::vector<uint8_t> encode(const Packet& p) {
     case Op::Start: w.number(p.revision, 8); break;
     case Op::Prepare:
         w.number(p.revision, 8); w.number(p.match, 8); w.number(p.count, 1);
-        // Profile 1: fixed colors, Rock Garden, first to three, deterministic boot,
+        // Profile 1: fixed colors, P1 stage choice, first to three, deterministic boot,
         // boot-seed profile/time origin zero, two-update scheduling offset.
         w.number(1, 2); w.number(0, 8); w.number(0, 8); w.number(2, 1); break;
     case Op::Loaded:
+    case Op::State:
         w.number(p.match, 8); w.number(p.frame, 8); w.number(p.ram, 8); w.number(p.registers, 8); break;
     case Op::Commit: w.number(p.match, 8); w.number(p.time, 8); break;
     case Op::Cancel: w.number(p.match, 8); w.number(uint8_t(p.reason), 1); break;
-    case Op::Finished: w.number(p.match, 8); w.number(p.frame, 8); break;
+    case Op::Finished:
+    case Op::StateChecked: w.number(p.match, 8); w.number(p.frame, 8); break;
     case Op::End: w.number(p.match, 8); w.number(p.frame, 8); w.number(uint8_t(p.reason), 1); break;
     case Op::Reject: w.number(uint8_t(p.reason), 1); break;
     case Op::Ping: w.number(p.identity, 8); break;
@@ -158,6 +160,7 @@ inline Packet decode(std::span<const uint8_t> bytes) {
             throw std::invalid_argument("unsupported match profile");
         break;
     case Op::Loaded:
+    case Op::State:
         p.match = r.number(8); p.frame = r.number(8); p.ram = r.number(8); p.registers = r.number(8); break;
     case Op::Commit: p.match = r.number(8); p.time = r.number(8); break;
     case Op::Cancel:
@@ -165,7 +168,8 @@ inline Packet decode(std::span<const uint8_t> bytes) {
         if (p.reason != Reason::Cancelled && p.reason != Reason::LoadFailed)
             throw std::invalid_argument("invalid cancellation reason");
         break;
-    case Op::Finished: p.match = r.number(8); p.frame = r.number(8); break;
+    case Op::Finished:
+    case Op::StateChecked: p.match = r.number(8); p.frame = r.number(8); break;
     case Op::End: p.match = r.number(8); p.frame = r.number(8); p.reason = Reason(r.number(1)); break;
     case Op::Reject: p.reason = Reason(r.number(1)); break;
     case Op::Ping: p.identity = r.number(8); break;

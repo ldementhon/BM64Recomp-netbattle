@@ -17,6 +17,7 @@ static void run(int argc, char** argv) {
     auto executable = fs::absolute(argv[4]), rom = fs::absolute(argv[5]), recording = fs::absolute(argv[6]), output = fs::absolute(argv[7]);
     unsigned humans = unsigned(std::stoul(argv[8])), stop = unsigned(std::stoul(argv[9]));
     check(humans >= 2 && humans <= 4, "invalid human count");
+    check(stop > 0, "STOP_FRAME must be positive; online matches continue after a win");
     fs::create_directories(output);
     auto fingerprint = client_fingerprint(executable, rom);
     std::cout << "PEER: fingerprint=" << fingerprint_hex(fingerprint) << std::endl;
@@ -25,7 +26,7 @@ static void run(int argc, char** argv) {
     fs::path log, settings;
     bool ready_sent = false, start_sent = false, cancel_sent = false, acknowledged = false, started = false;
     std::optional<uint64_t> finished;
-    uint64_t last_log_read = 0;
+    uint64_t origin = 0;
     const auto deadline = monotonic_ms() + 300000;
     while (monotonic_ms() < deadline) {
         auto now = monotonic_ms();
@@ -41,7 +42,10 @@ static void run(int argc, char** argv) {
                 std::cout << "PEER: slot=" << client.slot() << " match=" << event.match << " log=" << log.string() << std::endl;
             } else if (event.op == Op::End) {
                 check(event.reason == Reason::None || (stop && event.reason == Reason::Cancelled), reason_text(event.reason));
+                check(origin && client.checked_frame() == origin + stop, "match ended before every peer verified STOP_FRAME");
                 game.cancel(event.match);
+            } else if (event.op == Op::StateChecked) {
+                check(game.state_checked(event.frame), "state acknowledgment arrived outside play");
             } else if (event.op == Op::Reject) throw std::runtime_error(reason_text(event.reason));
         }
         check(!client.disconnected(), client.error());
@@ -50,13 +54,15 @@ static void run(int argc, char** argv) {
             finished = *exited->completed_frame; client.finished(*finished);
         }
         if (game.ready() && client.clock() && !acknowledged) {
-            auto ready = *game.ready(); client.loaded(ready.frame, ready.ram, ready.registers); acknowledged = true;
+            auto ready = *game.ready(); origin = ready.frame;
+            client.loaded(ready.frame, ready.ram, ready.registers); acknowledged = true;
         }
         if (client.start_at() && now >= *client.start_at() && !started) {
             check(game.playing(client.roster().match), "cannot release ready game"); started = true;
         }
         if (client.roster().phase == Phase::Playing) {
             for (const auto& input : game.take_inputs()) client.send_inputs(input);
+            for (const auto& state : game.take_states()) client.check_state(state.frame, state.ram, state.registers);
             for (const auto& input : client.take_inputs()) game.send_inputs(input);
         }
         if (!ready_sent && client.roster().count == humans && client.clock()) { client.ready(true); ready_sent = true; }
@@ -65,11 +71,8 @@ static void run(int argc, char** argv) {
             for (unsigned i = 0; i < humans; ++i) all_ready &= client.roster().players[i].ready;
             if (all_ready) { client.start(); start_sent = true; }
         }
-        if (stop && started && !cancel_sent && client.slot() == 0 && now - last_log_read >= 100) {
-            last_log_read = now;
-            std::ifstream text(log);
-            std::string contents{std::istreambuf_iterator<char>(text), std::istreambuf_iterator<char>()};
-            if (contents.find("NETWORK_STATE: frame=" + std::to_string(stop) + " ") != std::string::npos) { client.cancel(); cancel_sent = true; }
+        if (started && !cancel_sent && client.slot() == 0 && client.checked_frame() == origin + stop) {
+            client.cancel(); cancel_sent = true;
         }
         if (started && client.roster().phase == Phase::Lobby && game.state() == GameSession::State::Lobby && (stop || finished)) {
             check(!fs::exists(settings), "settings were not cleaned");

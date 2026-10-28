@@ -21,7 +21,9 @@ struct Peer {
 };
 
 static void run(int argc, char** argv) {
-    check(argc == 8, "Usage: network_game GAME ROM INPUT_RECORDING OUTPUT_DIR HUMANS DELAY_MS STOP_FRAME");
+    check(argc == 8 || (argc == 9 && std::string(argv[8]) == "desync"),
+          "Usage: network_game GAME ROM INPUT_RECORDING OUTPUT_DIR HUMANS DELAY_MS STOP_FRAME [desync]");
+    const bool expect_desync = argc == 9;
     auto executable = fs::absolute(argv[1]), rom = fs::absolute(argv[2]), recording = fs::absolute(argv[3]), output = fs::absolute(argv[4]);
     unsigned humans = unsigned(std::stoul(argv[5])), delay = unsigned(std::stoul(argv[6])), stop = unsigned(std::stoul(argv[7]));
     check(humans >= 2 && humans <= 4 && delay <= 200, "invalid test parameters");
@@ -34,6 +36,7 @@ static void run(int argc, char** argv) {
     std::vector<Pending> pending;
     bool ready_sent = false, start_sent = false, cancel_sent = false, loss_triggered = false;
     uint64_t loss_end = 0, last_log_read = 0, dropped = 0;
+    unsigned mismatches = 0;
     const auto deadline = monotonic_ms() + 150000;
     while (monotonic_ms() < deadline) {
         server.service();
@@ -44,15 +47,22 @@ static void run(int argc, char** argv) {
             for (const auto& event : client.poll()) {
                 if (event.op == Op::Prepare) {
                     peer.log = output / ("player-" + std::to_string(client.slot()) + ".log");
+                    std::map<std::string, std::string> diagnostics{
+                        {"BM64_INPUT_SCRIPT", recording.string()}, {"BM64_NETWORK_INPUT", "1"},
+                        {"BM64_NETWORK_VERIFY_EVERY", "200"}, {"BM64_NETWORK_STOP", std::to_string(stop)}};
+                    // Change only one client's replayed input. Transport still agrees,
+                    // so only the live state comparison can detect the resulting desync.
+                    if (expect_desync && client.slot() == 1) diagnostics["BM64_NEGATIVE_INPUT"] = "1";
                     peer.game.start(event.match, executable, rom, peer.log,
-                        {"--checkpoint-test", "--single-battle", "--online-test"},
-                        {{"BM64_INPUT_SCRIPT", recording.string()}, {"BM64_NETWORK_INPUT", "1"},
-                         {"BM64_NETWORK_VERIFY_EVERY", "200"}, {"BM64_NETWORK_STOP", std::to_string(stop)}},
-                        humans, client.slot());
+                        {"--checkpoint-test", "--single-battle", "--online-test"}, diagnostics, humans, client.slot());
                     peer.settings = peer.game.settings();
                 } else if (event.op == Op::End) {
-                    check(event.reason == Reason::None || (cancel_sent && event.reason == Reason::Cancelled), reason_text(event.reason));
+                    check(expect_desync ? event.reason == Reason::Mismatch :
+                          event.reason == Reason::None || (cancel_sent && event.reason == Reason::Cancelled), reason_text(event.reason));
+                    if (event.reason == Reason::Mismatch) ++mismatches;
                     peer.game.cancel(event.match);
+                } else if (event.op == Op::StateChecked) {
+                    check(peer.game.state_checked(event.frame), "state acknowledgment arrived outside play");
                 } else if (event.op == Op::Reject) throw std::runtime_error(reason_text(event.reason));
             }
             check(!client.disconnected(), client.error());
@@ -74,6 +84,7 @@ static void run(int argc, char** argv) {
                 if (delay && input.slot == 3 && peer.sampled % 2 == 0) extra = delay * 2 / 3;
                 pending.push_back({now + extra, i, true, input});
             }
+            for (const auto& state : peer.game.take_states()) client.check_state(state.frame, state.ram, state.registers);
             if (delay && !loss_triggered && peer.sampled >= 650) {
                 loss_triggered = true; loss_end = now + 500;
             }
@@ -87,7 +98,7 @@ static void run(int argc, char** argv) {
                 std::string text{std::istreambuf_iterator<char>(log), std::istreambuf_iterator<char>()};
                 peer.reached = text.find("NETWORK_STATE: frame=" + std::to_string(stop) + " ") != std::string::npos;
             }
-            all_reached &= peer.reached;
+            all_reached &= peer.reached && peer.game.ready() && client.checked_frame() == peer.game.ready()->frame + stop;
             all_done &= peer.finished.has_value();
         }
         if (now - last_log_read >= 100) last_log_read = now;
@@ -117,6 +128,12 @@ static void run(int argc, char** argv) {
         }
         bool lobby = start_sent && server.room().phase() == Phase::Lobby;
         for (auto& peer : peers) lobby &= peer->connection.roster().phase == Phase::Lobby && peer->game.state() == GameSession::State::Lobby;
+        if (lobby && expect_desync && mismatches) {
+            check(mismatches == humans, "not every client received the desync failure");
+            for (const auto& peer : peers) check(!fs::exists(peer->settings), "desync left match settings behind");
+            std::cout << "PASS: live desync detected; all " << humans << " clients returned to lobby\n";
+            return;
+        }
         if (lobby && ((stop && cancel_sent) || (!stop && all_done))) {
             for (auto& peer : peers) check(!fs::exists(peer->settings), "settings were not cleaned");
             if (!stop) for (auto& peer : peers) check(peer->finished == peers[0]->finished, "different finish frames");

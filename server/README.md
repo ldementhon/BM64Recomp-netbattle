@@ -23,13 +23,13 @@ build/BM64Recompiled.app/Contents/MacOS/BM64Recompiled --online-fingerprint
 ```
 
 The command hashes the executable and stored ROM with SHA-256 and includes the
-macOS architecture and fixed battle profile. `APP_FOLDER_PATH` can select an
+platform architecture and fixed battle profile. `APP_FOLDER_PATH` can select an
 isolated directory containing `bm64_us.z64`. It exits without starting the game.
 `python3 tests/run_fingerprint.py` checks the command against Python's SHA-256;
-the macOS CTest also covers standard vectors and build/ROM changes. The executable
+the fingerprint CTest also covers standard vectors and build/ROM changes. The executable
 includes the statically linked recomp, patches, and runtime. This identifies the
 build/profile; it does not certify cross-machine determinism or audit every setting.
-The macOS launcher's **Online Battle** screen uses this fingerprint and rechecks
+The Mac and Windows launchers' **Online Battle** screen uses this fingerprint and rechecks
 the executable/ROM before every match. Enter the server address, port, and name;
 choose the local controls to use, then Ready. P1 can start once at least two humans
 are ready. Empty seats are CPUs. The lobby stays connected while a fresh game
@@ -51,30 +51,47 @@ on each machine. It checks the native fingerprint command and prints a
 `FINGERPRINT:` line. Start the server with both values. Rebuilding either side
 changes its fingerprint and requires validating the pair again.
 
-This remains an early playtest: audio is muted, manual physical-device assignment
-is not yet preserved across processes, and real human/cross-machine play has not
-been verified. Windows x64 is required for the first remote-play version; a
-validated Mac/Windows pair can share a room as above, but a live Mac/Windows
-match has not been played yet.
+This remains an early playtest. Audio plays on the first simulation of each
+update; corrected replays are silent, and online rumble is disabled. Selected
+controllers and calibration are preserved across match processes. Earlier builds
+completed a human Mac/Windows internet match and scripted LAN rematches. Repeated
+physical-controller sessions, wider hardware coverage, and the four-person remote
+acceptance run remain open. Historical passes do not certify a rebuilt pair.
+
+The current wire protocol is version 2 (private owner/game channel version 4).
+Rebuild the relay and every client together, then revalidate their fingerprints.
+Old version-1 peers are rejected. Every 300 game updates, the game hashes full RAM
+and comparable registers at a confirmed boundary. The relay compares every
+player's report and ends the match on disagreement, with the guest frame in the
+error. A missing peer report times out after five seconds. Play continues while
+the acknowledgment is in flight, but a second check waits for the first one.
+`NETWORK_CHECK_COST` logs the hash and presentation-drain cost in milliseconds;
+these checks are a diagnostic guard, not a proof that native continuations match.
+
+The launcher's `online-match-logs` directory keeps the ten most recent attempts,
+including across reconnects. Failure messages include the corresponding log path.
+Windows match children start in the executable's directory so their assets do not
+depend on the parent's working folder. Temporary match folders support Unicode.
 
 The server owns one room and serializes membership, Ready, and Start. Roster
 revisions change on membership changes and return to Lobby; Ready flag updates
 keep the revision so simultaneous Ready requests for the same members remain
-valid. A failed or disconnected player aborts loading/play for everyone. An
-ordinary completed match keeps connections and clears Ready. Every match gets a
-new ID. The start epoch is server monotonic milliseconds. The connection client
+valid. A failed or disconnected player aborts loading/play for everyone. A
+win continues through the award screens into another battle. Leaving or cancelling
+returns everyone to the lobby, keeps connections, and clears Ready. A new lobby
+start gets a new match ID. The start epoch is server monotonic milliseconds. The connection client
 uses the lowest-RTT estimate among eight recent clock samples, requires at least
 three fresh samples before acknowledging loading, and cancels a late start. Frame
 numbers and bounded simulation lead still need the input protocol; clock estimates
 alone cannot synchronize gameplay over asymmetric routes.
 
 Control messages use reliable ordered channel 0, explicit big-endian fields,
-protocol version 1, and a 1,199-byte maximum. Channels 1–4 carry separate unreliable
+protocol version 2, and a 1,199-byte maximum. Channels 1–4 carry separate unreliable
 sequenced input streams, with 32 recent inputs per upload. There are eight transport slots (four
 playable seats plus pending/rejected joins), a five-second handshake deadline,
 120 incoming messages per connection per second, a 64-KiB incoming wait
 limit, and a 128-command outgoing queue limit. Slow or invalid peers are removed.
-Loading has a 30-second deadline; partial finish agreement and stalled input
+Loading has a 30-second deadline; partial state/finish agreement and stalled input
 confirmation each have five seconds. Input repeats are forwarded immediately,
 even if previously accepted, so a receiver can repair a lost relay while stalled.
 
@@ -93,10 +110,10 @@ fixture proves startup/cancel, not normal match completion or live inputs.
 The ordinary test uses disposable fixture children to verify finish agreement
 after exchanging assigned inputs through the private IPC channel and ENet relay,
 and verifies that no UDP sockets are inherited by game processes. Private channel
-version 2 queues at most 2,048 fixed 240-byte records, supports partial nonblocking
+version 4 queues at most 2,048 fixed 240-byte records, supports partial nonblocking
 writes, and fails if that bound is exceeded. The owner drains at most 128 child
-records per poll. These input records are separate from checkpoints. Windows game-process
-ownership remains unimplemented; its tests are excluded on that platform.
+records per poll. These input records are separate from checkpoints. Windows uses a private named pipe and an owned child-process job; its lifecycle
+tests run on Windows too.
 
 `input_network` runs four production client connections through actual ENet input
 channels. It independently delays, drops, and duplicates received relays at the
@@ -105,19 +122,26 @@ confirmed completion and stalled-match timeout. This is not OS-level packet
 shaping or a ROM rollback test. Raw connection tests reject slot impersonation
 and conflicting replacements. See [input frame rules](INPUT_PROTOCOL.md).
 
-This is not yet a playable game client. No ROM, checkpoint, or native pointer is
-sent. The server checks finish-frame agreement and requires that frame to be
-confirmed by every human receiver. The game adapter now detects completion at
-the first confirmed winning boundary, including one discovered during replay.
+No ROM, checkpoint, or native pointer is sent. Only input records and small
+state digests cross the network. Finish-frame agreement remains available for
+non-network lifecycle fixtures; live network games continue after a win.
 
 After building the native game and this server's test targets, run
 `python3 tests/run_network_game.py all` to compare four real ROM clients under
 normal delivery, independent delay/loss, and a changed-input negative control.
+It also changes just one client's replay and requires the live desync check to
+close all four games and return their connections to the lobby.
 `python3 tests/run_network_game.py match` completes a full first-to-three match
-with delayed delivery. These explicit macOS tests require a local ROM and open
+and enters a rematch with delayed delivery. These explicit macOS tests require a local ROM and open
 four game processes. They hash full RAM at verification boundaries, use recorded
-controller inputs through the actual relay/checkpoint path, and keep audio muted;
+controller inputs through the actual relay/checkpoint path, with audio enabled;
 they do not establish live-player feel or timing performance.
-No deployment has been performed. For remote private tests, bind the chosen
+For a cross-machine scripted run, use one `network_peer` per machine with a
+positive `STOP_FRAME`. Each peer reports its confirmed state; P1 cancels only
+after the relay acknowledges that all peers reached the final checkpoint with
+equal hashes. Every peer rejects an early cancellation. Zero is refused because
+network matches no longer finish automatically after a win.
+
+No dedicated datacenter deployment has been performed. For remote private tests, bind the chosen
 interface and restrict its UDP port to testers' public IPs as required by the
 implementation plan. ENet provides neither authentication nor encryption.

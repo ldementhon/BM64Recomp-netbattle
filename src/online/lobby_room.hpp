@@ -1,5 +1,6 @@
 #pragma once
 #include "lobby_protocol.hpp"
+#include "input_history.hpp"
 #include <algorithm>
 #include <optional>
 #include <stdexcept>
@@ -72,6 +73,7 @@ public:
                 phase_ = Phase::Loading;
                 deadline_ = now + 30000;
                 loaded_.fill(std::nullopt); finished_.fill(std::nullopt);
+                states_.fill(std::nullopt); checked_.reset(); state_deadline_ = 0;
                 publish(out);
                 Packet prepare{Op::Prepare};
                 prepare.revision = revision_; prepare.match = match_; prepare.count = uint8_t(count_);
@@ -79,7 +81,7 @@ public:
             }
             return out;
         }
-        if (p.op != Op::Loaded && p.op != Op::Cancel && p.op != Op::Finished) {
+        if (p.op != Op::Loaded && p.op != Op::Cancel && p.op != Op::Finished && p.op != Op::State) {
             reject(Reason::Protocol, true); return out;
         }
         if (p.match != match_ || phase_ == Phase::Lobby) return out;
@@ -97,10 +99,27 @@ public:
                     phase_ = Phase::Playing;
                     deadline_ = 0;
                     start_epoch_ = now + 1000;
+                    checked_ = digest;
                     publish(out);
                     Packet commit{Op::Commit}; commit.match = match_; commit.time = start_epoch_;
                     broadcast(out, commit);
                 }
+            }
+        } else if (p.op == Op::State && phase_ == Phase::Playing) {
+            Digest digest{p.frame, p.ram, p.registers};
+            if (now < start_epoch_ || p.frame <= checked_->frame ||
+                p.frame - checked_->frame > state_check_interval) {
+                end(out, Reason::Mismatch, p.frame); return out;
+            }
+            for (const auto& state : states_) {
+                if (state && *state != digest) { end(out, Reason::Mismatch, p.frame); return out; }
+            }
+            states_[slot] = digest;
+            if (!state_deadline_) state_deadline_ = now + 5000;
+            if (std::all_of(states_.begin(), states_.begin() + count_, [](const auto& s) { return s.has_value(); })) {
+                checked_ = digest; states_.fill(std::nullopt); state_deadline_ = 0;
+                Packet checked{Op::StateChecked}; checked.match = match_; checked.frame = p.frame;
+                broadcast(out, checked);
             }
         } else if (p.op == Op::Finished && phase_ == Phase::Playing) {
             if (now < start_epoch_ || p.frame <= loaded_[0]->frame) { end(out, Reason::Mismatch); return out; }
@@ -129,6 +148,7 @@ public:
     std::vector<Delivery> tick(uint64_t now) {
         std::vector<Delivery> out;
         if (phase_ != Phase::Lobby && deadline_ && now >= deadline_) end(out, Reason::Timeout);
+        if (phase_ == Phase::Playing && state_deadline_ && now >= state_deadline_) end(out, Reason::Timeout);
         return out;
     }
 
@@ -141,6 +161,9 @@ private:
     std::array<Player, 4> players_{};
     std::array<std::optional<Digest>, 4> loaded_{};
     std::array<std::optional<uint64_t>, 4> finished_{};
+    std::array<std::optional<Digest>, 4> states_{};
+    std::optional<Digest> checked_;
+    uint64_t state_deadline_ = 0;
     unsigned count_ = 0;
     Phase phase_ = Phase::Lobby;
     uint64_t revision_ = 0, match_ = 0, deadline_ = 0, start_epoch_ = 0;
@@ -172,6 +195,7 @@ private:
         broadcast(out, end);
         phase_ = Phase::Lobby; deadline_ = 0;
         loaded_.fill(std::nullopt); finished_.fill(std::nullopt);
+        states_.fill(std::nullopt); checked_.reset(); state_deadline_ = 0;
         changed_roster(out);
     }
 };
