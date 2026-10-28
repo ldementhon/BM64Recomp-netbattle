@@ -82,7 +82,14 @@ static recomp::ControllerIdentity controller_identity(SDL_GameController* contro
     auto text = [](const char* value) { return value ? value : ""; };
     char guid[33];
     SDL_JoystickGetGUIDString(SDL_JoystickGetGUID(SDL_GameControllerGetJoystick(controller)), guid, sizeof(guid));
-    return {guid, text(SDL_GameControllerGetSerial(controller)), text(SDL_GameControllerPath(controller)),
+#ifdef __APPLE__
+    // macOS device paths end in a per-process object address, so the match
+    // process could never find the lobby's controller by path.
+    const char* path = nullptr;
+#else
+    const char* path = SDL_GameControllerPath(controller);
+#endif
+    return {guid, text(SDL_GameControllerGetSerial(controller)), text(path),
             text(SDL_GameControllerName(controller))};
 }
 

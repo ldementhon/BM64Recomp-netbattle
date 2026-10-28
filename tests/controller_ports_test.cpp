@@ -223,6 +223,9 @@ int main(int argc, char** argv) {
     check(recomp::get_port_controller_index(0) == -1 && recomp::get_port_controller_index(1) == 0,
           "another port cannot steal the online controller");
     auto selected_device = recomp::get_port_controller_identity(1);
+#ifdef __APPLE__
+    check(selected_device.path.empty(), "macOS identities omit per-process device paths");
+#endif
     recomp::set_online_controller(std::nullopt);
     int duplicate = attach_pad(0);
     auto duplicate_id = SDL_JoystickGetDeviceInstanceID(duplicate);

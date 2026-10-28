@@ -41,6 +41,29 @@ current build.
 
 ## Implementation record
 
+- Mac controllers in online matches (2026-10-27). The first internet match
+  (Mac host, Windows friend, keyboards) finished first-to-three normally. With
+  physical controllers, every start then failed: the Mac match process logged
+  "selected controller is unavailable or ambiguous" and both players saw "match
+  owner/child disconnected". On macOS, SDL's device path ends in a per-process
+  object address, such as `USB_057e_2009_0x105152c80` in the lobby and
+  `…0x10561ec80` in a second process. The match process therefore never matched
+  the lobby's path. macOS identities now leave the path empty and use GUID and
+  serial, or GUID and name when there is no serial. The rule that exactly one
+  device must match still holds. Windows HID paths name the device interface;
+  a two-process SDL probe on the Windows PC returned identical paths.
+
+  A throwaway live-input peer reproduced the failure on the old Mac build, with
+  a real Switch Pro Controller and the user's controls. The fixed build started
+  the match and matched the scripted peer at every checkpoint. The controller
+  tests pass, with a new check that macOS identities omit the path (run with
+  `SDL_JOYSTICK_HIDAPI=0 SDL_JOYSTICK_IOKIT=0 SDL_JOYSTICK_MFI=0` while a physical
+  pad is attached, since the test expects exactly its four virtual pads). The
+  Mac startup, match, and round transitions pass and match Windows `ff0c553d…`
+  under `--cross-build`. New validated pair: Mac `c7c05089…` (fingerprint
+  `26773ddf…`) and Windows `ff0c553d…` (fingerprint `0ed3dd6b…`). Each match
+  overwrites `online-match.log`, so the successful match's log was not kept.
+
 - Windows snapshots copy only changes (2026-10-27). The first live match over
   the internet (Mac host, Windows friend) ran at about 5 fps. The host's log
   showed every rollback pinned at the 12-frame prediction limit, waiting on the
