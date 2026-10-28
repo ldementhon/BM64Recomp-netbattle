@@ -1,0 +1,65 @@
+--- a/lib/rt64/src/common/rt64_rollback_probe.h
++++ b/lib/rt64/src/common/rt64_rollback_probe.h
+@@ -18,6 +18,7 @@
+ inline std::atomic<uint64_t> native_noise_pixels{}, native_other_pixels{};
+ inline std::atomic<uint64_t> inline_upload_calls{};
+ inline bool aligned_pacing=false, bounded_present=false;
++inline bool predict_display_age=false;
+ inline std::atomic<uint64_t> latest_submitted{}, retired_presents{}, slot_wait_ns{}, maximum_in_flight{};
+ inline std::mutex display_mutex;
+ inline std::condition_variable display_condition;
+@@ -54,6 +55,15 @@
+     { std::lock_guard lock(display_mutex); if(in_flight) --in_flight; }
+     display_condition.notify_all();
+ }
++inline bool displaySlotTooOld(uint64_t deadline) {
++    if(!predict_display_age || !recovering_display || !deadline) return false;
++    std::lock_guard lock(display_mutex);
++    if(!last_observed_display) return false;
++    // Estimate one queued drawable per refresh using actual displayed callbacks.
++    // Validate this recovery heuristic against display age, not just CPU deadlines.
++    const auto estimated=last_observed_display+(in_flight+1)*refresh_period_ns.load();
++    return estimated>deadline+refresh_period_ns+1000000;
++}
+ inline std::atomic<uint64_t> native_upload_wait{}, native_texture_wait{}, native_submit{}, native_fence_wait{};
+ inline std::atomic<uint64_t> native_gpu{}, native_schedule{}, native_complete_delay{}, native_wakeup{}, native_samples{}, native_invalid{};
+ inline std::atomic<uint64_t> native_last_completion{};
+--- a/src/main/rt64_render_context.cpp
++++ b/src/main/rt64_render_context.cpp
+@@ -210,6 +210,7 @@
+     RT64::RollbackProbe::inline_uploads = checkpoint::enabled && std::getenv("BM64_INLINE_UPLOADS");
+     RT64::RollbackProbe::aligned_pacing = checkpoint::enabled && std::getenv("BM64_PACING");
+     RT64::RollbackProbe::bounded_present = checkpoint::enabled && std::getenv("BM64_BOUNDED_PRESENT");
++    RT64::RollbackProbe::predict_display_age = checkpoint::enabled && std::getenv("BM64_PREDICT_DISPLAY_AGE");
+     RT64::RollbackProbe::incremental_writeback = checkpoint::enabled && std::getenv("BM64_INCREMENTAL_WRITEBACK");
+     RT64::RollbackProbe::enabled = checkpoint::profiling.load();
+     RT64::RollbackProbe::displayed = checkpoint::displayed;
+--- a/lib/rt64/src/hle/rt64_present_queue.cpp
++++ b/lib/rt64/src/hle/rt64_present_queue.cpp
+@@ -551,6 +551,7 @@
+                     // Only retire display-only work; the workload and its completion remain intact.
+                     if (!present.paused && present.fbOperations.empty() && present.probeFrame &&
+                         ((present.probeFrame<RollbackProbe::latest_submitted && ready>present.probeDeadline) ||
++                         RollbackProbe::displaySlotTooOld(present.probeDeadline) ||
+                          (RollbackProbe::recovering_display && ready-start>500000 && ready+500000>=present.probeDeadline)))
+                         skipPresent=true;
+                 }
+--- a/tests/presentation_recovery.cpp
++++ b/tests/presentation_recovery.cpp
+@@ -19,5 +19,16 @@
+     assert(P::maximum_in_flight==2);
+     P::completedDisplay(); P::completedDisplay();
+     assert(P::in_flight==0);
++    P::predict_display_age=true;
++    P::recovering_display=true;
++    P::last_observed_display=10*period;
++    P::submittedDisplay();
++    // Ready just after refresh 10, with refresh 11 already occupied: a new
++    // submission cannot meet a two-refresh age bound for a release before 10.
++    assert(P::displaySlotTooOld(10*period+4000000));
++    assert(!P::displaySlotTooOld(11*period+4000000));
++    P::completedDisplay();
++    assert(!P::displaySlotTooOld(10*period+4000000));
++    P::recovering_display=false;
+     puts("PASS: late display opens recovery; two fresh displays close it; old callbacks ignored; bound accounts for both completions");
+ }

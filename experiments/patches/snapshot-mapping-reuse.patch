@@ -1,0 +1,33 @@
+--- a/src/game/checkpoint_memory.hpp
++++ b/src/game/checkpoint_memory.hpp
+@@ -4,6 +4,7 @@
+ #include <vector>
+ #include <stdexcept>
+ #include <chrono>
++#include <cstdlib>
+ #ifdef __APPLE__
+ #include <mach/mach.h>
+ #include <mach/mach_vm.h>
+@@ -34,13 +35,21 @@
+     }
+     void capture(uint8_t* source, size_t size, bool full_copy = false) {
+         auto start=std::chrono::steady_clock::now();
++#ifdef __APPLE__
++        // Experiment: overwrite an owned snapshot mapping rather than deallocating
++        // it and asking the VM allocator for another address. All bytes remain COW.
++        const bool reuse = !full_copy && image_ && size_==size && std::getenv("BM64_REUSE_SNAPSHOT_MAPPING");
++        if (!reuse) clear();
++#else
+         clear(); size_ = size;
++#endif
++        size_ = size;
+         auto cleared=std::chrono::steady_clock::now();
+         clear_ms=std::chrono::duration<double,std::milli>(cleared-start).count(); remap_ms=0;
+ #ifdef __APPLE__
+         if (!full_copy) {
+             vm_prot_t current, maximum;
+-            checked(mach_vm_remap(mach_task_self(), &image_, size_, 0, VM_FLAGS_ANYWHERE,
++            checked(mach_vm_remap(mach_task_self(), &image_, size_, 0, reuse ? VM_FLAGS_FIXED | VM_FLAGS_OVERWRITE : VM_FLAGS_ANYWHERE,
+                 mach_task_self(), reinterpret_cast<mach_vm_address_t>(source), true,
+                 &current, &maximum, VM_INHERIT_NONE));
+             remap_ms=std::chrono::duration<double,std::milli>(std::chrono::steady_clock::now()-cleared).count();

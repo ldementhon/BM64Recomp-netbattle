@@ -1,0 +1,141 @@
+diff --git a/plume_metal.cpp b/plume_metal.cpp
+index a5f30a3..0998b3a 100644
+--- a/plume_metal.cpp
++++ b/plume_metal.cpp
+@@ -16,6 +16,7 @@
+ 
+ #include <algorithm>
+ #include <mutex>
++#include <mach/mach_time.h>
+ 
+ #include "plume_metal.h"
+ 
+@@ -1954,6 +1955,10 @@ namespace plume {
+         // According to Apple, presenting via scheduled handler is more performant than using the presentDrawable method.
+         // We grab the underlying drawable because we might've acquired a new one by now and the old one would have been released.
+         CA::MetalDrawable *drawableMtl = drawable.mtl->retain();
++        if (presentationCallback) {
++            auto callback = presentationCallback;
++            drawableMtl->addPresentedHandler([callback](MTL::Drawable* d) { callback(d->presentedTime()); });
++        }
+         presentBuffer->addScheduledHandler([drawableMtl](MTL::CommandBuffer* cmdBuffer) {
+             drawableMtl->present();
+         });
+@@ -3685,18 +3690,23 @@ namespace plume {
+         assert(commandLists != nullptr);
+         assert(commandListCount > 0);
+ 
+-        // Create a new command buffer to encode the wait semaphores into
+-        MTL::CommandBuffer* cmdBuffer = mtl->commandBufferWithUnretainedReferences();
+-        cmdBuffer->setLabel(MTLSTR("Wait Command Buffer"));
+-        cmdBuffer->enqueue();
++        // Queue order already orders the real command lists; an empty wait buffer
++        // has no resource, semaphore, or completion work to preserve.
++        static const bool skipEmptyWait=std::getenv("BM64_SKIP_EMPTY_SUBMISSIONS")!=nullptr;
++        if(!skipEmptyWait || waitSemaphoreCount>0) {
++            // Create a new command buffer to encode the wait semaphores into
++            MTL::CommandBuffer* cmdBuffer = mtl->commandBufferWithUnretainedReferences();
++            cmdBuffer->setLabel(MTLSTR("Wait Command Buffer"));
++            cmdBuffer->enqueue();
++
++            for (uint32_t i = 0; i < waitSemaphoreCount; i++) {
++                MetalCommandSemaphore *interfaceSemaphore = static_cast<MetalCommandSemaphore *>(waitSemaphores[i]);
++                cmdBuffer->encodeWait(interfaceSemaphore->mtl, interfaceSemaphore->mtlEventValue++);
++            }
+ 
+-        for (uint32_t i = 0; i < waitSemaphoreCount; i++) {
+-            MetalCommandSemaphore *interfaceSemaphore = static_cast<MetalCommandSemaphore *>(waitSemaphores[i]);
+-            cmdBuffer->encodeWait(interfaceSemaphore->mtl, interfaceSemaphore->mtlEventValue++);
++            cmdBuffer->commit();
+         }
+ 
+-        cmdBuffer->commit();
+-
+         // Commit all command lists except the last one
+ 
+         for (uint32_t i = 0; i < commandListCount - 1; i++) {
+@@ -3712,9 +3722,16 @@ namespace plume {
+         const MetalCommandList *interfaceCommandList = static_cast<const MetalCommandList *>(commandLists[commandListCount - 1]);
+         interfaceCommandList->mtl->enqueue();
+ 
+-        if (signalFence != nullptr) {
+-            interfaceCommandList->mtl->addCompletedHandler([signalFence](MTL::CommandBuffer* cmdBuffer) {
+-                dispatch_semaphore_signal(static_cast<MetalCommandFence *>(signalFence)->semaphore);
++        auto timingCallback = interfaceCommandList->timingCallback;
++        auto hostTime = []() -> uint64_t {
++            static const double scale=[] { mach_timebase_info_data_t t; mach_timebase_info(&t); return double(t.numer)/t.denom; }();
++            return uint64_t(mach_absolute_time()*scale);
++        };
++        auto submitTime = timingCallback ? hostTime() : 0;
++        if (signalFence != nullptr || timingCallback) {
++            interfaceCommandList->mtl->addCompletedHandler([signalFence, timingCallback, submitTime, hostTime](MTL::CommandBuffer* cmdBuffer) {
++                if(timingCallback) timingCallback({submitTime, uint64_t(cmdBuffer->GPUStartTime()*1e9), uint64_t(cmdBuffer->GPUEndTime()*1e9), hostTime()});
++                if(signalFence) dispatch_semaphore_signal(static_cast<MetalCommandFence *>(signalFence)->semaphore);
+             });
+         }
+ 
+@@ -3819,6 +3836,7 @@ namespace plume {
+         capabilities.preferHDR = mtl->recommendedMaxWorkingSetSize() > (512 * 1024 * 1024);
+         capabilities.dynamicDepthBias = true;
+         capabilities.uma = mtl->hasUnifiedMemory();
++        capabilities.directUploadBuffers = capabilities.uma;
+         capabilities.gpuUploadHeap = capabilities.uma;
+         capabilities.queryPools = timestampCounterSet != nullptr;
+         capabilities.samplerMirrorClampToEdge = true;
+diff --git a/plume_metal.h b/plume_metal.h
+index 8de188d..ade095c 100644
+--- a/plume_metal.h
++++ b/plume_metal.h
+@@ -252,6 +252,8 @@ namespace plume {
+ 
+         MetalSwapChain(MetalCommandQueue *commandQueue, const RenderSwapChainDesc &desc);
+         ~MetalSwapChain() override;
++        std::function<void(double)> presentationCallback;
++        void setPresentationCallback(std::function<void(double)> callback) override { presentationCallback = std::move(callback); }
+         bool present(uint32_t textureIndex, RenderCommandSemaphore **waitSemaphores, uint32_t waitSemaphoreCount) override;
+         void wait() override;
+         bool resize() override;
+diff --git a/plume_render_interface.h b/plume_render_interface.h
+index 2048557..83f02cc 100644
+--- a/plume_render_interface.h
++++ b/plume_render_interface.h
+@@ -1,3 +1,4 @@
++#include <functional>
+ //
+ // plume
+ //
+@@ -86,6 +87,7 @@ namespace plume {
+     };
+ 
+     struct RenderSwapChain {
++        virtual void setPresentationCallback(std::function<void(double)> callback) { }
+         virtual ~RenderSwapChain() { }
+         virtual bool present(uint32_t textureIndex, RenderCommandSemaphore **waitSemaphores, uint32_t waitSemaphoreCount) = 0;
+         virtual void wait() = 0;
+@@ -111,7 +113,13 @@ namespace plume {
+         virtual uint32_t getHeight() const = 0;
+     };
+ 
++    struct RenderCommandTiming {
++        uint64_t submit, gpuStart, gpuEnd, completed; // Monotonic host nanoseconds.
++    };
++
+     struct RenderCommandList {
++        // Optional diagnostic, invoked before the submission fence is signalled.
++        std::function<void(const RenderCommandTiming&)> timingCallback;
+         virtual ~RenderCommandList() { }
+         virtual void begin() = 0;
+         virtual void end() = 0;
+diff --git a/plume_render_interface_types.h b/plume_render_interface_types.h
+index 9dcfedf..226776e 100644
+--- a/plume_render_interface_types.h
++++ b/plume_render_interface_types.h
+@@ -1802,6 +1802,8 @@ namespace plume {
+ 
+         // UMA.
+         bool uma = false;
++        // Backend supports CPU-written buffers directly as native GPU inputs.
++        bool directUploadBuffers = false;
+ 
+         // GPU Upload heap.
+         bool gpuUploadHeap = false;

@@ -1,0 +1,57 @@
+diff --git a/src/common/rt64_tmem_hasher.h b/src/common/rt64_tmem_hasher.h
+index 9a332ab..620a0fb 100644
+--- a/src/common/rt64_tmem_hasher.h
++++ b/src/common/rt64_tmem_hasher.h
+@@ -45,6 +45,7 @@ namespace RT64 {
+             return tmemBytesPerRow > drawBytesPerRow;
+         }
+ 
++        template<bool coalescePalette = false>
+         static uint64_t hash(const uint8_t *TMEM, const LoadTile &loadTile, uint16_t width, uint16_t height, uint32_t tlut, uint32_t version) {
+             const uint32_t TMEMBytes = 4096;
+             const uint32_t TMEMMask8 = 4095;
+@@ -167,8 +168,19 @@ namespace RT64 {
+                                 while (tlutBitset[i] > 0) {
+                                     bitsetIndex = bitScanForward64(tlutBitset[i]);
+                                     paletteIndex = (i * 0x40) + bitsetIndex;
+-                                    XXH3_64bits_update(&xxh3, &TMEM[paletteAddress + paletteIndex * 8], 8);
+-                                    tlutBitset[i] &= ~(1ULL << bitsetIndex);
++                                    if constexpr (coalescePalette) {
++                                        // Feed exactly the same bytes in the same order, combining adjacent
++                                        // palette entries into one streaming hash update.
++                                        const uint64_t remaining = tlutBitset[i] >> bitsetIndex;
++                                        const uint32_t count = (~remaining == 0) ? 64 : bitScanForward64(~remaining);
++                                        XXH3_64bits_update(&xxh3, &TMEM[paletteAddress + paletteIndex * 8], count * 8);
++                                        const uint32_t end = bitsetIndex + count;
++                                        tlutBitset[i] &= (end == 64) ? 0 : (UINT64_MAX << end);
++                                    }
++                                    else {
++                                        XXH3_64bits_update(&xxh3, &TMEM[paletteAddress + paletteIndex * 8], 8);
++                                        tlutBitset[i] &= ~(1ULL << bitsetIndex);
++                                    }
+                                 }
+                             }
+                         }
+diff --git a/src/hle/rt64_rdp_tmem.cpp b/src/hle/rt64_rdp_tmem.cpp
+index 6051f4e..b2df373 100644
+--- a/src/hle/rt64_rdp_tmem.cpp
++++ b/src/hle/rt64_rdp_tmem.cpp
+@@ -3,6 +3,7 @@
+ //
+ 
+ #include "rt64_rdp_tmem.h"
++#include "common/rt64_rollback_probe.h"
+ 
+ #include <cassert>
+ #include <cinttypes>
+@@ -51,7 +52,9 @@ namespace RT64 {
+ 
+     uint64_t TextureManager::uploadTexture(State *state, const LoadTile &loadTile, TextureCache *textureCache, uint64_t creationFrame, uint16_t width, uint16_t height, uint32_t tlut) {
+         const uint8_t *TMEM = reinterpret_cast<const uint8_t *>(state->rdp->TMEM);
+-        uint64_t hash = TMEMHasher::hash(TMEM, loadTile, width, height, tlut, TMEMHasher::CurrentHashVersion);
++        uint64_t hash = RollbackProbe::coalesce_palette
++            ? TMEMHasher::hash<true>(TMEM, loadTile, width, height, tlut, TMEMHasher::CurrentHashVersion)
++            : TMEMHasher::hash<false>(TMEM, loadTile, width, height, tlut, TMEMHasher::CurrentHashVersion);
+         if (hashSet.find(hash) == hashSet.end()) {
+             hashSet.insert(hash);
+             textureCache->queueGPUUploadTMEM(hash, creationFrame, TMEM, RDP_TMEM_BYTES, width, height, tlut, loadTile, true);

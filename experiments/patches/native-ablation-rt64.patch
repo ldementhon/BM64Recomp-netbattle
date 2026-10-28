@@ -1,0 +1,791 @@
+diff --git a/CMakeLists.txt b/CMakeLists.txt
+index 2fb01e5..2d4ab03 100644
+--- a/CMakeLists.txt
++++ b/CMakeLists.txt
+@@ -511,6 +511,7 @@ build_compute_shader(rt64 "src/shaders/FbReadAnyChangesCS.hlsl" "src/shaders/FbR
+ build_compute_shader(rt64 "src/shaders/FbReinterpretCS.hlsl" "src/shaders/FbReinterpretCS.hlsl" "-O0")
+ build_compute_shader(rt64 "src/shaders/FbReadAnyFullCS.hlsl" "src/shaders/FbReadAnyFullCS.hlsl" "-O0")
+ build_compute_shader(rt64 "src/shaders/FbWriteColorCS.hlsl" "src/shaders/FbWriteColorCS.hlsl" "-O0")
++build_compute_shader(rt64 "src/shaders/FbWriteColorCS.hlsl" "src/shaders/FbWriteColorLazyCS.hlsl" "-O0" "-D LAZY_DITHER_NOISE")
+ build_compute_shader(rt64 "src/shaders/FbWriteDepthCS.hlsl")
+ build_compute_shader(rt64 "src/shaders/FbWriteDepthCS.hlsl" "src/shaders/FbWriteDepthCSMS.hlsl" "-D MULTISAMPLING")
+ build_compute_shader(rt64 "src/shaders/GaussianFilterRGB3x3CS.hlsl")
+diff --git a/src/common/rt64_thread.cpp b/src/common/rt64_thread.cpp
+index c4b080b..410e6bc 100644
+--- a/src/common/rt64_thread.cpp
++++ b/src/common/rt64_thread.cpp
+@@ -3,6 +3,7 @@
+ //
+ 
+ #include "rt64_thread.h"
++#include "rt64_rollback_probe.h"
+ 
+ #include <cassert>
+ #include <thread>
+@@ -47,6 +48,8 @@ namespace RT64 {
+         pthread_setname_np(pthread_self(), str.c_str());
+ #   elif defined(__APPLE__)
+         pthread_setname_np(str.c_str());
++        if(RollbackProbe::aligned_pacing && (str=="RT64 Buffer" || str=="RT64 Workload" || str=="RT64 Present"))
++            pthread_set_qos_class_self_np(QOS_CLASS_USER_INTERACTIVE,0);
+ #   else
+         static_assert(false, "Unimplemented");
+ #   endif
+diff --git a/src/hle/rt64_framebuffer.cpp b/src/hle/rt64_framebuffer.cpp
+index 873883d..2a1a095 100644
+--- a/src/hle/rt64_framebuffer.cpp
++++ b/src/hle/rt64_framebuffer.cpp
+@@ -1,3 +1,5 @@
++#include "common/rt64_changed_writeback.h"
++#include "common/rt64_rollback_probe.h"
+ //
+ // RT64
+ //
+@@ -135,6 +137,7 @@ namespace RT64 {
+     }
+ 
+     void Framebuffer::copyNativeToRAM(uint8_t *dst, uint32_t dstRowWidth, uint32_t dstRowStart, uint32_t dstRowEnd) {
++        RollbackProbe::Timer probe(RollbackProbe::copy);
+         assert(dst != nullptr);
+         assert(dstRowStart < height);
+         assert(dstRowEnd <= height);
+@@ -143,6 +146,15 @@ namespace RT64 {
+         uint8_t *dstBytes = dst + dstRowStart * imageRowBytes(dstRowWidth);
+         uint32_t *dstWords = reinterpret_cast<uint32_t *>(dstBytes);
+         uint32_t bytesToSwap = (dstRowEnd - dstRowStart) * imageRowBytes(dstRowWidth);
++        if (RollbackProbe::enabled) RollbackProbe::copy_bytes += bytesToSwap;
++        // The callback only marks ownership; it does not inspect pixel values.
++        if (RollbackProbe::writeback) RollbackProbe::writeback(dstBytes, bytesToSwap, lastWriteType == Type::Depth);
++        if (RollbackProbe::incremental_writeback && bytesToSwap>=4 && bytesToSwap%4==0) {
++            writebackStaging.resize(bytesToSwap);
++            nativeTarget.copyToRAM(dstRowStart,dstRowEnd,dstRowWidth,siz,writebackStaging.data());
++            auto stored=swapAndCopyChanged(dstBytes,writebackStaging.data(),bytesToSwap);
++            if(RollbackProbe::enabled) RollbackProbe::stored_bytes+=stored;
++        } else {
+         uint32_t dstFirstWord = dstWords[0];
+         nativeTarget.copyToRAM(dstRowStart, dstRowEnd, dstRowWidth, siz, dstBytes);
+ 
+@@ -165,6 +177,9 @@ namespace RT64 {
+             dstWords[0] = dstFirstWord;
+         }
+ 
++            if(RollbackProbe::enabled) RollbackProbe::stored_bytes+=bytesToSwap;
++        }
++
+ #   ifdef DUMP_RAW_RDRAM
+         char path[1024];
+         snprintf(path, sizeof(path), "dumps/FB_0x%X_W_%d_H_%d_SIZ_%d.rdram", addressStart, dstRowWidth, height, siz);
+diff --git a/src/hle/rt64_framebuffer.h b/src/hle/rt64_framebuffer.h
+index 6e8c9b8..1186420 100644
+--- a/src/hle/rt64_framebuffer.h
++++ b/src/hle/rt64_framebuffer.h
+@@ -45,6 +45,7 @@ namespace RT64 {
+         uint32_t readHeight;
+         NativeTarget nativeTarget;
+         std::vector<uint8_t> nativeSwappedRAM;
++        std::vector<uint8_t> writebackStaging;
+         FixedRect lastWriteRect;
+         uint8_t lastWriteFmt;
+         Type lastWriteType;
+diff --git a/src/hle/rt64_present.h b/src/hle/rt64_present.h
+index e1889e5..277772d 100644
+--- a/src/hle/rt64_present.h
++++ b/src/hle/rt64_present.h
+@@ -21,6 +21,7 @@ namespace RT64 {
+         std::vector<FramebufferOperation> fbOperations;
+         DebuggerFramebuffer debuggerFramebuffer;
+         bool paused = false;
++        uint64_t probeFrame = 0, probeDeadline = 0;
+         uint64_t presentId = 0;
+         uint64_t workloadId = 0;
+     };
+diff --git a/src/hle/rt64_present_queue.cpp b/src/hle/rt64_present_queue.cpp
+index 3227ab1..1b464ea 100644
+--- a/src/hle/rt64_present_queue.cpp
++++ b/src/hle/rt64_present_queue.cpp
+@@ -1,3 +1,4 @@
++#include "common/rt64_rollback_probe.h"
+ //
+ // RT64
+ //
+@@ -297,9 +298,11 @@ namespace RT64 {
+                 frameCountersNextPresented = frameCounters.count;
+             }
+ 
++            if(i>0 && RollbackProbe::bounded_present) RollbackProbe::waitDisplaySlot();
+             uint32_t swapChainIndex = 0;
+             const bool presentFrame = (i < framesToPresent) && swapChainValid;
+             if (presentFrame) {
++                RollbackProbe::Timer probe(RollbackProbe::acquire);
+                 swapChainValid = ext.swapChain->acquireTexture(acquiredSemaphore.get(), &swapChainIndex);
+             }
+ 
+@@ -365,7 +368,7 @@ namespace RT64 {
+                     RenderCommandSemaphore *waitSemaphore = acquiredSemaphore.get();
+                     RenderCommandSemaphore *signalSemaphore = drawSemaphores[swapChainIndex].get();
+                     ext.presentGraphicsWorker->commandQueue->executeCommandLists(&commandList, 1, &waitSemaphore, 1, &signalSemaphore, 1, ext.presentGraphicsWorker->commandFence.get());
+-                    ext.presentGraphicsWorker->wait();
++                    { RollbackProbe::Timer probe(RollbackProbe::present_gpu_wait); ext.presentGraphicsWorker->wait(); }
+                 }
+             }
+ 
+@@ -391,16 +394,27 @@ namespace RT64 {
+             if (presentFrame && swapChainValid) {
+                 // Wait until the approximate time the next present should be at the current intended rate.
+                 if ((presentTimestamp != Timestamp()) && (targetRate > 0) && (targetRate > viOriginalRate)) {
++                    RollbackProbe::Timer probe(RollbackProbe::pacing);
+                     Timer::preciseSleepUntil(presentTimestamp + std::chrono::nanoseconds(1'000'000'000 / targetRate));
+                 }
+ 
+                 if (presentWaitEnabled) {
++                    RollbackProbe::Timer probe(RollbackProbe::present_wait);
+                     ext.swapChain->wait();
+                 }
+ 
+                 RenderCommandSemaphore *waitSemaphore = drawSemaphores[swapChainIndex].get();
+                 presentTimestamp = Timer::current();
+-                swapChainValid = ext.swapChain->present(swapChainIndex, &waitSemaphore, 1);
++                auto callback = RollbackProbe::displayed;
++                auto frame = present.probeFrame, deadline = present.probeDeadline;
++                bool bounded=RollbackProbe::bounded_present;
++                ext.swapChain->setPresentationCallback(callback && (frame || bounded || RollbackProbe::aligned_pacing) ? std::function<void(double)>([callback, frame, deadline, bounded](double seconds) {
++                    callback(frame, deadline, uint64_t(seconds*1e9));
++                    if(bounded) RollbackProbe::completedDisplay();
++                }) : std::function<void(double)>{});
++                if(bounded) RollbackProbe::submittedDisplay();
++                { RollbackProbe::Timer probe(RollbackProbe::present_call);
++                  swapChainValid = ext.swapChain->present(swapChainIndex, &waitSemaphore, 1); }
+                 presentProfiler.logAndRestart();
+             }
+         }
+@@ -504,13 +518,39 @@ namespace RT64 {
+                 skipPresent = skipPresent || ext.swapChain->isEmpty();
+ 
+                 Present &present = presents[processCursor];
+-                ext.workloadQueue->waitForWorkloadId(present.workloadId);
++                { RollbackProbe::Timer probe(RollbackProbe::workload_dependency); ext.workloadQueue->waitForWorkloadId(present.workloadId); }
+ 
+                 if (!presentThreadRunning) {
+                     continue;
+                 }
+ 
++                if(RollbackProbe::bounded_present && !present.fbOperations.empty()) skipPresent=false;
++                auto hitch_frame=RollbackProbe::present_hitch_frame.load();
++                if (hitch_frame && present.probeFrame>=hitch_frame) {
++                    auto start=RollbackProbe::now();
++                    std::this_thread::sleep_for(std::chrono::milliseconds(RollbackProbe::present_hitch_ms));
++                    fprintf(stderr,"PRESENT_HITCH: frame=%llu scheduled_frame=%llu start_ns=%llu end_ns=%llu\n",present.probeFrame,hitch_frame,start,RollbackProbe::now());
++                    RollbackProbe::present_hitch_frame=0;
++                }
++                // Do not commit an already late display-only image after a CPU hitch.
++                if(RollbackProbe::bounded_present && !present.paused && present.fbOperations.empty() &&
++                    present.probeFrame && RollbackProbe::now()>present.probeDeadline) skipPresent=true;
++                if (RollbackProbe::bounded_present && !skipPresent) {
++                    auto start=RollbackProbe::now();
++                    RollbackProbe::waitDisplaySlot();
++                    auto ready=RollbackProbe::now();
++                    RollbackProbe::slot_wait_ns+=ready-start;
++                    // Only retire display-only work; the workload and its completion remain intact.
++                    if (!present.paused && present.fbOperations.empty() && present.probeFrame &&
++                        ((present.probeFrame<RollbackProbe::latest_submitted && ready>present.probeDeadline) ||
++                         (RollbackProbe::recovering_display && ready-start>500000 && ready+500000>=present.probeDeadline)))
++                        skipPresent=true;
++                }
+                 if (skipPresent) {
++                    if(present.probeFrame) {
++                        ++RollbackProbe::retired_presents;
++                        fprintf(stderr,"PRESENT_RETIRED: frame=%llu time_ns=%llu\n",present.probeFrame,RollbackProbe::now());
++                    }
+                     skipInterpolation();
+                     notifyPresentId(present);
+                 }
+diff --git a/src/hle/rt64_rdp.cpp b/src/hle/rt64_rdp.cpp
+index a10c11a..033175e 100644
+--- a/src/hle/rt64_rdp.cpp
++++ b/src/hle/rt64_rdp.cpp
+@@ -1,3 +1,4 @@
++#include "common/rt64_rollback_probe.h"
+ //
+ // RT64
+ //
+@@ -481,6 +482,9 @@ namespace RT64 {
+         const uint32_t tmemStart = loadTile.tmem << 3;
+         const uint32_t tmemStride = loadTile.line << 3;
+         const uint32_t textureEnd = textureStart + (rowCount - 1) * bytesPerRow + (wordsPerRow << 3);
++        if (RollbackProbe::texture_read) {
++            for(uint32_t row=0;row<rowCount;++row) RollbackProbe::texture_read(state->RDRAM+textureStart+row*bytesPerRow, wordsPerRow<<3, 1);
++        }
+         const bool RGBA32 = (loadTile.siz == G_IM_SIZ_32b) && (loadTile.fmt == G_IM_FMT_RGBA);
+         if (deferred) {
+             checkImageOverlap(textureStart, textureEnd);
+@@ -519,6 +523,9 @@ namespace RT64 {
+         const uint32_t tmemStart = loadTile.tmem << 3;
+         const uint32_t tmemStride = loadTile.line << 3;
+         const uint32_t textureEnd = textureStart + (wordCount << 3);
++        if (RollbackProbe::texture_read) {
++            RollbackProbe::texture_read(state->RDRAM+textureStart, wordCount<<3, 2);
++        }
+         const bool RGBA32 = (loadTile.siz == G_IM_SIZ_32b) && (loadTile.fmt == G_IM_FMT_RGBA);
+         if (deferred) {
+             checkImageOverlap(textureStart, textureEnd);
+@@ -555,6 +562,9 @@ namespace RT64 {
+         const uint32_t wordsPerRow = ((loadTile.lrs >> 2) - (loadTile.uls >> 2)) + 1;
+         const uint32_t tmemStart = loadTile.tmem << 3;
+         const uint32_t tmemStride = loadTile.line << 5;
++        if (RollbackProbe::texture_read) {
++            for(uint32_t row=0;row<rowCount;++row) RollbackProbe::texture_read(state->RDRAM+textureStart+row*bytesPerRow, wordsPerRow<<3, 3);
++        }
+         const bool RGBA32 = (loadTile.siz == G_IM_SIZ_32b) && (loadTile.fmt == G_IM_FMT_RGBA);
+         if (deferred) {
+             // Flush current framebuffer pair if any of the images being written to are loaded by this TLUT.
+diff --git a/src/hle/rt64_state.cpp b/src/hle/rt64_state.cpp
+index d249a97..d9ac5b0 100644
+--- a/src/hle/rt64_state.cpp
++++ b/src/hle/rt64_state.cpp
+@@ -1,3 +1,4 @@
++#include "common/rt64_rollback_probe.h"
+ //
+ // RT64
+ //
+@@ -1096,16 +1097,17 @@ namespace RT64 {
+         // Ensure there's as many GPU tiles as call tiles available in the vector.
+         workload.drawData.gpuTiles.resize(workload.drawData.callTiles.size());
+ 
++        auto nativeProbeStart = RollbackProbe::enabled ? RollbackProbe::now() : 0;
+         // Start uploading the entire draw data for all the framebuffer pairs that were processed.
+         workload.updateDrawDataRanges();
+-        workload.uploadDrawData(ext.framebufferGraphicsWorker, ext.drawDataUploader);
++        workload.uploadDrawData(ext.framebufferGraphicsWorker, ext.drawDataUploader, renderToRDRAM && RollbackProbe::inline_uploads);
+         workload.updateOutputBuffers(ext.framebufferGraphicsWorker);
+ 
+         // Upload the transforms directly.
+         ext.transformsUploader->submit(ext.framebufferGraphicsWorker, {
+             { workload.drawData.viewProjTransforms.data(), workload.drawRanges.viewProjTransforms, sizeof(interop::float4x4), RenderBufferFlag::STORAGE, { }, &workload.drawBuffers.viewProjTransformsBuffer},
+             { workload.drawData.worldTransforms.data(), workload.drawRanges.worldTransforms, sizeof(interop::float4x4), RenderBufferFlag::STORAGE, { }, &workload.drawBuffers.worldTransformsBuffer},
+-        });
++        }, renderToRDRAM && RollbackProbe::inline_uploads);
+ 
+         if (renderToRDRAM) {
+             // Run RSP processor.
+@@ -1283,7 +1285,7 @@ namespace RT64 {
+                 }
+ 
+                 // Synchronize all texture uploads before filling out the GPU tiles and update the texture cache on the framebuffer renderer.
+-                ext.textureCache->waitForGPUUploads();
++                { RollbackProbe::Timer timer(RollbackProbe::native_texture_wait); ext.textureCache->waitForGPUUploads(); }
+                 framebufferRenderer->updateTextureCache(ext.textureCache);
+ 
+                 thread_local std::vector<BufferUploader *> bufferUploaders;
+@@ -1442,9 +1444,24 @@ namespace RT64 {
+                 }
+ 
+                 ext.framebufferGraphicsWorker->commandList->end();
+-                framebufferRenderer->waitForUploaders();
+-                ext.framebufferGraphicsWorker->execute();
+-                ext.framebufferGraphicsWorker->wait();
++                {
++                    RollbackProbe::Timer probe(RollbackProbe::native_wait);
++                    { RollbackProbe::Timer timer(RollbackProbe::native_upload_wait); framebufferRenderer->waitForUploaders(); }
++                    if(RollbackProbe::enabled) {
++                        ext.framebufferGraphicsWorker->commandList->timingCallback=[](const RenderCommandTiming& t) {
++                            RollbackProbe::native_last_completion=t.completed;
++                            if(t.gpuStart<t.submit || t.gpuEnd<t.gpuStart || t.completed<t.gpuEnd) { ++RollbackProbe::native_invalid; return; }
++                            ++RollbackProbe::native_samples;
++                            RollbackProbe::native_schedule+=t.gpuStart-t.submit;
++                            RollbackProbe::native_gpu+=t.gpuEnd-t.gpuStart;
++                            RollbackProbe::native_complete_delay+=t.completed-t.gpuEnd;
++                        };
++                    }
++                    { RollbackProbe::Timer timer(RollbackProbe::native_submit); ext.framebufferGraphicsWorker->execute(); }
++                    { RollbackProbe::Timer timer(RollbackProbe::native_fence_wait); ext.framebufferGraphicsWorker->wait(); }
++                    if(RollbackProbe::enabled && RollbackProbe::native_last_completion) RollbackProbe::native_wakeup+=RollbackProbe::now()-RollbackProbe::native_last_completion;
++                    ext.framebufferGraphicsWorker->commandList->timingCallback={};
++                }
+ 
+                 pairCursor = framebufferPairCursor;
+                 while (pairCursor < maxFramebufferPair) {
+@@ -1558,6 +1575,8 @@ namespace RT64 {
+             ext.textureCache->waitForGPUUploads();
+         }
+ 
++        if (nativeProbeStart) RollbackProbe::native += RollbackProbe::now()-nativeProbeStart;
++
+         // Evict from the texture cache that are too old and should no longer be maintained.
+         // The texture manager should also be notified of any hashes that were removed.
+         if (ext.textureCache->evict(workloadCounter, evictedTextureHashes)) {
+@@ -1748,8 +1767,10 @@ namespace RT64 {
+         }
+         
+         // Advance the workload queue at the end of a full synchronization.
+-        advanceWorkload(workload, false);
+-        ext.workloadQueue->advanceToNextWorkload();
++        if (!suppressPresentation) {
++            advanceWorkload(workload, false);
++            ext.workloadQueue->advanceToNextWorkload();
++        }
+ 
+         // Make sure the profiler starts after the workload is advanced to ignore any waiting time.
+         dlCpuProfiler.reset();
+@@ -1757,7 +1778,7 @@ namespace RT64 {
+         
+         // Submit a presentation event instantly if applicable.
+         const bool presentEarly = !ext.presentQueue->viewRDRAM && (ext.enhancementConfig->presentation.mode == EnhancementConfiguration::Presentation::Mode::PresentEarly);
+-        if (presentEarly && (workload.fbPairCount > 0)) {
++        if (!suppressPresentation && presentEarly && (workload.fbPairCount > 0)) {
+             thread_local std::unordered_set<uint32_t> colorImageAddressSet;
+             colorImageAddressSet.clear();
+             
+@@ -2628,6 +2649,7 @@ namespace RT64 {
+     }
+ 
+     void State::advanceWorkload(Workload &workload, bool paused) {
++        workload.forceSingleFrame = forceSingleFrame;
+         workload.workloadId = ++workloadId;
+         workload.presentId = presentId;
+         workload.debuggerCamera = debuggerInspector.camera;
+@@ -2636,6 +2658,9 @@ namespace RT64 {
+     }
+ 
+     void State::advancePresent(Present &present, bool paused) {
++        present.probeFrame = RollbackProbe::frame;
++        if(present.probeFrame) RollbackProbe::latest_submitted=present.probeFrame;
++        present.probeDeadline = RollbackProbe::deadline;
+         present.presentId = ++presentId;
+         present.workloadId = workloadId;
+         present.paused = paused;
+@@ -2774,4 +2799,4 @@ namespace RT64 {
+             break;
+         }
+     }
+-};
+\ No newline at end of file
++};
+diff --git a/src/hle/rt64_state.h b/src/hle/rt64_state.h
+index 7a8c13b..ca82604 100644
+--- a/src/hle/rt64_state.h
++++ b/src/hle/rt64_state.h
+@@ -118,6 +118,9 @@ namespace RT64 {
+         bool configurationSaveQueued = false;
+         uint64_t workloadId = 0;
+         uint64_t presentId = 0;
++        // Preserve native framebuffer writeback without submitting an onscreen frame.
++        bool suppressPresentation = false;
++        bool forceSingleFrame = false;
+         uint32_t ditherRandomSeed = 0;
+         uint32_t renderFlagSampleCount = 0;
+         External ext;
+@@ -174,4 +177,4 @@ namespace RT64 {
+         void clearExtended();
+         void updateRenderFlagSampleCount();
+     };
+-};
+\ No newline at end of file
++};
+diff --git a/src/hle/rt64_workload.cpp b/src/hle/rt64_workload.cpp
+index b4c85f5..a97fab6 100644
+--- a/src/hle/rt64_workload.cpp
++++ b/src/hle/rt64_workload.cpp
+@@ -193,7 +193,7 @@ namespace RT64 {
+         r.triColorFloats.second = drawData.triColorFloats.size();
+     }
+     
+-    void Workload::uploadDrawData(RenderWorker *worker, BufferUploader *bufferUploader) {
++    void Workload::uploadDrawData(RenderWorker *worker, BufferUploader *bufferUploader, bool synchronous) {
+         const RenderBufferFlags rtInputFlag = worker->device->getCapabilities().raytracing ? RenderBufferFlag::ACCELERATION_STRUCTURE_INPUT : RenderBufferFlag::NONE;
+         bufferUploader->submit(worker, {
+             { drawData.posFloats.data(), drawRanges.posFloats, sizeof(float), RenderBufferFlag::FORMATTED, { RenderFormat::R32_FLOAT }, &drawBuffers.positionBuffer },
+@@ -219,7 +219,7 @@ namespace RT64 {
+             { drawData.triPosFloats.data(), drawRanges.triPosFloats, sizeof(float), RenderBufferFlag::VERTEX, { }, &drawBuffers.triPosBuffer },
+             { drawData.triTcFloats.data(), drawRanges.triTcFloats, sizeof(float), RenderBufferFlag::VERTEX, { }, &drawBuffers.triTcBuffer },
+             { drawData.triColorFloats.data(), drawRanges.triColorFloats, sizeof(float), RenderBufferFlag::VERTEX, { }, &drawBuffers.triColorBuffer }
+-        });
++        }, synchronous);
+     }
+ 
+     void updateOutputBuffer(RenderWorker *worker, ComputedBuffer &computedBuffer, uint64_t requiredSize, RenderBufferFlags flags = RenderBufferFlag::NONE) {
+diff --git a/src/hle/rt64_workload.h b/src/hle/rt64_workload.h
+index 8ea27d5..9a7f6ea 100644
+--- a/src/hle/rt64_workload.h
++++ b/src/hle/rt64_workload.h
+@@ -234,6 +234,7 @@ namespace RT64 {
+         uint64_t workloadId = 0;
+         uint64_t presentId = 0;
+         bool paused = false;
++        bool forceSingleFrame = false;
+ 
+         struct {
+             uint32_t testZIndexCount = 0;
+@@ -247,11 +248,11 @@ namespace RT64 {
+         void resetRSPOutputBuffers();
+         void resetWorldOutputBuffers();
+         void updateDrawDataRanges();
+-        void uploadDrawData(RenderWorker *worker, BufferUploader *bufferUploader);
++        void uploadDrawData(RenderWorker *worker, BufferUploader *bufferUploader, bool synchronous = false);
+         void updateOutputBuffers(RenderWorker *worker);
+         void nextDrawDataRanges();
+         void begin(uint64_t submissionFrame);
+         bool addFramebufferPair(uint32_t colorAddress, uint8_t colorFmt, uint8_t colorSiz, uint16_t colorWidth, uint32_t depthAddress);
+         int currentFramebufferPairIndex() const;
+     };
+-};
+\ No newline at end of file
++};
+diff --git a/src/hle/rt64_workload_queue.cpp b/src/hle/rt64_workload_queue.cpp
+index 5a331aa..2761c60 100644
+--- a/src/hle/rt64_workload_queue.cpp
++++ b/src/hle/rt64_workload_queue.cpp
+@@ -986,7 +986,7 @@ namespace RT64 {
+                     matchingProfiler.log();
+ 
+                     const bool displayRateAboveOriginal = (workload.viOriginalRate > 0) && (workloadConfig.targetRate > workload.viOriginalRate);
+-                    generateInterpolatedFrames = !workload.paused && displayRateAboveOriginal && !interpolationTargetKey.isEmpty();
++                    generateInterpolatedFrames = !workload.paused && !workload.forceSingleFrame && displayRateAboveOriginal && !interpolationTargetKey.isEmpty();
+ 
+                     const bool resetTicks = !generateInterpolatedFrames || (originalRateForTicks != workload.viOriginalRate) || (displayRateForTicks != workloadConfig.targetRate) || !displayRateAboveOriginal;
+                     if (resetTicks) {
+@@ -1221,4 +1221,4 @@ namespace RT64 {
+             }
+         }
+     }
+-};
+\ No newline at end of file
++};
+diff --git a/src/render/rt64_buffer_uploader.cpp b/src/render/rt64_buffer_uploader.cpp
+index de997a0..8d2787a 100644
+--- a/src/render/rt64_buffer_uploader.cpp
++++ b/src/render/rt64_buffer_uploader.cpp
+@@ -8,6 +8,7 @@
+ #include "common/rt64_thread.h"
+ 
+ #include "rt64_buffer_uploader.h"
++#include "common/rt64_rollback_probe.h"
+ 
+ namespace RT64 {
+     // Common functions.
+@@ -74,17 +75,21 @@ namespace RT64 {
+         const size_t srcOffset = upload.srcDataIndexRange.first * upload.srcDataStride;
+         const size_t srcSize = (upload.srcDataIndexRange.second - upload.srcDataIndexRange.first) * upload.srcDataStride;
+         const RenderRange writtenRange(srcOffset, srcOffset + srcSize);
+-        uint8_t *dstData = static_cast<uint8_t *>(upload.dstPair->uploadBuffer->map());
++        auto* destination = upload.dstPair->directUpload ? upload.dstPair->defaultBuffer.get() : upload.dstPair->uploadBuffer.get();
++        uint8_t *dstData = static_cast<uint8_t *>(destination->map());
+         memcpy(dstData + srcOffset, static_cast<const uint8_t *>(upload.srcData) + srcOffset, srcSize);
+-        upload.dstPair->uploadBuffer->unmap(0, &writtenRange);
++        destination->unmap(0, &writtenRange);
+     }
+ 
+-    void BufferUploader::updateResources(RenderWorker *worker, std::vector<Upload> &blankUploads) {
++    void BufferUploader::updateResources(RenderWorker *worker, std::vector<Upload> &blankUploads, bool directUpload) {
+         for (Upload &u : blankUploads) {
+             // Ignore the reallocation of the buffer if the required size is already enough. We always create a buffer if it hasn't been created yet.
+             const size_t requiredSize = u.srcDataIndexRange.second * u.srcDataStride;
+             BufferPair &bufferPair = *u.dstPair;
+-            if ((bufferPair.defaultBuffer != nullptr) && (!u.valid() || (bufferPair.allocatedSize >= requiredSize))) {
++            // Typed texture-buffer views were slower in the UMA experiment; keep
++            // those GPU-private. Only plain buffer inputs use direct shared storage.
++            const bool sharedInput = directUpload && u.formatViews.empty();
++            if ((bufferPair.defaultBuffer != nullptr) && bufferPair.directUpload == sharedInput && (!u.valid() || (bufferPair.allocatedSize >= requiredSize))) {
+                 continue;
+             }
+ 
+@@ -94,8 +99,14 @@ namespace RT64 {
+             const uint64_t BlockAlignment = 256;
+             bufferPair.allocatedSize = std::max(uint64_t((requiredSize * 3) / 2), BlockAlignment);
+             bufferPair.allocatedSize = roundUp(bufferPair.allocatedSize, BlockAlignment);
+-            bufferPair.uploadBuffer = worker->device->createBuffer(RenderBufferDesc::UploadBuffer(bufferPair.allocatedSize));
+-            bufferPair.defaultBuffer = worker->device->createBuffer(RenderBufferDesc::DefaultBuffer(bufferPair.allocatedSize, u.bufferFlags));
++            bufferPair.directUpload = sharedInput;
++            if(sharedInput) {
++                bufferPair.uploadBuffer.reset();
++                bufferPair.defaultBuffer = worker->device->createBuffer(RenderBufferDesc::UploadBuffer(bufferPair.allocatedSize, u.bufferFlags));
++            } else {
++                bufferPair.uploadBuffer = worker->device->createBuffer(RenderBufferDesc::UploadBuffer(bufferPair.allocatedSize));
++                bufferPair.defaultBuffer = worker->device->createBuffer(RenderBufferDesc::DefaultBuffer(bufferPair.allocatedSize, u.bufferFlags));
++            }
+ 
+             bufferPair.defaultViews.reserve(u.formatViews.size());
+             for (RenderFormat format : u.formatViews) {
+@@ -107,11 +118,20 @@ namespace RT64 {
+         }
+     }
+ 
+-    void BufferUploader::submit(RenderWorker *worker, const std::vector<Upload> &uploads) {
++    void BufferUploader::submit(RenderWorker *worker, const std::vector<Upload> &uploads, bool synchronous) {
++        if(synchronous) wait();
+         {
+             std::unique_lock<std::mutex> queueLock(workMutex);
+             pendingUploads = uploads;
+-            updateResources(worker, pendingUploads);
++            // The native path owns this workload until its existing GPU fence completes.
++            // Only synchronous uploads on Metal UMA may write the GPU-readable buffer.
++            const bool directUpload=synchronous && RollbackProbe::shared_uploads && device->getCapabilities().directUploadBuffers;
++            updateResources(worker, pendingUploads, directUpload);
++            if(synchronous) {
++                for(const Upload& u:pendingUploads) threadUpload(u);
++                ++RollbackProbe::inline_upload_calls;
++                return;
++            }
+             workAvailable = true;
+         }
+ 
+@@ -127,6 +147,7 @@ namespace RT64 {
+                 continue;
+             }
+ 
++            if(u.dstPair->directUpload) continue; // No GPU copy writes this buffer.
+             auto &defaultBuffer = u.dstPair->defaultBuffer;
+             beforeBarriers.push_back(RenderBufferBarrier(defaultBuffer.get(), RenderBufferAccess::WRITE));
+         }
+@@ -144,7 +165,12 @@ namespace RT64 {
+ 
+             const uint64_t srcOffset = u.srcDataIndexRange.first * u.srcDataStride;
+             const uint64_t srcSize = (u.srcDataIndexRange.second - u.srcDataIndexRange.first) * u.srcDataStride;
+-            worker->commandList->copyBufferRegion(u.dstPair->defaultBuffer->at(srcOffset), u.dstPair->uploadBuffer->at(srcOffset), srcSize);
++            if(u.dstPair->directUpload) {
++                RollbackProbe::shared_upload_bytes+=srcSize;
++                ++RollbackProbe::shared_upload_copies;
++            } else {
++                worker->commandList->copyBufferRegion(u.dstPair->defaultBuffer->at(srcOffset), u.dstPair->uploadBuffer->at(srcOffset), srcSize);
++            }
+         }
+     }
+ 
+diff --git a/src/render/rt64_buffer_uploader.h b/src/render/rt64_buffer_uploader.h
+index 08d9d2f..d103173 100644
+--- a/src/render/rt64_buffer_uploader.h
++++ b/src/render/rt64_buffer_uploader.h
+@@ -18,6 +18,7 @@ namespace RT64 {
+         std::unique_ptr<RenderBuffer> defaultBuffer;
+         std::vector<std::unique_ptr<RenderBufferFormattedView>> defaultViews;
+         uint64_t allocatedSize = 0;
++        bool directUpload = false;
+ 
+         const RenderBuffer *get() const {
+             return defaultBuffer.get();
+@@ -59,11 +60,11 @@ namespace RT64 {
+         ~BufferUploader();
+         void threadLoop();
+         void threadUpload(const Upload &upload);
+-        void updateResources(RenderWorker *worker, std::vector<Upload> &blankUploads); // Upload data does not need to be filled in with valid data, only the sizes.
++        void updateResources(RenderWorker *worker, std::vector<Upload> &blankUploads, bool directUpload); // Upload data does not need to be filled in with valid data, only the sizes.
+         void commandListBeforeBarriers(RenderWorker *worker);
+         void commandListCopyResources(RenderWorker *worker);
+         void commandListAfterBarriers(RenderWorker *worker);
+-        void submit(RenderWorker *worker, const std::vector<Upload> &uploads);
++        void submit(RenderWorker *worker, const std::vector<Upload> &uploads, bool synchronous = false);
+         void wait();
+     };
+ };
+diff --git a/src/render/rt64_native_target.cpp b/src/render/rt64_native_target.cpp
+index 6891b7b..91e88cb 100644
+--- a/src/render/rt64_native_target.cpp
++++ b/src/render/rt64_native_target.cpp
+@@ -3,6 +3,7 @@
+ //
+ 
+ #include <cstring>
++#include "common/rt64_rollback_probe.h"
+ 
+ #include "rt64_native_target.h"
+ 
+@@ -268,7 +269,8 @@ namespace RT64 {
+             writeShader = usesMSAA ? &shaderLibrary->fbWriteDepthMS : &shaderLibrary->fbWriteDepth;
+         }
+         else {
+-            writeShader = &shaderLibrary->fbWriteColor;
++            writeShader = RollbackProbe::lazy_dither ? &shaderLibrary->fbWriteColorLazy : &shaderLibrary->fbWriteColor;
++            if(RollbackProbe::enabled) (ditherPattern==2 ? RollbackProbe::native_noise_pixels : RollbackProbe::native_other_pixels)+=uint64_t(rowWidth)*(rowEnd-rowStart);
+         }
+         
+         assert(((fmt != G_IM_FMT_DEPTH) || (siz == G_IM_SIZ_16b)) && "Depth format is not allowed outside of 16-bits.");
+diff --git a/src/render/rt64_shader_library.cpp b/src/render/rt64_shader_library.cpp
+index d1c5273..8d7cc71 100644
+--- a/src/render/rt64_shader_library.cpp
++++ b/src/render/rt64_shader_library.cpp
+@@ -15,6 +15,7 @@
+ #include "shaders/FbReadAnyFullCS.hlsl.spirv.h"
+ #include "shaders/FbReinterpretCS.hlsl.spirv.h"
+ #include "shaders/FbWriteColorCS.hlsl.spirv.h"
++#include "shaders/FbWriteColorLazyCS.hlsl.spirv.h"
+ #include "shaders/FbWriteDepthCS.hlsl.spirv.h"
+ #include "shaders/FbWriteDepthCSMS.hlsl.spirv.h"
+ #include "shaders/GaussianFilterRGB3x3CS.hlsl.spirv.h"
+@@ -61,6 +62,7 @@
+ #   include "shaders/FbReadAnyFullCS.hlsl.dxil.h"
+ #   include "shaders/FbReinterpretCS.hlsl.dxil.h"
+ #   include "shaders/FbWriteColorCS.hlsl.dxil.h"
++#   include "shaders/FbWriteColorLazyCS.hlsl.dxil.h"
+ #   include "shaders/FbWriteDepthCS.hlsl.dxil.h"
+ #   include "shaders/FbWriteDepthCSMS.hlsl.dxil.h"
+ #   include "shaders/GaussianFilterRGB3x3CS.hlsl.dxil.h"
+@@ -106,6 +108,7 @@
+ #   include "shaders/FbReadAnyFullCS.hlsl.metal.h"
+ #   include "shaders/FbReinterpretCS.hlsl.metal.h"
+ #   include "shaders/FbWriteColorCS.hlsl.metal.h"
++#   include "shaders/FbWriteColorLazyCS.hlsl.metal.h"
+ #   include "shaders/FbWriteDepthCS.hlsl.metal.h"
+ #   include "shaders/FbWriteDepthCSMS.hlsl.metal.h"
+ #   include "shaders/GaussianFilterRGB3x3CS.hlsl.metal.h"
+@@ -411,12 +414,16 @@ namespace RT64 {
+             layoutBuilder.addDescriptorSet(descriptorTextureSet);
+             layoutBuilder.end();
+             fbWriteColor.pipelineLayout = layoutBuilder.create(device);
++            fbWriteColorLazy.pipelineLayout = layoutBuilder.create(device);
+             fbWriteDepth.pipelineLayout = layoutBuilder.create(device);
+             fbWriteDepthMS.pipelineLayout = layoutBuilder.create(device);
+ 
+             std::unique_ptr<RenderShader> colorShader = device->createShader(CREATE_SHADER_INPUTS(FbWriteColorCSBlobDXIL, FbWriteColorCSBlobSPIRV, FbWriteColorCSBlobMSL, "CSMain", shaderFormat));
+             fbWriteColor.pipeline = device->createComputePipeline(RenderComputePipelineDesc(fbWriteColor.pipelineLayout.get(), colorShader.get(), 8, 8, 1));
+ 
++            std::unique_ptr<RenderShader> lazyColorShader = device->createShader(CREATE_SHADER_INPUTS(FbWriteColorLazyCSBlobDXIL, FbWriteColorLazyCSBlobSPIRV, FbWriteColorLazyCSBlobMSL, "CSMain", shaderFormat));
++            fbWriteColorLazy.pipeline = device->createComputePipeline(RenderComputePipelineDesc(fbWriteColorLazy.pipelineLayout.get(), lazyColorShader.get(), 8, 8, 1));
++
+             std::unique_ptr<RenderShader> depthShader = device->createShader(CREATE_SHADER_INPUTS(FbWriteDepthCSBlobDXIL, FbWriteDepthCSBlobSPIRV, FbWriteDepthCSBlobMSL, "CSMain", shaderFormat));
+             fbWriteDepth.pipeline = device->createComputePipeline(RenderComputePipelineDesc(fbWriteDepth.pipelineLayout.get(), depthShader.get(), 8, 8, 1));
+ 
+diff --git a/src/render/rt64_shader_library.h b/src/render/rt64_shader_library.h
+index 641f3ec..073bf03 100644
+--- a/src/render/rt64_shader_library.h
++++ b/src/render/rt64_shader_library.h
+@@ -29,6 +29,7 @@ namespace RT64 {
+         ShaderRecord fbReadAnyFull;
+         ShaderRecord fbReinterpret;
+         ShaderRecord fbWriteColor;
++        ShaderRecord fbWriteColorLazy;
+         ShaderRecord fbWriteDepth;
+         ShaderRecord fbWriteDepthMS;
+         ShaderRecord gaussianFilterRGB3x3;
+diff --git a/src/shaders/FbWriteColorCS.hlsl b/src/shaders/FbWriteColorCS.hlsl
+index cbc9418..387e128 100644
+--- a/src/shaders/FbWriteColorCS.hlsl
++++ b/src/shaders/FbWriteColorCS.hlsl
+@@ -16,7 +16,13 @@ void CSMain(uint2 coord : SV_DispatchThreadID) {
+         uint dstIndex = offsetCoord.y * gConstants.resolution.x + offsetCoord.x;
+         float4 color = gInput.Load(uint3(offsetCoord, 0));
+         bool oddColumn = (offsetCoord.x & 1);
++#ifdef LAZY_DITHER_NOISE
++        // Only NOISE consumes the seed. Integer seed generation has no side effects.
++        uint randomSeed = 0;
++        if(gConstants.ditherPattern == 2) randomSeed = initRand(gConstants.ditherRandomSeed, dstIndex, 16);
++#else
+         uint randomSeed = initRand(gConstants.ditherRandomSeed, dstIndex, 16);
++#endif
+         uint ditherValue = DitherPatternValue(gConstants.ditherPattern, offsetCoord, randomSeed);
+         uint nativeUint = Float4ToUINT(color, gConstants.siz, gConstants.fmt, oddColumn, ditherValue, gConstants.usesHDR);
+         gOutput[dstIndex] = EndianSwapUINT(nativeUint, gConstants.siz);
+diff --git a/src/common/rt64_changed_writeback.h b/src/common/rt64_changed_writeback.h
+new file mode 100644
+index 0000000..6e62957
+--- /dev/null
++++ b/src/common/rt64_changed_writeback.h
+@@ -0,0 +1,23 @@
++#pragma once
++#include <algorithm>
++#include <cstddef>
++#include <cstdint>
++#include <cstring>
++#include <cassert>
++namespace RT64 {
++// Preserve every output byte while avoiding COW faults on unchanged RAM blocks.
++inline size_t swapAndCopyChanged(uint8_t* destination, uint8_t* staging, size_t size) {
++    assert(size%4==0);
++    for(size_t i=0;i<size;i+=4) {
++        std::swap(staging[i],staging[i+3]); std::swap(staging[i+1],staging[i+2]);
++    }
++    size_t written=0;
++    for(size_t offset=0;offset<size;offset+=4096) {
++        size_t length=std::min(size-offset,size_t(4096));
++        if(std::memcmp(destination+offset,staging+offset,length)!=0) {
++            std::memcpy(destination+offset,staging+offset,length); written+=length;
++        }
++    }
++    return written;
++}
++}
+diff --git a/src/common/rt64_rollback_probe.h b/src/common/rt64_rollback_probe.h
+new file mode 100644
+index 0000000..37d962d
+--- /dev/null
++++ b/src/common/rt64_rollback_probe.h
+@@ -0,0 +1,81 @@
++#pragma once
++// Diagnostic counters; callbacks are installed before renderer threads start.
++#include <atomic>
++#include <algorithm>
++#include <chrono>
++#include <cstdint>
++#include <cstddef>
++#include <mutex>
++#include <condition_variable>
++#include <cstdio>
++#include <cstdlib>
++#ifdef __APPLE__
++#include <mach/mach_time.h>
++#endif
++namespace RT64::RollbackProbe {
++inline std::atomic<bool> enabled{false};
++inline bool incremental_writeback=false, inline_uploads=false, shared_uploads=false, lazy_dither=false;
++inline std::atomic<uint64_t> native_noise_pixels{}, native_other_pixels{};
++inline std::atomic<uint64_t> shared_upload_bytes{}, shared_upload_copies{};
++inline std::atomic<uint64_t> inline_upload_calls{};
++inline bool aligned_pacing=false, bounded_present=false;
++inline std::atomic<uint64_t> latest_submitted{}, retired_presents{}, slot_wait_ns{}, maximum_in_flight{};
++inline std::mutex display_mutex;
++inline std::condition_variable display_condition;
++inline unsigned in_flight=0;
++inline std::atomic<uint64_t> refresh_period_ns{16666667};
++inline std::atomic<bool> recovering_display{false};
++inline uint64_t last_observed_display=0;
++inline unsigned fresh_displays=0;
++inline void observeDisplay(uint64_t deadline, uint64_t time) {
++    if(!bounded_present || !deadline || !time) return;
++    std::lock_guard lock(display_mutex);
++    if(time<=last_observed_display) return;
++    last_observed_display=time;
++    if(time>deadline+refresh_period_ns+1000000) {
++        recovering_display=true; fresh_displays=0;
++    } else if(++fresh_displays>=2) {
++        recovering_display=false; fresh_displays=2;
++    }
++}
++inline std::atomic<uint64_t> present_hitch_frame{0};
++inline std::atomic<unsigned> present_hitch_ms{0};
++inline void waitDisplaySlot() {
++    std::unique_lock lock(display_mutex);
++    if (!display_condition.wait_for(lock, std::chrono::seconds(2), [] { return in_flight<2; })) {
++        fprintf(stderr,"CHECKPOINT FAIL: bounded presentation callback timeout\n"); std::abort();
++    }
++}
++inline void submittedDisplay() {
++    std::lock_guard lock(display_mutex);
++    if(++in_flight>2) { fprintf(stderr,"CHECKPOINT FAIL: drawable bound exceeded\n"); std::abort(); }
++    maximum_in_flight=std::max(maximum_in_flight.load(),uint64_t(in_flight));
++}
++inline void completedDisplay() {
++    { std::lock_guard lock(display_mutex); if(in_flight) --in_flight; }
++    display_condition.notify_all();
++}
++inline std::atomic<uint64_t> native_upload_wait{}, native_texture_wait{}, native_submit{}, native_fence_wait{};
++inline std::atomic<uint64_t> native_gpu{}, native_schedule{}, native_complete_delay{}, native_wakeup{}, native_samples{}, native_invalid{};
++inline std::atomic<uint64_t> native_last_completion{};
++inline std::atomic<uint64_t> stored_bytes{};
++inline uint64_t now() {
++#ifdef __APPLE__
++    static const auto scale = [] { mach_timebase_info_data_t t; mach_timebase_info(&t); return double(t.numer)/t.denom; }();
++    return uint64_t(mach_absolute_time()*scale);
++#else
++    return std::chrono::duration_cast<std::chrono::nanoseconds>(std::chrono::steady_clock::now().time_since_epoch()).count();
++#endif
++}
++inline std::atomic<uint64_t> graphics{}, native{}, native_wait{}, copy{}, copy_bytes{}, screen{}, acquire{}, present_gpu_wait{}, pacing{}, present_wait{}, present_call{}, workload_dependency{};
++inline void (*texture_read)(const void*, size_t, unsigned) = nullptr;
++inline void (*writeback)(void*, size_t, bool) = nullptr;
++inline void (*displayed)(uint64_t, uint64_t, uint64_t) = nullptr;
++inline uint64_t frame = 0, deadline = 0; // Graphics-thread only; copied into queued Presents.
++struct Timer {
++    std::atomic<uint64_t>& counter;
++    uint64_t start;
++    explicit Timer(std::atomic<uint64_t>& c) : counter(c), start(enabled ? now() : 0) {}
++    ~Timer() { if (start) counter += now()-start; }
++};
++}

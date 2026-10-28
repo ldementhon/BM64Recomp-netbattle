@@ -1,0 +1,14 @@
+#!/bin/sh
+set -eu
+: "${BM64_EXECUTABLE:?Historical experiment: set BM64_EXECUTABLE to the archived build documented in optimization-decisions-and-delivery.md}"
+cd "$(dirname "$0")/.."
+export BM64_SINGLE_BATTLE=1 BM64_INPUT_SCRIPT=tests/fixtures/rollback-inputs.txt BM64_CHECKPOINT_FRAME=1945 BM64_REQUIRE_BATTLE=1 BM64_INPUT_BUFFER=2 BM64_PROFILE=1
+export BM64_PACING=1 BM64_BOUNDED_PRESENT=1 BM64_INLINE_UPLOADS=1 BM64_SKIP_EMPTY_SUBMISSIONS=1 BM64_INCREMENTAL_WRITEBACK=1 BM64_SKIP_HIDDEN_FENCE=1 BM64_PRESENT_TRACE=1 BM64_PREDICT_DISPLAY_AGE=1
+unset BM64_REUSE_SNAPSHOT_MAPPING BM64_LOOP_VERIFY BM64_LOOP_ORACLE BM64_HITCH_MS BM64_HITCH_KIND BM64_RELEASE_LEAD_US
+export BM64_ROLLBACK_SPACING=20 BM64_ROLLBACK_LENGTH=4 BM64_LOOP_FRAMES=480
+for lead in 0 -4000 -8000; do
+    BM64_RELEASE_LEAD_US="$lead" BM64_RESULT_NAME="queue-age-phase-$lead" python3 tests/run_checkpoint_probe.py
+done
+for kind in 1 2; do
+    BM64_HITCH_KIND="$kind" BM64_HITCH_MS=100 BM64_RESULT_NAME="queue-age-hitch-$kind" python3 tests/run_checkpoint_probe.py
+done

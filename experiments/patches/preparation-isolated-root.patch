@@ -1,0 +1,1434 @@
+diff --git a/.github/macos/apple_bundle.cmake b/.github/macos/apple_bundle.cmake
+index 5ca9faa..7f2417b 100644
+--- a/.github/macos/apple_bundle.cmake
++++ b/.github/macos/apple_bundle.cmake
+@@ -64,6 +64,11 @@ endif()
+ 
+ # Post-build steps for macOS bundle
+ add_custom_command(TARGET BM64Recompiled POST_BUILD
++    # Refresh SDL before fixup_bundle searches the existing Frameworks directory;
++    # otherwise an incremental build can keep an older library with the same name.
++    COMMAND ${CMAKE_COMMAND} -E make_directory $<TARGET_BUNDLE_DIR:BM64Recompiled>/Contents/Frameworks
++    COMMAND ${CMAKE_COMMAND} -E copy_if_different $<TARGET_FILE:SDL2::SDL2>
++        $<TARGET_BUNDLE_DIR:BM64Recompiled>/Contents/Frameworks/$<TARGET_FILE_NAME:SDL2::SDL2>
+     # Copy and fix frameworks first
+     COMMAND ${CMAKE_COMMAND} -D CMAKE_BUILD_TYPE=$<CONFIG> -D CMAKE_GENERATOR=${CMAKE_GENERATOR} -P ${CMAKE_SOURCE_DIR}/.github/macos/fixup_bundle.cmake
+ 
+diff --git a/CMakeLists.txt b/CMakeLists.txt
+index c104f86..0e7bd88 100644
+--- a/CMakeLists.txt
++++ b/CMakeLists.txt
+@@ -424,3 +424,13 @@ target_sources(BM64Recompiled PRIVATE ${GENERATED_NRM_SOURCES})
+ target_sources(BM64Recompiled PRIVATE ${SOURCES})
+ 
+ set_property(TARGET BM64Recompiled PROPERTY VS_DEBUGGER_WORKING_DIRECTORY "${CMAKE_SOURCE_DIR}")
++
++# Separate diagnostic build: instrument actual generated loads/stores, never time it.
++option(BM64_TRACE_MEMORY "Trace framebuffer consumers in generated game code" OFF)
++if(BM64_TRACE_MEMORY)
++    target_sources(RecompiledFuncs PRIVATE tests/framebuffer_trace_canary.c)
++    foreach(trace_target RecompiledFuncs PatchesLib ultramodern librecomp)
++        target_compile_options(${trace_target} PRIVATE -fsanitize-coverage=trace-pc-guard,trace-loads,trace-stores)
++    endforeach()
++    target_compile_definitions(BM64Recompiled PRIVATE BM64_TRACE_MEMORY=1)
++endif()
+diff --git a/include/zelda_render.h b/include/zelda_render.h
+index 15397f9..4e052ba 100644
+--- a/include/zelda_render.h
++++ b/include/zelda_render.h
+@@ -28,6 +28,7 @@ namespace zelda64 {
+             void enable_instant_present() override;
+             void send_dl(const OSTask *task) override;
+             void update_screen() override;
++            void wait_for_checkpoint_present() override;
+             void shutdown() override;
+             uint32_t get_display_framerate() const override;
+             float get_resolution_scale() const override;
+diff --git a/patches/required_patches.c b/patches/required_patches.c
+index 0e760e4..d778d9b 100644
+--- a/patches/required_patches.c
++++ b/patches/required_patches.c
+@@ -1,3 +1,4 @@
++extern void recomp_checkpoint_frame(const void* players, int stride, int overlay);
+ #include "patches.h"
+ #include "misc_funcs.h"
+ #include "sound.h"
+@@ -1023,6 +1024,7 @@ RECOMP_PATCH void func_80225840(void *arg0) {
+     D_802B36AC = free_hook;
+ 
+     while (TRUE) {
++        recomp_checkpoint_frame(g_Players, sizeof(Player), gOverlayID);
+         Recomp_ProcessCheats();
+         func_8023A104();           // receive message from the cont mesg queue and run osContGetReadData
+         mainGfx = Gfx_InitGfx();   // init gfx
+diff --git a/patches/syms.ld b/patches/syms.ld
+index b1f894c..8280378 100644
+--- a/patches/syms.ld
++++ b/patches/syms.ld
+@@ -91,3 +91,5 @@ recomp_get_always_have_remote_bombs = 0x8F00013C;
+ recomp_get_always_have_red_bombs = 0x8F000140;
+ recomp_get_infinite_credits = 0x8F000144;
+ recomp_get_infinite_lives = 0x8F000148;
++
++recomp_checkpoint_frame = 0x8F00014C;
+diff --git a/src/game/process_coroutines.cpp b/src/game/process_coroutines.cpp
+index 6559ebd..114c602 100644
+--- a/src/game/process_coroutines.cpp
++++ b/src/game/process_coroutines.cpp
+@@ -6,6 +6,11 @@
+ #include <cstdio>
+ #include <cstdarg>
+ #include <array>
++#ifndef BM64_COROUTINE_UNIT_TEST
++#include "ultramodern/checkpoint.hpp"
++struct mco_desc;
++namespace checkpoint { void retain_process(mco_desc*); }
++#endif
+ 
+ // ============================================================================
+ // Configuration
+@@ -103,6 +108,19 @@ static uint8_t* g_entry_rdram = nullptr;
+ // System initialization flag
+ static bool g_initialized = false;
+ 
++// Used only by the bounded startup probe; called outside Hudson processes.
++void report_process_probe() {
++    size_t count = 0, bytes = 0;
++    for (const auto& slot : g_slots) {
++        if (slot.coro) {
++            ++count;
++            bytes += slot.coro->coro_size;
++        }
++    }
++    fprintf(stderr, "PROBE: initialized=%d coroutine_count=%zu native_allocation_bytes=%zu in_process=%d\n",
++        g_initialized, count, bytes, g_current_slot != nullptr);
++}
++
+ // ============================================================================
+ // Slot management
+ // ============================================================================
+@@ -253,6 +271,9 @@ extern "C" void recomp_process_coro_create(uint8_t* rdram, recomp_context* ctx)
+     
+     // Create the coroutine
+     mco_desc desc = mco_desc_init(process_coro_entry, native_stack);
++    #ifndef BM64_COROUTINE_UNIT_TEST
++    if (checkpoint::enabled) checkpoint::retain_process(&desc);
++    #endif
+     mco_result res = mco_create(&slot->coro, &desc);
+     
+     if (res != MCO_SUCCESS) {
+@@ -475,3 +496,7 @@ extern "C" void setjmp_recomp(uint8_t* rdram, recomp_context* ctx) {
+     (void)ctx;
+     fprintf(stderr, "[Process] ERROR: setjmp_recomp called - this should not happen!\n");
+ }
++
++#ifndef BM64_COROUTINE_UNIT_TEST
++#include "checkpoint.inc"
++#endif
+diff --git a/src/main/main.cpp b/src/main/main.cpp
+index 85b7514..1328bab 100644
+--- a/src/main/main.cpp
++++ b/src/main/main.cpp
+@@ -1,3 +1,4 @@
++#include "ultramodern/checkpoint.hpp"
+ #include <cstdio>
+ #include <cassert>
+ #include <unordered_map>
+@@ -7,6 +8,8 @@
+ #include <numeric>
+ #include <stdexcept>
+ #include <cinttypes>
++#include <cstdlib>
++#include <string_view>
+ 
+ #include "nfd.h"
+ 
+@@ -528,9 +531,68 @@ void reorder_texture_pack(recomp::mods::ModContext&) {
+ 
+ #define REGISTER_FUNC(name) recomp::overlays::register_base_export(#name, name)
+ 
++void report_process_probe();
++
++static bool probe_input(int controller, uint16_t* buttons, float* x, float* y) {
++    if (controller != 0) return false;
++    *buttons = 0;
++    *x = *y = 0.0f;
++    static unsigned reads = 0;
++    if (++reads % 60 == 0) {
++        fprintf(stderr, "PROBE: controller_reads=%u\n", reads);
++        report_process_probe();
++    }
++    if (reads == 300) {
++        fprintf(stderr, "PASS: startup reached 300 controller reads; full-state replay NOT tested\n");
++        fflush(stderr);
++        // This bounded diagnostic deliberately bypasses runtime shutdown, whose
++        // thread joins are unrelated to the startup/state inventory experiment.
++        std::_Exit(0);
++    }
++    return true;
++}
++
++static void probe_thread(uint8_t* rdram, recomp_context* ctx) {
++    if (checkpoint::enabled) checkpoint::context(ctx);
++    auto* thread = TO_PTR(OSThread, ultramodern::this_thread());
++    fprintf(stderr, "PROBE: native game thread id=%d priority=%d\n", thread->id, thread->priority);
++}
++
++static ultramodern::input::connected_device_info_t checkpoint_device(int controller) {
++    return {ultramodern::input::Device::Controller, controller == 0 ? ultramodern::input::Pak::RumblePak : ultramodern::input::Pak::None};
++}
++
++static void probe_vi() {
++    recomp::update_rumble();
++    static bool started = false;
++    if (!started) {
++        started = true;
++        // The first VI callback runs after the launcher video mode is initialized.
++        // Starting before runtime initialization skips that setup and races the VI thread.
++        recomp::start_game(supported_games[0].game_id);
++    }
++}
++
++static bool play_input(int controller, uint16_t* buttons, float* x, float* y) {
++    if (checkpoint::fast_boot) return checkpoint::boot_input(controller, buttons, x, y);
++    return recomp::get_n64_input(controller, buttons, x, y);
++}
++
+ int main(int argc, char** argv) {
+-    (void)argc;
+-    (void)argv;
++    bool startup_probe = false;
++    for (int i=1;i<argc;++i) {
++        std::string_view arg(argv[i]);
++        if (arg == "--checkpoint-test") checkpoint::enabled = true;
++        else if (arg == "--single-battle") checkpoint::fast_boot = true;
++        else if (arg == "--smoke-test") startup_probe = true;
++        else { fprintf(stderr, "Unknown option: %s\n", argv[i]); return EXIT_FAILURE; }
++    }
++    const bool smoke_test = checkpoint::enabled || startup_probe;
++    const bool auto_start = smoke_test || checkpoint::fast_boot.load();
++    if (smoke_test && std::getenv("APP_FOLDER_PATH") == nullptr) {
++        fprintf(stderr, "--smoke-test requires APP_FOLDER_PATH pointing to isolated test settings/saves\n");
++        return EXIT_FAILURE;
++    }
+     recomp::Version project_version{};
+     if (!recomp::Version::from_string(version_string, project_version)) {
+         ultramodern::error_handling::message_box(("Invalid version string: " + version_string).c_str());
+@@ -596,6 +658,7 @@ int main(int argc, char** argv) {
+     recomp::register_config_path(zelda64::get_app_folder_path());
+ 
+     // Register supported games and patches
++    if (smoke_test) supported_games[0].thread_create_callback = probe_thread;
+     for (const auto& game : supported_games) {
+         recomp::register_game(game);
+     }
+@@ -652,14 +715,14 @@ int main(int argc, char** argv) {
+     };
+ 
+     ultramodern::input::callbacks_t input_callbacks{
+-        .poll_input = recomp::poll_inputs,
+-        .get_input = recomp::get_n64_input,
+-        .set_rumble = recomp::set_rumble,
+-        .get_connected_device_info = recomp::get_connected_device_info,
++        .poll_input = checkpoint::enabled ? nullptr : recomp::poll_inputs,
++        .get_input = checkpoint::enabled ? checkpoint::input : (smoke_test ? probe_input : play_input),
++        .set_rumble = checkpoint::enabled ? nullptr : recomp::set_rumble,
++        .get_connected_device_info = checkpoint::enabled ? checkpoint_device : recomp::get_connected_device_info,
+     };
+ 
+     ultramodern::events::callbacks_t thread_callbacks{
+-        .vi_callback = recomp::update_rumble,
++        .vi_callback = auto_start ? probe_vi : recomp::update_rumble,
+         .gfx_init_callback = recompui::update_supported_options,
+     };
+ 
+@@ -698,6 +761,13 @@ int main(int argc, char** argv) {
+         .message_queue_control = {},
+     };
+ 
++    if (auto_start) {
++        recomp::check_all_stored_roms();
++        if (!recomp::is_rom_valid(supported_games[0].game_id)) {
++            fprintf(stderr, "PROBE: isolated settings directory has no valid bm64_us.z64\n");
++            return EXIT_FAILURE;
++        }
++    }
+     recomp::start(cfg);
+ 
+     NFD_Quit();
+diff --git a/src/main/rt64_render_context.cpp b/src/main/rt64_render_context.cpp
+index 9e43fef..62a8f46 100644
+--- a/src/main/rt64_render_context.cpp
++++ b/src/main/rt64_render_context.cpp
+@@ -2,9 +2,13 @@
+ #include <cstring>
+ #include <variant>
+ #include <algorithm>
++#include "common/rt64_rollback_probe.h"
++#include "ultramodern/checkpoint.hpp"
+ 
+ #define HLSL_CPU
+ #include "hle/rt64_application.h"
++#include "hle/rt64_workload_queue.h"
++#include "hle/rt64_present_queue.h"
+ #include "rt64_render_hooks.h"
+ #include "overloaded.h"
+ 
+@@ -203,6 +207,18 @@ ultramodern::renderer::GraphicsApi map_graphics_api(RT64::UserConfiguration::Gra
+ }
+ 
+ zelda64::renderer::RT64Context::RT64Context(uint8_t* rdram, ultramodern::renderer::WindowHandle window_handle, bool debug) {
++    RT64::RollbackProbe::prep_detail = checkpoint::enabled && std::getenv("BM64_PREP_DETAIL");
++    RT64::RollbackProbe::prep_profile = checkpoint::enabled && std::getenv("BM64_PREP_PROFILE");
++    RT64::RollbackProbe::inline_uploads = checkpoint::enabled && std::getenv("BM64_INLINE_UPLOADS");
++    RT64::RollbackProbe::aligned_pacing = checkpoint::enabled && std::getenv("BM64_PACING");
++    RT64::RollbackProbe::bounded_present = checkpoint::enabled && std::getenv("BM64_BOUNDED_PRESENT");
++    RT64::RollbackProbe::incremental_writeback = checkpoint::enabled && std::getenv("BM64_INCREMENTAL_WRITEBACK");
++    RT64::RollbackProbe::enabled = checkpoint::profiling.load();
++    RT64::RollbackProbe::displayed = checkpoint::displayed;
++#ifdef BM64_TRACE_MEMORY
++    RT64::RollbackProbe::writeback = checkpoint::framebuffer_written;
++    RT64::RollbackProbe::texture_read = checkpoint::framebuffer_texture_read;
++#endif
+     static unsigned char dummy_rom_header[0x40];
+     recompui::set_render_hooks();
+ 
+@@ -321,16 +337,38 @@ zelda64::renderer::RT64Context::RT64Context(uint8_t* rdram, ultramodern::rendere
+ zelda64::renderer::RT64Context::~RT64Context() = default;
+ 
+ void zelda64::renderer::RT64Context::send_dl(const OSTask* task) {
++    app->state->suppressPresentation = checkpoint::suppress_render;
++    app->state->forceSingleFrame = checkpoint::catchup_active;
++    const auto previous_workload = app->state->workloadId;
++    const auto previous_present = app->state->presentId;
++    RT64::RollbackProbe::frame = checkpoint::presentation_frame;
++    RT64::RollbackProbe::deadline = checkpoint::presentation_deadline;
++    RT64::RollbackProbe::Timer probe(RT64::RollbackProbe::graphics);
+     check_texture_pack_actions();
+     app->state->rsp->reset();
+     app->interpreter->loadUCodeGBI(task->t.ucode & 0x3FFFFFF, task->t.ucode_data & 0x3FFFFFF, true);
+     app->processDisplayLists(app->core.RDRAM, task->t.data_ptr & 0x3FFFFFF, 0, true);
++    if (app->state->suppressPresentation &&
++        (app->state->workloadId != previous_workload || app->state->presentId != previous_present)) {
++        fprintf(stderr, "CHECKPOINT FAIL: suppressed display list submitted a presentation workload\n");
++        std::abort();
++    }
+ }
+ 
+ void zelda64::renderer::RT64Context::update_screen() {
++    RT64::RollbackProbe::Timer probe(RT64::RollbackProbe::screen);
+     app->updateScreen();
+ }
+ 
++void zelda64::renderer::RT64Context::wait_for_checkpoint_present() {
++    auto start = std::chrono::steady_clock::now();
++    app->workloadQueue->waitForWorkloadId(app->state->workloadId);
++    app->presentQueue->waitForPresentId(app->state->presentId);
++    app->workloadQueue->waitForIdle();
++    app->presentQueue->waitForIdle();
++    checkpoint::presentation_wait_ns += std::chrono::duration_cast<std::chrono::nanoseconds>(std::chrono::steady_clock::now()-start).count();
++}
++
+ void zelda64::renderer::RT64Context::shutdown() {
+     if (app != nullptr) {
+         app->end();
+diff --git a/src/game/catchup.inc b/src/game/catchup.inc
+new file mode 100644
+index 0000000..d598322
+--- /dev/null
++++ b/src/game/catchup.inc
+@@ -0,0 +1,96 @@
++// Included inside checkpoint's namespace. Verification and timing use the same path.
++static bool catchup(unsigned at) {
++    const unsigned length = setting("BM64_CATCHUP_FRAMES", 0);
++    if (!length) return false;
++    const unsigned samples = setting("BM64_CATCHUP_SAMPLES", 100);
++    const bool verify = std::getenv("BM64_CATCHUP_VERIFY") != nullptr;
++    const bool render_all = std::getenv("BM64_CATCHUP_RENDER_ALL") != nullptr;
++    require(at > 0 && (length == 4 || length == 8 || length == 12) && samples > 0, "invalid catch-up window/sample count");
++    require(!std::getenv("BM64_BENCHMARK_FRAMES") && !std::getenv("BM64_SUPPRESS_REPLAY"), "conflicting catch-up modes");
++    if (frame < at) return true;
++    static uint64_t end;
++    static unsigned completed;
++    static std::vector<Digest> reference;
++    static std::vector<double> times, waits, restores, work_times;
++    static RenderCounts baseline_start{}, baseline_previous{}, final_update{}, replay_start{};
++    static RenderCounts totals{};
++    static auto started = std::chrono::steady_clock::now();
++    static uint64_t wait_start;
++    static Profile profile_start;
++    static double capture_cost;
++    if (!end) {
++        save(0, true);
++        save(1 + frame % 16, true);
++        end = frame + length;
++        reference.clear();
++        baseline_start = baseline_previous = render_counts();
++        return true;
++    }
++    // Refresh corrected history as real rollback would, including the final update.
++    auto capture_ms=save(1 + frame % 16, true);
++    if(replay_pass) capture_cost+=capture_ms;
++    if (verify) {
++        auto actual = digest();
++        size_t index = frame + length - end - 1;
++        if (!replay_pass) {
++            reference.push_back(actual);
++            fprintf(stderr,"CATCHUP: baseline frame=%llu ram_hash=%016llx\n",frame,actual.ram);
++        } else if (actual.ram != reference[index].ram || actual.registers != reference[index].registers) {
++            fprintf(stderr,"CHECKPOINT FAIL: catch-up frame=%llu expected=%016llx actual=%016llx registers=%016llx/%016llx\n",frame,reference[index].ram,actual.ram,reference[index].registers,actual.registers);
++            if (std::getenv("BM64_NEGATIVE_INPUT") || std::getenv("BM64_NEGATIVE_STACKS")) {
++                fprintf(stderr,"PASS: negative control detected divergence\n"); fflush(stderr); std::_Exit(0);
++            }
++            std::_Exit(2);
++        }
++    }
++    if (!replay_pass) {
++        auto counts = render_counts();
++        final_update = {counts.drawn-baseline_previous.drawn, 0, counts.presented-baseline_previous.presented, 0};
++        baseline_previous = counts;
++        if (frame == end) {
++            replay_pass = 1;
++            replay_start = counts;
++            wait_start = presentation_wait_ns;
++            profile_start=profile(); capture_cost=0;
++            catchup_active = true;
++            started = std::chrono::steady_clock::now();
++            restores.push_back(restore(0, true));
++            suppress_render = !render_all;
++        }
++        return true;
++    }
++    suppress_render = !render_all && frame < end - 1;
++    if (frame != end) return true;
++    finish_presentation();
++    auto elapsed = std::chrono::duration<double,std::milli>(std::chrono::steady_clock::now()-started).count();
++    times.push_back(elapsed);
++    waits.push_back(double(presentation_wait_ns.load()-wait_start)/1e6);
++    work_times.push_back(elapsed - waits.back());
++    if(profiling) {
++        auto p=profile(); profile_report(profile_start,p,length);
++        fprintf(stderr,"PROFILE: capture_ms=%.3f restore_ms=%.3f simulation_runtime_residual_ms=%.3f\n",capture_cost,restores.back(),elapsed-waits.back()-(p.graphics_wait-profile_start.graphics_wait)/1e6-capture_cost-restores.back());
++    }
++    catchup_active = false;
++    auto counts = render_counts();
++    RenderCounts delta{counts.drawn-replay_start.drawn, counts.skipped-replay_start.skipped,
++        counts.presented-replay_start.presented, counts.hidden-replay_start.hidden};
++    if (render_all) final_update = {baseline_previous.drawn-baseline_start.drawn, 0, baseline_previous.presented-baseline_start.presented, 0};
++    require(delta.drawn == final_update.drawn && delta.presented == final_update.presented &&
++        delta.skipped == baseline_previous.drawn-baseline_start.drawn-final_update.drawn &&
++        delta.hidden == baseline_previous.presented-baseline_start.presented-final_update.presented,
++        "catch-up did not render only the final update");
++    totals.drawn += delta.drawn; totals.skipped += delta.skipped;
++    totals.presented += delta.presented; totals.hidden += delta.hidden;
++    fprintf(stderr,"CATCHUP: sample=%u updates=%u end=%llu total_ms=%.3f final_tasks=%llu native_only_tasks=%llu screen_updates=%llu hidden_updates=%llu\n",
++        completed+1,length,end,elapsed,delta.drawn,delta.skipped,delta.presented,delta.hidden);
++    if (++completed == samples) {
++        require(!std::getenv("BM64_NEGATIVE_INPUT") && !std::getenv("BM64_NEGATIVE_STACKS"), "negative control failed to diverge");
++        distribution("catchup_total",times); distribution("catchup_restore",restores); distribution("catchup_present_wait",waits); distribution("catchup_work_excluding_final_wait",work_times);
++        auto over = std::count_if(times.begin(),times.end(),[](double t) { return t > 1000.0/60; });
++        fprintf(stderr,"CATCHUP: verification=%s budget_ms=16.667 over_budget=%zu/%u drawn=%llu native_only=%llu presented=%llu hidden=%llu\n",verify ? "full_RAM_and_registers" : "disabled",size_t(over),samples,totals.drawn,totals.skipped,totals.presented,totals.hidden);
++        fprintf(stderr,"PASS: catch-up completed %u windows of %u updates with %s presentation\n",samples,length,render_all ? "all-update" : "final-update-only"); fflush(stderr); std::_Exit(0);
++    }
++    replay_pass = 0;
++    end = 0;
++    return catchup(at); // Current corrected state starts the next ordinary window.
++}
+diff --git a/src/game/checkpoint.inc b/src/game/checkpoint.inc
+new file mode 100644
+index 0000000..eb68c1c
+--- /dev/null
++++ b/src/game/checkpoint.inc
+@@ -0,0 +1,441 @@
++// Included beside minicoro so the experimental scheduler can suspend a nested
++// Hudson stack without unwinding it. Not a portable or persistent save format.
++#include "ultramodern/checkpoint.hpp"
++#include "ultramodern/ultramodern.hpp"
++#include "librecomp/addresses.hpp"
++#define XXH_INLINE_ALL
++#include "../../lib/N64ModernRuntime/thirdparty/xxHash/xxhash.h"
++#include <vector>
++#include <fstream>
++#include <sstream>
++#include <cfenv>
++#include <chrono>
++#include <cstdlib>
++#include <unordered_map>
++#include <map>
++#include <tuple>
++#include <dlfcn.h>
++#include <pthread.h>
++#include <sys/resource.h>
++#ifdef __APPLE__
++#include <mach/mach_time.h>
++#endif
++#include "../../lib/rt64/src/common/rt64_rollback_probe.h"
++#include "checkpoint_memory.hpp"
++#include "checkpoint_stack.hpp"
++#include "checkpoint_trace.hpp"
++
++extern uint8_t dmem[0x1000];
++extern thread_local PTR(OSThread) thread_self;
++void run_thread_function(uint8_t*, uint64_t, uint64_t, uint64_t);
++void run_next_thread(uint8_t*);
++
++namespace checkpoint {
++bool enabled = false;
++std::atomic<bool> profiling = std::getenv("BM64_PROFILE") || std::getenv("BM64_LOOP_FRAMES");
++std::atomic<uint64_t> graphics_wait_ns = 0, presentation_frame = 0, presentation_deadline = 0;
++std::atomic<bool> fast_boot = false;
++std::atomic<uint64_t> boot_frame = 0;
++std::atomic<bool> suppress_render = false;
++std::atomic<bool> catchup_active = false;
++std::atomic<uint64_t> presentation_wait_ns = 0;
++
++bool boot_input(int controller, uint16_t* buttons, float* x, float* y) {
++    *buttons = 0; *x = *y = 0;
++    if (controller != 0) return enabled;
++    auto f = boot_frame.load();
++    if (f == 500 || f == 800 || f == 1000) *buttons = 0x1000;
++    if (f >= 1102 && f < 1110) *y = -0.7f;
++    if (f == 1120 || f == 1320 || f == 1500) *buttons = 0x8000;
++    return true;
++}
++size_t state_slot = 0;
++uint64_t ticks = 0;
++static uint8_t* ram;
++static uint64_t frame = 0;
++static int32_t players, player_stride, overlay;
++static unsigned replay_pass = 0;
++struct Fiber { mco_coro* co; int32_t thread, entry, arg; bool dead; recomp_context* ctx; };
++static std::array<Fiber, 64> fibers{};
++static size_t fiber_count = 0;
++static Fiber* current;
++void context(void* ctx) { current->ctx = static_cast<recomp_context*>(ctx); }
++static int32_t next_thread;
++static bool boundary;
++static fenv_t host_fenv;
++static std::array<fenv_t, 64> fiber_fenv;
++static size_t retained_bytes;
++static void require(bool ok, const char* message) {
++    if (!ok) { fprintf(stderr, "CHECKPOINT FAIL: %s\n", message); fflush(stderr); std::_Exit(2); }
++}
++static std::unordered_map<void*, std::shared_ptr<void>> live_allocations;
++static void* allocate_native(size_t size, void*) {
++    require(retained_bytes + size < 512 * 1024 * 1024, "native history allocation limit reached");
++    void* memory = std::malloc(size);
++    require(memory != nullptr, "native allocation failed");
++    retained_bytes += size;
++    live_allocations.emplace(memory, std::shared_ptr<void>(memory, [size](void* p) {
++        std::free(p); retained_bytes -= size;
++    }));
++    return memory;
++}
++static void release_native(void* p, size_t, void*) { live_allocations.erase(p); }
++void retain_process(mco_desc* desc) {
++    desc->alloc_cb = allocate_native;
++    desc->dealloc_cb = release_native;
++}
++static Fiber* find(int32_t t) {
++    for (size_t i = fiber_count; i-- > 0;) if (fibers[i].thread == t && !fibers[i].dead) return &fibers[i];
++    require(false, "unknown thread"); return nullptr;
++}
++// The OS continuation can currently be executing inside a nested Hudson stack.
++// Preserve minicoro's TLS chain while switching the outer continuation directly.
++static void suspend() {
++    auto* running = mco_running();
++    auto* outer = current->co;
++    auto outer_state = outer->state;
++    auto* process = g_current_slot;
++    fegetenv(&fiber_fenv[current - fibers.data()]);
++    outer->state = MCO_SUSPENDED;
++    _mco_jumpout(outer);
++    outer->state = outer_state;
++    mco_current_co = running;
++    g_current_slot = process;
++}
++static void fiber_entry(mco_coro*) {
++    uint8_t* rdram = ram;
++    auto* f = current;
++    try {
++        run_thread_function(ram, f->entry, TO_PTR(OSThread, f->thread)->sp, f->arg);
++    } catch (ultramodern::thread_terminated&) {}
++    f->dead = true;
++    run_next_thread(ram);
++    require(false, "terminated thread resumed");
++}
++void create_thread(uint8_t* rdram, int32_t thread, int32_t entry, int32_t arg) {
++    ram = rdram;
++    // Snapshot owners keep retired generations alive until their slots expire.
++    for (size_t i=0; i<fiber_count; ++i) if (fibers[i].thread == thread && !fibers[i].dead) {
++        fibers[i].dead = true;
++        if (&fibers[i] != current) require(mco_destroy(fibers[i].co) == MCO_SUCCESS, "replace native thread");
++    }
++    require(fiber_count < fibers.size(), "thread generation limit reached");
++    auto& f = fibers[fiber_count++];
++    f = {nullptr, thread, entry, arg, false};
++    auto desc = mco_desc_init(fiber_entry, 2 * 1024 * 1024);
++    retain_process(&desc);
++    require(mco_create(&f.co, &desc) == MCO_SUCCESS, "thread allocation");
++    fegetenv(&fiber_fenv[fiber_count-1]);
++}
++void destroy_thread(int32_t thread) {
++    for (size_t i=0; i<fiber_count; ++i) if (fibers[i].thread == thread && !fibers[i].dead) {
++        fibers[i].dead = true;
++        require(&fibers[i] != current && mco_destroy(fibers[i].co) == MCO_SUCCESS, "destroy native thread");
++    }
++}
++
++using Allocation = CheckpointStack;
++struct Snapshot {
++std::vector<Allocation> saved_allocations;
++decltype(g_slots) saved_slots;
++decltype(fibers) saved_fibers;
++decltype(fiber_fenv) saved_fenv;
++size_t saved_fiber_count;
++int32_t saved_next, saved_yield, saved_resume;
++uint64_t saved_frame, saved_ticks;
++bool saved_initialized;
++uint8_t* saved_entry_rdram;
++CheckpointMemory saved_ram;
++};
++static std::array<Snapshot, snapshot_slots> snapshots;
++static void runtime_state(bool restore) {
++    static std::array<uint8_t, 0x1000> dmem_images[snapshot_slots];
++    auto& saved_dmem = dmem_images[state_slot];
++    if (restore) std::memcpy(dmem, saved_dmem.data(), saved_dmem.size());
++    else std::memcpy(saved_dmem.data(), dmem, saved_dmem.size());
++    events_state(restore); timers_state(restore); queues_state(restore); runqueue_state(restore);
++    overlays_state(restore); extensions_state(restore); audio_state(restore); input_state(restore); saves_state(restore);
++}
++static double save(size_t index = 0, bool quiet = false) {
++    state_slot = index;
++    auto& s = snapshots[index];
++    require(mco_running() == nullptr && g_current_slot == nullptr, "checkpoint outside scheduler");
++    auto start = std::chrono::steady_clock::now();
++    CheckpointTrace trace(profiling,"capture",frame,index);
++    static bool injected=false;
++    if(!injected && frame==2100 && std::getenv("BM64_CHECKPOINT_STALL")) {
++        injected=true; std::this_thread::sleep_for(std::chrono::milliseconds(25)); trace.mark("injected");
++    }
++    s.saved_ram.capture(ram, recomp::mem_size, std::getenv("BM64_FULL_COPY") != nullptr);
++    trace.mark("RAM");
++    size_t allocation_index = 0;
++    auto copy = [&](mco_coro* co) { if (co) { if (allocation_index == s.saved_allocations.size()) s.saved_allocations.emplace_back(); auto& image = s.saved_allocations[allocation_index++]; image.capture(co, std::getenv("BM64_FULL_COPY") != nullptr); image.owner = live_allocations.at(co); } };
++    for (auto& s : g_slots) copy(s.coro);
++    for (size_t i=0; i<fiber_count; ++i) if (!fibers[i].dead) copy(fibers[i].co);
++    s.saved_allocations.resize(allocation_index);
++    trace.mark("stacks");
++    s.saved_slots = g_slots; s.saved_fibers = fibers; s.saved_fiber_count = fiber_count; s.saved_fenv = fiber_fenv;
++    s.saved_next = next_thread; s.saved_frame = frame; s.saved_ticks = ticks;
++    s.saved_yield = g_yield_reason; s.saved_resume = g_resume_value;
++    s.saved_initialized = g_initialized; s.saved_entry_rdram = g_entry_rdram;
++    trace.mark("metadata");
++    runtime_state(false); trace.mark("runtime");
++    size_t bytes = s.saved_ram.copied_bytes(); for (auto& a : s.saved_allocations) bytes += a.bytes();
++    auto elapsed = std::chrono::duration<double,std::milli>(std::chrono::steady_clock::now()-start).count();
++    trace.report(s.saved_ram.clear_ms,s.saved_ram.remap_ms,bytes);
++    if (!quiet) fprintf(stderr,"CHECKPOINT: saved frame=%llu vi=%llu allocations=%zu copied_bytes=%zu capture_ms=%.3f\n", frame,ticks,s.saved_allocations.size(),bytes,elapsed);
++    return elapsed;
++}
++static double restore(size_t index = 0, bool quiet = false) {
++    state_slot = index;
++    auto& s = snapshots[index];
++    auto start = std::chrono::steady_clock::now();
++    CheckpointTrace trace(profiling,"restore",s.saved_frame,index);
++    live_allocations.clear();
++    for (auto& image : s.saved_allocations) live_allocations.emplace(image.address, image.owner);
++    trace.mark("ownership");
++    s.saved_ram.restore(ram); trace.mark("RAM");
++    if (!std::getenv("BM64_NEGATIVE_STACKS"))
++        for (auto& a : s.saved_allocations) a.restore();
++    trace.mark("stacks");
++    g_entry_rdram = s.saved_entry_rdram; g_initialized = s.saved_initialized;
++    g_slots = s.saved_slots; fibers = s.saved_fibers; fiber_count = s.saved_fiber_count; fiber_fenv = s.saved_fenv;
++    next_thread = s.saved_next; frame = s.saved_frame; ticks = s.saved_ticks;
++    g_yield_reason = s.saved_yield; g_resume_value = s.saved_resume;
++    trace.mark("metadata");
++    runtime_state(true); trace.mark("runtime");
++    size_t bytes=0; for(auto& a:s.saved_allocations) bytes+=a.bytes();
++    trace.report(s.saved_ram.clear_ms,s.saved_ram.remap_ms,bytes);
++    auto elapsed = std::chrono::duration<double,std::milli>(std::chrono::steady_clock::now()-start).count();
++    if (!quiet) fprintf(stderr,"CHECKPOINT: restored frame=%llu restore_ms=%.3f\n",frame,elapsed);
++    return elapsed;
++}
++static unsigned setting(const char* name, unsigned fallback) {
++    const char* v = std::getenv(name); return v ? std::stoul(v) : fallback;
++}
++static void distribution(const char* name, std::vector<double> samples) {
++    require(!samples.empty(), "empty benchmark");
++    std::sort(samples.begin(), samples.end());
++    fprintf(stderr,"PERF: %s samples=%zu p50_ms=%.3f p95_ms=%.3f p99_ms=%.3f max_ms=%.3f\n",name,samples.size(),samples[samples.size()/2],samples[(samples.size()-1)*95/100],samples[(samples.size()-1)*99/100],samples.back());
++}
++static uint64_t footprint() {
++#ifdef __APPLE__
++    task_vm_info_data_t info{}; mach_msg_type_number_t count = TASK_VM_INFO_COUNT;
++    require(task_info(mach_task_self(), TASK_VM_INFO, reinterpret_cast<task_info_t>(&info), &count) == KERN_SUCCESS, "task memory accounting");
++    return info.phys_footprint;
++#else
++    return 0;
++#endif
++}
++static uint64_t cow_faults() {
++#ifdef __APPLE__
++    task_events_info_data_t info{}; mach_msg_type_number_t count = TASK_EVENTS_INFO_COUNT;
++    require(task_info(mach_task_self(), TASK_EVENTS_INFO, reinterpret_cast<task_info_t>(&info), &count) == KERN_SUCCESS, "task fault accounting");
++    return info.cow_faults;
++#else
++    return 0;
++#endif
++}
++static size_t eager_bytes(const Snapshot& s) {
++    size_t size = sizeof(s) + s.saved_ram.copied_bytes() + 4096;
++    for (auto& a:s.saved_allocations) size += a.bytes();
++    return size;
++}
++struct Digest { uint64_t ram, registers; };
++static Digest digest() {
++    XXH3_state_t state;
++    XXH3_64bits_reset(&state);
++    for (auto& slot : g_slots) {
++        XXH3_64bits_update(&state, &slot.state, sizeof(slot.state));
++        XXH3_64bits_update(&state, &slot.process_id, sizeof(slot.process_id));
++        XXH3_64bits_update(&state, &slot.ctx, sizeof(slot.ctx));
++    }
++    for (size_t i=0; i<fiber_count; ++i) if (!fibers[i].dead && fibers[i].ctx) XXH3_64bits_update(&state, fibers[i].ctx, sizeof(recomp_context));
++    auto context_hash = XXH3_64bits_digest(&state);
++    return {XXH3_64bits(ram, recomp::mem_size), context_hash};
++}
++static bool benchmark(unsigned at) {
++    const unsigned count = setting("BM64_BENCHMARK_FRAMES", 0);
++    if (!count) return false;
++    require(at > 0 && count >= 16, "benchmark needs a checkpoint frame and at least 16 updates");
++    static std::vector<double> captures, game_times, total_times;
++    static uint64_t initial_memory, peak_memory, initial_faults;
++    static auto dispatched = std::chrono::steady_clock::now();
++    static double previous_capture = 0;
++    if (frame < at) return true;
++    if (frame == at) {
++        initial_memory = peak_memory = footprint(); initial_faults = cow_faults();
++        captures.reserve(count); game_times.reserve(count); total_times.reserve(count);
++    } else {
++        double game_ms = std::chrono::duration<double,std::milli>(std::chrono::steady_clock::now()-dispatched).count();
++        game_times.push_back(game_ms); total_times.push_back(game_ms + previous_capture);
++    }
++    if (frame == at+count) {
++        peak_memory = std::max(peak_memory, footprint());
++        distribution("capture",captures); distribution("game_including_cow_faults",game_times); distribution("game_plus_capture",total_times);
++        size_t bytes=0; for (size_t i=1;i<snapshot_slots;++i) bytes += eager_bytes(snapshots[i]);
++        fprintf(stderr,"PERF: ring_slots=16 eager_ring_bytes=%zu task_initial_bytes=%llu task_peak_bytes=%llu cow_faults=%llu retained_native_allocation_bytes=%zu\n",bytes,initial_memory,peak_memory,cow_faults()-initial_faults,retained_bytes);
++        if (!std::getenv("BM64_BENCHMARK_NO_SNAPSHOT")) {
++            std::vector<double> restores;
++            // Measure fixed-address restores separately from hashing and drawing.
++            // Correct replay from these same ring ages is checked by BM64_RING_REPLAY.
++            for (unsigned repeat=0;repeat<3;++repeat)
++                for (size_t i=1;i<snapshot_slots;++i) restores.push_back(restore(i, true));
++            distribution("restore",restores);
++        }
++        fprintf(stderr,"PASS: checkpoint performance run completed (%u updates, verification hashes disabled)\n",count); fflush(stderr); std::_Exit(0);
++    }
++    previous_capture = std::getenv("BM64_BENCHMARK_NO_SNAPSHOT") ? 0 : save(1 + frame % 16, true);
++    captures.push_back(previous_capture);
++    peak_memory = std::max(peak_memory, footprint());
++    dispatched = std::chrono::steady_clock::now();
++    return true;
++}
++#include "rollback_profile.inc"
++#include "framebuffer_trace.inc"
++#include "running_loop.inc"
++#include "catchup.inc"
++
++static void on_boundary() {
++    ++frame;
++    if (!replay_pass && frame % 60 == 0) { fprintf(stderr,"CHECKPOINT: frame=%llu vi=%llu threads=%zu\n",frame,ticks,fiber_count); report_process_probe(); }
++    if (frame == setting("BM64_HOLD_FRAME", 0)) { fprintf(stderr,"CHECKPOINT: holding frame %llu for inspection\n", frame); std::this_thread::sleep_for(std::chrono::seconds(3)); }
++    const unsigned at = setting("BM64_CHECKPOINT_FRAME", 0);
++    const unsigned length = setting("BM64_REPLAY_LENGTH", 12);
++    if (std::getenv("BM64_SUPPRESS_REPLAY")) suppress_render = replay_pass && frame < at + length - 1;
++    static std::vector<uint64_t> hashes, context_hashes;
++    static std::vector<std::vector<uint64_t>> page_hashes;
++    auto& pass = replay_pass;
++    if ((!replay_pass && frame % 60 == 0) || frame == at) {
++        auto* rdram = ram;
++        fprintf(stderr,"BATTLE: frame=%llu overlay=%d stride=%d controls=",frame,overlay,player_stride);
++        int active = 0;
++        for (int i=0;i<4;++i) {
++            int control = MEM_W(0x24, players + i*player_stride);
++            int object = MEM_W(0x28, players + i*player_stride);
++            fprintf(stderr,"%d:%08x,", control,object);
++            active += (control==1 || control==2) && object!=0;
++        }
++        fprintf(stderr," active=%d\n",active);
++        if (frame == at && std::getenv("BM64_REQUIRE_BATTLE")) require(active >= 2, "checkpoint did not reach a multiplayer battle");
++    }
++    if (trace_frame(at)) return;
++    if (running_loop(at)) return;
++    if (catchup(at)) return;
++    if (benchmark(at)) return;
++    const bool rolling = std::getenv("BM64_RING_REPLAY") != nullptr;
++    static std::vector<double> rolling_captures;
++    if (rolling && !pass && frame >= at && frame <= at + length) rolling_captures.push_back(save(1 + frame % 16, true));
++    if (at && frame == at) save();
++    if (at && frame > at && frame <= at + length) {
++        if (catchup_active && frame == at + length) finish_presentation();
++        auto state_hash = digest();
++        uint64_t hash = state_hash.ram;
++        size_t index = frame-at-1;
++        auto context_hash = state_hash.registers;
++        if (!pass) {
++            hashes.push_back(hash); context_hashes.push_back(context_hash);
++            std::vector<uint64_t> pages;
++            for (size_t p=0;p<recomp::mem_size;p+=4096) pages.push_back(XXH3_64bits(ram+p,4096));
++            page_hashes.push_back(std::move(pages));
++        }
++        else if (hashes[index] != hash || context_hashes[index] != context_hash) {
++            fprintf(stderr,"CHECKPOINT FAIL: replay=%u frame=%llu expected=%016llx actual=%016llx\n",pass,frame,hashes[index],hash);
++            fprintf(stderr,"CHECKPOINT: context expected=%016llx actual=%016llx\n",context_hashes[index],context_hash);
++            int shown = 0;
++            for (size_t p=0;p<recomp::mem_size;p+=4096) if (page_hashes[index][p/4096] != XXH3_64bits(ram+p,4096)) {
++                if (shown++ < 16) fprintf(stderr,"DIFF: RAM page 0x%08zx\n",p);
++            }
++            fprintf(stderr,"DIFF: %d pages differ\n",shown);
++            if (std::getenv("BM64_NEGATIVE_STACKS") || std::getenv("BM64_NEGATIVE_INPUT")) {
++                fprintf(stderr,"PASS: negative control detected divergence\n"); fflush(stderr); std::_Exit(0);
++            }
++            std::_Exit(2);
++        }
++        fprintf(stderr,"CHECKPOINT: replay=%u frame=%llu ram_hash=%016llx\n",pass,frame,hash);
++        if (frame == at+length) {
++            if (++pass == (rolling ? 5 : 4)) { require(!std::getenv("BM64_NEGATIVE_STACKS") && !std::getenv("BM64_NEGATIVE_INPUT"), "negative control failed to diverge"); fprintf(stderr,"PASS: coordinated replay matched full 512 MiB RAM and register hashes for %u baseline frames on %u restores\n",length,rolling ? 4 : 3); fflush(stderr); std::_Exit(0); }
++            if (rolling) {
++                const unsigned windows[] = {12,8,4,1};
++                auto wanted = at + length - windows[pass-1];
++                auto index = 1 + wanted % 16;
++                require(snapshots[index].saved_frame == wanted, "rolling slot mismatch");
++                if (pass==1) distribution("rolling_capture_with_verification",rolling_captures);
++                restore(index);
++            } else restore();
++            if (std::getenv("BM64_SUPPRESS_REPLAY")) {
++                catchup_active = true;
++                suppress_render = frame < at + length - 1;
++            }
++        }
++    }
++    if (frame >= setting("BM64_STOP_FRAME", 1800)) { fprintf(stderr,"CHECKPOINT: navigation run complete (no replay claim)\n"); fflush(stderr); std::_Exit(0); }
++}
++void switch_thread(int32_t thread) {
++    next_thread = thread;
++    if (current) { suspend(); return; }
++    fegetenv(&host_fenv);
++    while (true) {
++        current = find(next_thread);
++        thread_self = current->thread;
++        fesetenv(&fiber_fenv[current-fibers.data()]);
++        require(mco_resume(current->co) == MCO_SUCCESS, "resume OS continuation");
++        if (current->dead) require(mco_destroy(current->co) == MCO_SUCCESS, "finish native thread");
++        current = nullptr; g_current_slot = nullptr;
++        fesetenv(&host_fenv);
++        if (boundary) { boundary = false; on_boundary(); }
++    }
++}
++struct Input { unsigned begin, end; uint16_t buttons; float x,y; int controller = 0; };
++bool input(int controller, uint16_t* buttons, float* x, float* y) {
++    if (fast_boot) return boot_input(controller, buttons, x, y);
++    if (controller < 0 || controller >= 4) return false;
++    static std::vector<Input> inputs = [] {
++        std::vector<Input> result;
++        if (const char* path = std::getenv("BM64_INPUT_SCRIPT")) {
++            std::ifstream in(path); require(in.good(), "input script missing");
++            std::string line;
++            while (std::getline(in,line)) {
++                if (line.empty() || line[0]=='#') continue;
++                Input i{}; unsigned b;
++                std::istringstream s(line); require(bool(s >> i.begin >> i.end >> std::hex >> b >> std::dec >> i.x >> i.y), "bad input script");
++                s >> std::ws;
++                if (!s.eof()) require(bool(s >> i.controller), "invalid controller field");
++                s >> std::ws; require(s.eof(), "extra input fields");
++                require(i.controller >= 0 && i.controller < 4 && b <= 0xffff && i.begin < i.end && i.x >= -1 && i.x <= 1 && i.y >= -1 && i.y <= 1, "input outside valid range");
++                i.buttons = b; result.push_back(i);
++            }
++        }
++        return result;
++    }();
++    *buttons=0; *x=*y=0;
++    auto sampled_frame=input_frame(controller);
++    for (auto i:inputs) if (controller == i.controller && sampled_frame>=i.begin && sampled_frame<i.end) { *buttons=i.buttons; *x=i.x; *y=i.y; }
++    if (controller == 0 && replay_pass && std::getenv("BM64_NEGATIVE_INPUT")) { *buttons ^= 0x8000; *x = std::clamp(-*x + 0.1f, -1.0f, 1.0f); }
++    return true;
++}
++}
++extern "C" void recomp_checkpoint_frame(uint8_t*, recomp_context* ctx) {
++    if (checkpoint::fast_boot && ++checkpoint::boot_frame >= 1600) {
++        checkpoint::fast_boot = false;
++        fprintf(stderr, "SINGLE_BATTLE: character-select boot complete at update 1600\n");
++    }
++    checkpoint::players = int32_t(ctx->r4);
++    checkpoint::player_stride = int32_t(ctx->r5);
++    checkpoint::overlay = int32_t(ctx->r6);
++    if (!checkpoint::enabled) return;
++    checkpoint::require(g_current_slot == nullptr, "frame hook inside Hudson process");
++    checkpoint::boundary = true;
++    checkpoint::next_thread = thread_self;
++    checkpoint::suspend();
++}
++
++#ifdef BM64_TRACE_MEMORY
++extern "C" void __sanitizer_cov_trace_pc_guard(uint32_t*) {}
++extern "C" void __sanitizer_cov_trace_pc_guard_init(uint32_t* b,uint32_t* e) { while(b!=e) *b++=1; }
++#define TRACE_CALLBACK(N) \
++extern "C" void __sanitizer_cov_load##N(void* p) { checkpoint::trace_access(p,N,false,__builtin_return_address(0)); } \
++extern "C" void __sanitizer_cov_store##N(void* p) { checkpoint::trace_access(p,N,true,__builtin_return_address(0)); }
++TRACE_CALLBACK(1) TRACE_CALLBACK(2) TRACE_CALLBACK(4) TRACE_CALLBACK(8) TRACE_CALLBACK(16)
++#undef TRACE_CALLBACK
++#endif
+diff --git a/src/game/checkpoint_memory.hpp b/src/game/checkpoint_memory.hpp
+new file mode 100644
+index 0000000..428e03d
+--- /dev/null
++++ b/src/game/checkpoint_memory.hpp
+@@ -0,0 +1,67 @@
++#pragma once
++#include <cstdint>
++#include <cstring>
++#include <vector>
++#include <stdexcept>
++#include <chrono>
++#ifdef __APPLE__
++#include <mach/mach.h>
++#include <mach/mach_vm.h>
++#endif
++
++// Same-process images: all 512 MiB remain covered, including future writes to
++// previously untouched pages. Mach shares pages until either mapping writes.
++class CheckpointMemory {
++    size_t size_ = 0;
++    std::vector<uint8_t> copy_;
++#ifdef __APPLE__
++    mach_vm_address_t image_ = 0;
++    static void checked(kern_return_t result) {
++        if (result != KERN_SUCCESS) throw std::runtime_error(mach_error_string(result));
++    }
++#endif
++public:
++    mutable double clear_ms=0, remap_ms=0;
++    CheckpointMemory() = default;
++    CheckpointMemory(const CheckpointMemory&) = delete;
++    CheckpointMemory& operator=(const CheckpointMemory&) = delete;
++    ~CheckpointMemory() { clear(); }
++    void clear() {
++#ifdef __APPLE__
++        if (image_) { mach_vm_deallocate(mach_task_self(), image_, size_); image_ = 0; }
++#endif
++        copy_.clear();
++    }
++    void capture(uint8_t* source, size_t size, bool full_copy = false) {
++        auto start=std::chrono::steady_clock::now();
++        clear(); size_ = size;
++        auto cleared=std::chrono::steady_clock::now();
++        clear_ms=std::chrono::duration<double,std::milli>(cleared-start).count(); remap_ms=0;
++#ifdef __APPLE__
++        if (!full_copy) {
++            vm_prot_t current, maximum;
++            checked(mach_vm_remap(mach_task_self(), &image_, size_, 0, VM_FLAGS_ANYWHERE,
++                mach_task_self(), reinterpret_cast<mach_vm_address_t>(source), true,
++                &current, &maximum, VM_INHERIT_NONE));
++            remap_ms=std::chrono::duration<double,std::milli>(std::chrono::steady_clock::now()-cleared).count();
++            return;
++        }
++#endif
++        copy_.assign(source, source + size_);
++    }
++    void restore(uint8_t* target) const {
++        auto start=std::chrono::steady_clock::now(); clear_ms=remap_ms=0;
++#ifdef __APPLE__
++        if (image_) {
++            auto address = reinterpret_cast<mach_vm_address_t>(target);
++            vm_prot_t current, maximum;
++            checked(mach_vm_remap(mach_task_self(), &address, size_, 0, VM_FLAGS_FIXED | VM_FLAGS_OVERWRITE,
++                mach_task_self(), image_, true, &current, &maximum, VM_INHERIT_NONE));
++            remap_ms=std::chrono::duration<double,std::milli>(std::chrono::steady_clock::now()-start).count();
++            return;
++        }
++#endif
++        std::memcpy(target, copy_.data(), size_);
++    }
++    size_t copied_bytes() const { return copy_.size(); }
++};
+diff --git a/src/game/checkpoint_stack.hpp b/src/game/checkpoint_stack.hpp
+new file mode 100644
+index 0000000..0c09885
+--- /dev/null
++++ b/src/game/checkpoint_stack.hpp
+@@ -0,0 +1,41 @@
++#pragma once
++#include <cstdint>
++#include <algorithm>
++#include <vector>
++#include <memory>
++#include <cstring>
++
++// Include after minicoro's implementation. Preserve the header/storage and live
++// stack tail, including a conservative 256-byte ABI red zone below saved SP.
++struct CheckpointStack {
++    std::shared_ptr<void> owner; // Production snapshots keep their allocation alive.
++    mco_coro* address = nullptr;
++    size_t allocation_size = 0, tail_offset = 0;
++    std::vector<uint8_t> prefix, tail;
++    void capture(mco_coro* co, bool full_copy = false) {
++        address = co; allocation_size = co->coro_size;
++        auto start = reinterpret_cast<uintptr_t>(co);
++        auto low = reinterpret_cast<uintptr_t>(co->stack_base);
++        auto high = low + co->stack_size;
++        uintptr_t sp = 0;
++#if defined(__aarch64__) && defined(MCO_USE_ASM)
++        sp = reinterpret_cast<uintptr_t>(static_cast<_mco_context*>(co->context)->ctx.sp);
++#endif
++        // An OS continuation can be suspended on a nested Hudson stack. In that
++        // case retain its whole outer stack; its saved SP does not bound it.
++        if (full_copy || sp < low || sp > high || low < start || high > start + allocation_size) {
++            prefix.assign(reinterpret_cast<uint8_t*>(co), reinterpret_cast<uint8_t*>(co) + allocation_size);
++            tail.clear(); tail_offset = allocation_size;
++        } else {
++            auto tail_start = std::max(low, sp - std::min<uintptr_t>(sp, 256));
++            tail_offset = tail_start - start;
++            prefix.assign(reinterpret_cast<uint8_t*>(co), reinterpret_cast<uint8_t*>(low));
++            tail.assign(reinterpret_cast<uint8_t*>(tail_start), reinterpret_cast<uint8_t*>(start + allocation_size));
++        }
++    }
++    void restore() const {
++        std::memcpy(address, prefix.data(), prefix.size());
++        if (!tail.empty()) std::memcpy(reinterpret_cast<uint8_t*>(address) + tail_offset, tail.data(), tail.size());
++    }
++    size_t bytes() const { return prefix.size() + tail.size(); }
++};
+diff --git a/src/game/checkpoint_trace.hpp b/src/game/checkpoint_trace.hpp
+new file mode 100644
+index 0000000..a6eda86
+--- /dev/null
++++ b/src/game/checkpoint_trace.hpp
+@@ -0,0 +1,44 @@
++#pragma once
++#include <array>
++#include <chrono>
++#include <cstdio>
++#include <ctime>
++#include <sys/resource.h>
++
++// Wall time locates the slow stage; thread CPU and task-wide scheduler/fault
++// deltas distinguish computation from blocking without claiming a kernel cause.
++struct CheckpointTrace {
++    using Clock=std::chrono::steady_clock;
++    struct Stage { const char* name; double wall, cpu; };
++    bool enabled;
++    const char* operation;
++    uint64_t frame;
++    size_t slot;
++    Clock::time_point start, previous;
++    double cpu_start, cpu_previous;
++    rusage usage{};
++    std::array<Stage,8> stages{};
++    size_t count=0;
++    static double cpu_ms() {
++        timespec t{}; clock_gettime(CLOCK_THREAD_CPUTIME_ID,&t);
++        return t.tv_sec*1000.0+t.tv_nsec/1e6;
++    }
++    CheckpointTrace(bool enabled,const char* operation,uint64_t frame,size_t slot):enabled(enabled),operation(operation),frame(frame),slot(slot) {
++        if(enabled) { getrusage(RUSAGE_SELF,&usage); start=previous=Clock::now(); cpu_start=cpu_previous=cpu_ms(); }
++    }
++    void mark(const char* name) {
++        if(!enabled) return;
++        auto now=Clock::now(); auto cpu=cpu_ms();
++        stages[count++]={name,std::chrono::duration<double,std::milli>(now-previous).count(),cpu-cpu_previous};
++        previous=now; cpu_previous=cpu;
++    }
++    void report(double clear_ms,double remap_ms,size_t bytes) const {
++        if(!enabled) return;
++        double total=std::chrono::duration<double,std::milli>(previous-start).count();
++        if(total<2.0) return;
++        rusage after{}; getrusage(RUSAGE_SELF,&after);
++        fprintf(stderr,"CHECKPOINT_SLOW: operation=%s frame=%llu slot=%zu wall_ms=%.3f thread_cpu_ms=%.3f vm_clear_ms=%.3f vm_map_ms=%.3f native_bytes=%zu minor_faults=%ld major_faults=%ld voluntary_switches=%ld involuntary_switches=%ld",operation,frame,slot,total,cpu_previous-cpu_start,clear_ms,remap_ms,bytes,after.ru_minflt-usage.ru_minflt,after.ru_majflt-usage.ru_majflt,after.ru_nvcsw-usage.ru_nvcsw,after.ru_nivcsw-usage.ru_nivcsw);
++        for(size_t i=0;i<count;++i) fprintf(stderr," %s_wall_ms=%.3f %s_cpu_ms=%.3f",stages[i].name,stages[i].wall,stages[i].name,stages[i].cpu);
++        fputc('\n',stderr);
++    }
++};
+diff --git a/src/game/framebuffer_trace.inc b/src/game/framebuffer_trace.inc
+new file mode 100644
+index 0000000..b4d964b
+--- /dev/null
++++ b/src/game/framebuffer_trace.inc
+@@ -0,0 +1,67 @@
++// Included inside checkpoint. This observer is not part of snapshot state.
++#ifdef BM64_TRACE_MEMORY
++extern "C" uint32_t bm64_trace_canary(void*);
++static uint8_t* traced_ram;
++static uint64_t trace_report_at;
++static std::map<std::tuple<uint32_t,size_t,int,unsigned>,uint64_t> texture_reads;
++static std::vector<uint8_t> pixel_owner;
++struct TraceRead { uint64_t count=0; uint32_t address=0; uint64_t first_frame=0; };
++static std::map<std::pair<uintptr_t,int>,TraceRead> trace_reads;
++static std::map<std::tuple<uint32_t,size_t,bool>,uint64_t> trace_writes;
++void framebuffer_written(void* pointer, size_t count, bool depth) {
++    if (!traced_ram) return;
++    size_t offset = static_cast<uint8_t*>(pointer)-traced_ram;
++    require(offset+count <= pixel_owner.size(), "framebuffer trace outside RAM");
++    std::fill_n(pixel_owner.begin()+offset,count,depth ? 2 : 1);
++    if(frame>=trace_report_at) ++trace_writes[{uint32_t(offset),count,depth}];
++}
++void framebuffer_texture_read(const void* pointer, size_t count, unsigned kind) {
++    uintptr_t address=reinterpret_cast<uintptr_t>(pointer),base=reinterpret_cast<uintptr_t>(traced_ram);
++    if(!base || frame<trace_report_at || address<base || address-base+count>pixel_owner.size()) return;
++    int owners=0; for(size_t i=0;i<count;++i) owners |= pixel_owner[address-base+i];
++    if(owners) ++texture_reads[{uint32_t(address-base),count,owners,kind}];
++}
++static void trace_access(void* pointer, size_t count, bool store, void* pc) {
++    uintptr_t address = reinterpret_cast<uintptr_t>(pointer), base = reinterpret_cast<uintptr_t>(traced_ram);
++    if (!base || address < base || address-base+count > pixel_owner.size()) return;
++    size_t offset=address-base;
++    int owners=0;
++    for (size_t i=0;i<count;++i) { owners |= pixel_owner[offset+i]; if (store) pixel_owner[offset+i]=0; }
++    if (!store && owners && frame>=trace_report_at) {
++        auto& hit=trace_reads[{reinterpret_cast<uintptr_t>(pc),owners}];
++        if (!hit.count) { hit.address=offset; hit.first_frame=frame; }
++        ++hit.count;
++    }
++}
++#endif
++static bool trace_frame(unsigned at) {
++    unsigned count=setting("BM64_TRACE_FRAMES",0);
++    if (!count) return false;
++#ifdef BM64_TRACE_MEMORY
++    if (frame == 1) {
++        pixel_owner.resize(recomp::mem_size); traced_ram=ram;
++        std::fill_n(pixel_owner.end()-4096,4,1);
++        framebuffer_texture_read(ram+recomp::mem_size-4096,4,99);
++        require(texture_reads.size()==1,"texture observer canary failed");
++        bm64_trace_canary(ram+recomp::mem_size-4096);
++        require(trace_reads.size()==1 && trace_reads.begin()->second.count==1,"instrumented load/store canary failed");
++        framebuffer_texture_read(ram+recomp::mem_size-4096,4,99);
++        require(texture_reads.begin()->second==1,"CPU overwrite did not clear texture ownership");
++        trace_reads.clear(); texture_reads.clear(); trace_report_at=at;
++        fprintf(stderr,"PASS: instrumented read observed; CPU overwrite cleared framebuffer ownership\n");
++    }
++    if (frame == at+count) {
++        traced_ram=nullptr;
++        for (const auto& [key,n]:trace_writes) fprintf(stderr,"FBWRITE: address=%08x bytes=%zu depth=%d count=%llu\n",std::get<0>(key),std::get<1>(key),std::get<2>(key),n);
++        for(const auto& [key,n]:texture_reads) fprintf(stderr,"FBTEXTURE: address=%08x bytes=%zu owner=%d command=%u count=%llu\n",std::get<0>(key),std::get<1>(key),std::get<2>(key),std::get<3>(key),n);
++        for (const auto& [key,hit]:trace_reads) {
++            Dl_info info{}; dladdr(reinterpret_cast<void*>(key.first),&info);
++            fprintf(stderr,"FBREAD: owner=%d first_address=%08x first_frame=%llu reads=%llu function=%s offset=%zu\n",key.second,hit.address,hit.first_frame,hit.count,info.dli_sname ? info.dli_sname : "unknown",key.first-reinterpret_cast<uintptr_t>(info.dli_saddr));
++        }
++        fprintf(stderr,"PASS: framebuffer read trace completed %u updates (%zu read sites, %zu write regions)\n",count,trace_reads.size(),trace_writes.size()); fflush(stderr); std::_Exit(0);
++    }
++    return true;
++#else
++    require(false,"framebuffer read tracing requires BM64_TRACE_MEMORY build"); return true;
++#endif
++}
+diff --git a/src/game/rollback_profile.inc b/src/game/rollback_profile.inc
+new file mode 100644
+index 0000000..6ad2f6a
+--- /dev/null
++++ b/src/game/rollback_profile.inc
+@@ -0,0 +1,69 @@
++namespace Probe = RT64::RollbackProbe;
++struct Profile {
++    uint64_t graphics_wait, graphics, native, native_wait, copy, bytes, stored, screen, acquire, present_gpu_wait, pacing, present_wait, present_call, dependency;
++    uint64_t upload, texture, submit, fence, gpu, schedule, completion, wakeup, samples, invalid, noise_pixels, other_pixels;
++    std::array<uint64_t,Probe::PrepCount> prep_wall{},prep_cpu{},prep_calls{};
++};
++static Profile profile() {
++    Profile p{graphics_wait_ns,Probe::graphics,Probe::native,Probe::native_wait,Probe::copy,Probe::copy_bytes,Probe::stored_bytes,Probe::screen,Probe::acquire,Probe::present_gpu_wait,Probe::pacing,Probe::present_wait,Probe::present_call,Probe::workload_dependency, Probe::native_upload_wait, Probe::native_texture_wait, Probe::native_submit, Probe::native_fence_wait, Probe::native_gpu, Probe::native_schedule, Probe::native_complete_delay, Probe::native_wakeup, Probe::native_samples, Probe::native_invalid, Probe::native_noise_pixels, Probe::native_other_pixels};
++    for(unsigned i=0;i<Probe::PrepCount;++i) { p.prep_wall[i]=Probe::prep_wall[i]; p.prep_cpu[i]=Probe::prep_cpu[i]; p.prep_calls[i]=Probe::prep_calls[i]; }
++    return p;
++}
++static void profile_report(const Profile& a, const Profile& b, unsigned updates) {
++    fprintf(stderr,"PROFILE: updates=%u graphics_fence_ms=%.3f graphics_worker_ms=%.3f native_stage_ms=%.3f native_gpu_upload_wait_ms=%.3f RAM_copy_ms=%.3f RAM_copy_bytes=%llu RAM_stored_bytes=%llu screen_ms=%.3f acquire_ms=%.3f present_gpu_wait_ms=%.3f pacing_ms=%.3f swapchain_wait_ms=%.3f present_call_ms=%.3f present_dependency_ms=%.3f\n",updates,
++        (b.graphics_wait-a.graphics_wait)/1e6,(b.graphics-a.graphics)/1e6,(b.native-a.native)/1e6,(b.native_wait-a.native_wait)/1e6,(b.copy-a.copy)/1e6,b.bytes-a.bytes,b.stored-a.stored,(b.screen-a.screen)/1e6,(b.acquire-a.acquire)/1e6,(b.present_gpu_wait-a.present_gpu_wait)/1e6,(b.pacing-a.pacing)/1e6,(b.present_wait-a.present_wait)/1e6,(b.present_call-a.present_call)/1e6,(b.dependency-a.dependency)/1e6);
++    fprintf(stderr,"NATIVE_PROFILE: updates=%u samples=%llu invalid=%llu noise_pixels=%llu other_pixels=%llu CPU_upload_wait_ms=%.3f texture_wait_ms=%.3f submit_ms=%.3f fence_wait_ms=%.3f GPU_execute_ms=%.3f submit_to_GPU_ms=%.3f GPU_to_callback_ms=%.3f callback_to_wake_ms=%.3f\n",updates,b.samples-a.samples,b.invalid-a.invalid,b.noise_pixels-a.noise_pixels,b.other_pixels-a.other_pixels,(b.upload-a.upload)/1e6,(b.texture-a.texture)/1e6,(b.submit-a.submit)/1e6,(b.fence-a.fence)/1e6,(b.gpu-a.gpu)/1e6,(b.schedule-a.schedule)/1e6,(b.completion-a.completion)/1e6,(b.wakeup-a.wakeup)/1e6);
++    if(Probe::prep_profile) {
++        fprintf(stderr,"PREP_PROFILE: updates=%u",updates);
++        for(unsigned i=0;i<Probe::PrepCount;++i) fprintf(stderr," %s_wall_ms=%.3f %s_CPU_ms=%.3f %s_calls=%llu",Probe::prep_names[i],(b.prep_wall[i]-a.prep_wall[i])/1e6,Probe::prep_names[i],(b.prep_cpu[i]-a.prep_cpu[i])/1e6,Probe::prep_names[i],b.prep_calls[i]-a.prep_calls[i]);
++        fprintf(stderr,"\n");
++    }
++
++}
++struct Presentation { uint64_t frame, deadline, time, callback; };
++static std::mutex presentation_mutex;
++static std::vector<Presentation> presentations;
++static std::vector<Probe::PresentTrace> present_traces;
++static void present_trace(const Probe::PresentTrace& trace) {
++    std::lock_guard lock(presentation_mutex);
++    present_traces.push_back(trace);
++}
++void displayed(uint64_t id, uint64_t deadline, uint64_t time) {
++    const auto callback=Probe::now();
++    std::lock_guard lock(presentation_mutex);
++    presentations.push_back({id,deadline,time,callback});
++    if(id) Probe::observeDisplay(deadline,time);
++}
++
++static void loop_wait_until(uint64_t deadline) {
++    if(!Probe::aligned_pacing) {
++        auto now=Probe::now();
++        if(now<deadline) std::this_thread::sleep_for(std::chrono::nanoseconds(deadline-now));
++        return;
++    }
++#ifdef __APPLE__
++    static const auto scale=[] { mach_timebase_info_data_t t; mach_timebase_info(&t); return double(t.denom)/t.numer; }();
++    constexpr uint64_t spin_ns=1500000;
++    if(Probe::now()+spin_ns<deadline) mach_wait_until(uint64_t((deadline-spin_ns)*scale));
++#endif
++    while(Probe::now()<deadline) std::atomic_signal_fence(std::memory_order_seq_cst);
++}
++static uint64_t display_aligned_epoch(uint64_t& period) {
++    std::vector<uint64_t> gaps;
++    uint64_t last=0;
++    { std::lock_guard lock(presentation_mutex);
++      for(auto p:presentations) if(p.time>last) {
++          if(last && p.time-last>12000000 && p.time-last<20000000) gaps.push_back(p.time-last);
++          last=p.time;
++      }
++    }
++    require(gaps.size()>=10,"not enough display samples to align pacing");
++    if(gaps.size()>60) gaps.erase(gaps.begin(),gaps.end()-60);
++    std::sort(gaps.begin(),gaps.end()); period=gaps[gaps.size()/2];
++    auto now=Probe::now();
++    // Diagnostic phase sweep; latency is always measured from this actual release.
++    const char* value=std::getenv("BM64_RELEASE_LEAD_US");
++    auto lead=value ? std::stoll(value)*1000 : 0;
++    require(lead<int64_t(period) && lead>-int64_t(period),"release phase must be within one refresh");
++    return int64_t(last+((now-last)/period+2)*period)-lead;
++}
+diff --git a/src/game/running_loop.inc b/src/game/running_loop.inc
+new file mode 100644
+index 0000000..a83d866
+--- /dev/null
++++ b/src/game/running_loop.inc
+@@ -0,0 +1,227 @@
++// A deterministic delayed-input fixture, paced at 60 Hz without per-frame GPU drains.
++static unsigned loop_length, loop_buffer;
++static uint64_t loop_at, loop_frontier;
++static bool loop_oracle, loop_verifying;
++static constexpr unsigned loop_warmup=120, loop_lead=17;
++static unsigned loop_spacing=60;
++struct LoopCycle { unsigned index; uint64_t release,wake,execute,finish; double capture,restore; bool rollback, hidden; };
++static uint64_t pending_begin(uint64_t f) {
++    uint64_t first=loop_at+loop_warmup+loop_lead;
++    if (f<first || !loop_length) return 0;
++    uint64_t start=first+(f-first)/loop_spacing*loop_spacing;
++    return f<start+loop_length ? start : 0;
++}
++static uint64_t input_frame(int controller) {
++    if (!loop_at || frame<loop_at) return frame;
++    auto sample=frame-loop_buffer;
++    if (controller==1 && !loop_oracle && !replay_pass) {
++        auto begin=pending_begin(frame);
++        if (begin) sample=begin-loop_buffer-1; // Hold the last received remote input.
++    }
++    return sample;
++}
++static bool running_loop(unsigned at) {
++    const unsigned count=setting("BM64_LOOP_FRAMES",0);
++    if (!count) return false;
++    require(count>loop_warmup && at>16,"running loop needs warmup and a checkpoint frame");
++    static uint64_t period=1000000000ull/60;
++    static uint64_t epoch, cycle_start, cycle_release, execution_start;
++    static double checkpoint_ms, restore_ms;
++    static uint64_t gfx_before;
++    static unsigned rollbacks, prediction_divergences, source_retired;
++    static bool normal_hidden=false;
++    static Profile before, cycle_profile;
++    static std::vector<double> all, rollback_times, normal_times, checkpoint_times, simulation_times;
++    static std::vector<LoopCycle> cycle_log;
++    static std::vector<double> cpu_lateness;
++    static std::map<uint64_t,Digest> oracle;
++    static std::ofstream oracle_output;
++    static bool started=false;
++    if (!loop_at) {
++        if(std::getenv("BM64_PRESENT_TRACE")) Probe::present_trace=present_trace;
++        loop_at=at;
++        loop_buffer=setting("BM64_INPUT_BUFFER",2);
++        loop_length=setting("BM64_ROLLBACK_LENGTH",4);
++        loop_spacing=setting("BM64_ROLLBACK_SPACING",60);
++        require(loop_spacing>=loop_length+4,"rollback spacing too small");
++#ifdef __APPLE__
++        if(Probe::aligned_pacing) pthread_set_qos_class_self_np(QOS_CLASS_USER_INTERACTIVE,0);
++#endif
++        loop_oracle=std::getenv("BM64_LOOP_ORACLE")!=nullptr;
++        loop_verifying=std::getenv("BM64_LOOP_VERIFY")!=nullptr;
++        require(loop_buffer<=4 && (loop_length==0 || loop_length==4 || loop_length==8 || loop_length==12),"invalid rollback/input buffer length");
++        require(!std::getenv("BM64_CATCHUP_FRAMES") && !std::getenv("BM64_SUPPRESS_REPLAY") && !std::getenv("BM64_BENCHMARK_FRAMES"),"conflicting loop modes");
++        if (loop_verifying) loop_oracle=true; // Raw contexts contain native f_odd pointers; compare within this process.
++        if (std::getenv("BM64_LOOP_ORACLE")) {
++            const char* path=std::getenv("BM64_ORACLE_PATH"); require(path,"oracle path missing");
++            oracle_output.open(path); require(oracle_output.good(),"oracle output");
++        }
++    }
++    if (frame<at) return true;
++    if (!started) {
++        if(loop_oracle && loop_verifying) save(0,true);
++        // Navigation ran unpaced. Clear that setup backlog once, before warmup.
++        finish_presentation();
++        std::this_thread::sleep_for(std::chrono::milliseconds(100));
++        epoch=Probe::now();
++        if(!loop_oracle && !loop_verifying) loop_wait_until(epoch);
++        cycle_release=epoch; cycle_start=execution_start=Probe::now(); loop_frontier=frame; before=profile();
++        fprintf(stderr,"LOOP_CLOCK: epoch_ns=%llu period_ns=%llu aligned=%d bounded=%d spacing=%u\n",epoch,period,Probe::aligned_pacing,Probe::bounded_present,loop_spacing);
++        checkpoint_ms=save(1+frame%16,true); restore_ms=0; gfx_before=graphics_wait_ns; cycle_profile=profile();
++        presentation_frame=loop_oracle ? 0 : 1; presentation_deadline=epoch+period; started=true;
++        return true;
++    }
++    checkpoint_ms+=save(1+frame%16,true);
++    if (loop_oracle || loop_verifying) {
++        auto actual=digest();
++        if (loop_oracle) {
++            oracle[frame]=actual;
++            if(oracle_output.is_open()) oracle_output<<std::dec<<frame<<' '<<std::hex<<actual.ram<<' '<<actual.registers<<'\n';
++        }
++        else if (!replay_pass && pending_begin(frame-1)) {
++            if(!pending_begin(frame)) {
++                require(oracle.count(frame),"missing prediction-end oracle");
++                auto expected=oracle.at(frame);
++                prediction_divergences += actual.ram!=expected.ram || actual.registers!=expected.registers;
++            }
++        }
++        else {
++            require(oracle.count(frame),"missing oracle frame");
++            auto expected=oracle.at(frame);
++            if (actual.ram!=expected.ram || actual.registers!=expected.registers) {
++                fprintf(stderr,"CHECKPOINT FAIL: loop frame=%llu replay=%u RAM=%016llx/%016llx registers=%016llx/%016llx\n",frame,replay_pass,expected.ram,actual.ram,expected.registers,actual.registers);
++                if (std::getenv("BM64_NEGATIVE_INPUT")) { fprintf(stderr,"PASS: negative control detected divergence\n"); fflush(stderr); std::_Exit(0); }
++                std::_Exit(2);
++            }
++        }
++    }
++    if (replay_pass) {
++        if (frame<loop_frontier) return true;
++        replay_pass=0;
++        normal_hidden=Probe::bounded_present && Probe::now()>presentation_deadline;
++        suppress_render=normal_hidden;
++        // The new normal update is the sole presented update in this display cycle.
++        return true;
++    }
++    uint64_t finish=Probe::now();
++    unsigned index=frame-at-1;
++    cycle_log.push_back({index,cycle_release,cycle_start,execution_start,finish,checkpoint_ms,restore_ms,bool(catchup_active),normal_hidden});
++    source_retired+=normal_hidden;
++    if (index>=loop_warmup) {
++        double total=(finish-cycle_start)/1e6;
++        all.push_back(total); checkpoint_times.push_back(checkpoint_ms);
++        simulation_times.push_back(total-(graphics_wait_ns.load()-gfx_before)/1e6-checkpoint_ms-restore_ms);
++        bool corrected=catchup_active;
++        if(corrected && profiling) {
++            fprintf(stderr,"LOOP_ROLLBACK: index=%u updates=%u total_ms=%.3f capture_ms=%.3f restore_ms=%.3f\n",index,loop_length+1,total,checkpoint_ms,restore_ms);
++            profile_report(cycle_profile,profile(),loop_length+1);
++        }
++        (corrected ? rollback_times : normal_times).push_back(total);
++        double late=std::max(0.0,(double(finish)-double(epoch+(index+1)*period))/1e6);
++        cpu_lateness.push_back(late);
++    }
++    catchup_active=false;
++    // Calibrate once from paced warmup displays, then freeze phase and period.
++    if(index+1==loop_warmup/2 && Probe::aligned_pacing && !loop_oracle && !loop_verifying) {
++        epoch=display_aligned_epoch(period)-(index+1)*period;
++        Probe::refresh_period_ns=period;
++        fprintf(stderr,"LOOP_CLOCK: epoch_ns=%llu period_ns=%llu aligned=1 bounded=%d spacing=%u\n",epoch,period,Probe::bounded_present,loop_spacing);
++    }
++    if(index+1==loop_warmup) before=profile();
++    if (frame==at+count) {
++        presentation_frame=0;
++        finish_presentation(); // Cleanup only; outside every timed display cycle.
++        if (loop_oracle) {
++            if(oracle_output.is_open()) oracle_output.close();
++            if(loop_verifying) {
++                restore(0,true); loop_oracle=false; started=false;
++                all.clear(); rollback_times.clear(); normal_times.clear(); checkpoint_times.clear(); simulation_times.clear(); cycle_log.clear(); cpu_lateness.clear();
++                fprintf(stderr,"LOOP: reference recorded; starting delayed-input correction verification\n");
++                return running_loop(at);
++            }
++            fprintf(stderr,"PASS: running-loop oracle recorded %u full-state hashes\n",count); fflush(stderr); std::_Exit(0);
++        }
++        require(!std::getenv("BM64_NEGATIVE_INPUT"),"negative control failed to diverge");
++        if(loop_verifying && loop_length) require(prediction_divergences>0,"test did not correct any wrong predictions");
++        if(loop_verifying) {
++            fprintf(stderr,"PASS: running-loop full RAM/register verification; updates=%u rollbacks=%u wrong_predictions_corrected=%u source_retired=%u queue_retired=%llu\n",count,rollbacks,prediction_divergences,source_retired,Probe::retired_presents.load()); fflush(stderr); std::_Exit(0);
++        }
++        // Metal's displayed callback can arrive after present() returns.
++        for(unsigned wait=0;wait<100;++wait) {
++            bool seen=false;
++            { std::lock_guard lock(presentation_mutex); for(auto p:presentations) if(p.frame==count) seen=true; }
++            if(seen) break;
++            std::this_thread::sleep_for(std::chrono::milliseconds(10));
++        }
++        { std::lock_guard lock(presentation_mutex);
++          for(auto p:presentations) if(p.frame) fprintf(stderr,"DISPLAY: frame=%llu time_ns=%llu deadline_ns=%llu callback_ns=%llu\n",p.frame,p.time,p.deadline,p.callback);
++          for(auto p:present_traces) if(p.frame) fprintf(stderr,"PRESENT_TRACE: frame=%llu queue_ns=%llu workload_ready_ns=%llu slot_ready_ns=%llu acquired_ns=%llu draw_submitted_ns=%llu draw_done_ns=%llu present_called_ns=%llu\n",p.frame,p.queue,p.workloadReady,p.slotReady,p.acquired,p.drawSubmitted,p.drawDone,p.presentCalled);
++        }
++        distribution("loop_deadline_lateness",cpu_lateness);
++        distribution("loop_cycle",all); distribution("loop_normal",normal_times);
++        if(!rollback_times.empty()) distribution("loop_rollback_plus_normal",rollback_times);
++        distribution("loop_checkpoints",checkpoint_times); distribution("loop_simulation_runtime_residual",simulation_times);
++        profile_report(before,profile(),count-loop_warmup+rollbacks*loop_length);
++        std::map<uint64_t,uint64_t> first;
++        { std::lock_guard lock(presentation_mutex); for(auto p:presentations) if(p.time && (!first.count(p.frame) || p.time<first[p.frame])) first[p.frame]=p.time; }
++        std::vector<double> warm_latency, latency, gaps;
++        for(auto [id,time]:first) {
++            if(!id) continue;
++            require(time<Probe::now()+period,"display clock epoch mismatch");
++            double lag=(time-(epoch+(id-1)*period))/1e6;
++            if(id>loop_warmup/2 && id<=loop_warmup) warm_latency.push_back(lag);
++        }
++        require(warm_latency.size()>=30,"insufficient Metal displayed callbacks");
++        std::sort(warm_latency.begin(),warm_latency.end()); double pipeline_lag=warm_latency[warm_latency.size()/2];
++        unsigned missing=0, late=0, strict_late=0, cpu_late=0, cpu_deadline_misses=0, spikes=0;
++        uint64_t previous=0;
++        for(unsigned i=loop_warmup;i<count;++i) {
++            auto it=first.find(i+1);
++            if(it==first.end()) { ++missing; continue; }
++            double lag=(int64_t(it->second)-int64_t(epoch+i*period))/1e6;
++            latency.push_back(lag); late+=lag>pipeline_lag+1.0; strict_late+=lag>1000.0/60;
++            if(previous) { double gap=(int64_t(it->second)-int64_t(previous))/1e6; gaps.push_back(gap); spikes+=gap>25.0; }
++            previous=it->second;
++        }
++        for(auto c:cycle_log) {
++            double ms=(c.finish-c.wake)/1e6, late=std::max(0.0,(double(c.finish)-double(c.release+period))/1e6);
++            if(c.index>=loop_warmup) { cpu_late+=ms>period/1e6; cpu_deadline_misses+=late>0; }
++            fprintf(stderr,"LOOP_FRAME: index=%u release_ns=%llu wake_ns=%llu execute_ns=%llu finish_ns=%llu work_ms=%.3f execution_ms=%.3f wake_late_ms=%.3f deadline_lateness_ms=%.3f displayed_ns=%llu deadline_ns=%llu capture_ms=%.3f restore_ms=%.3f rollback=%d source_retired=%d\n",c.index,c.release,c.wake,c.execute,c.finish,ms,(c.finish-c.execute)/1e6,(int64_t(c.wake)-int64_t(c.release))/1e6,late,first.count(c.index+1)?first[c.index+1]:0,c.release+period,c.capture,c.restore,c.rollback,c.hidden);
++        }
++        fprintf(stderr,"PRESENT_BOUND: maximum_in_flight=%llu retired=%llu slot_wait_ms=%.3f\n",Probe::maximum_in_flight.load(),Probe::retired_presents.load(),Probe::slot_wait_ns.load()/1e6);
++        fprintf(stderr,"NATIVE_UPLOADS: synchronous_calls=%llu\n",Probe::inline_upload_calls.load());
++        distribution("display_latency",latency); distribution("display_gap",gaps);
++        fprintf(stderr,"LOOP: frames=%u measured=%zu rollback_length=%u rollbacks=%u input_buffer=%u wrong_predictions_corrected=%u CPU_over_budget=%u CPU_deadline_misses=%u displayed_missing=%u strict_display_deadline_misses=%u calibrated_deadline_misses=%u warmup_pipeline_lag_ms=%.3f tolerance_ms=1 display_gaps_over_25ms=%u verification=%s\n",count,all.size(),loop_length,rollbacks,loop_buffer,prediction_divergences,cpu_late,cpu_deadline_misses,missing,strict_late+missing,late+missing,pipeline_lag,spikes,loop_verifying?"full_RAM_and_registers":"disabled");
++        fprintf(stderr,"PASS: running-loop test completed\n"); fflush(stderr); std::_Exit(0);
++    }
++    loop_frontier=frame;
++    uint64_t release=epoch+(frame-at)*period;
++    if(!loop_oracle && !loop_verifying) {
++        loop_wait_until(release);
++    }
++    cycle_release=release; cycle_start=Probe::now();
++    unsigned next_index=frame-at;
++    unsigned hitch_ms=setting("BM64_HITCH_MS",0), hitch_kind=setting("BM64_HITCH_KIND",1);
++    if(!loop_oracle && hitch_ms && next_index>=241 && (next_index-241)%300==0) {
++        if(hitch_kind==1) {
++            auto start=Probe::now();
++            std::this_thread::sleep_for(std::chrono::milliseconds(hitch_ms));
++            fprintf(stderr,"CPU_HITCH: frame=%u start_ns=%llu end_ns=%llu\n",next_index+1,start,Probe::now());
++        } else {
++            require(hitch_kind==2,"unknown hitch kind");
++            Probe::present_hitch_ms=hitch_ms; Probe::present_hitch_frame=next_index+1;
++        }
++    }
++    execution_start=Probe::now(); gfx_before=graphics_wait_ns; cycle_profile=profile(); checkpoint_ms=0; restore_ms=0;
++    presentation_frame=loop_oracle ? 0 : frame-at+1; presentation_deadline=(loop_verifying ? execution_start : release)+period;
++    normal_hidden=!loop_oracle && Probe::bounded_present && execution_start>presentation_deadline;
++    suppress_render=normal_hidden;
++    uint64_t first_late=at+loop_warmup+loop_lead+loop_length;
++    if(!loop_oracle && loop_length && frame>=first_late && (frame-first_late)%loop_spacing==0) {
++        uint64_t wanted=frame-loop_length; auto slot=1+wanted%16;
++        require(snapshots[slot].saved_frame==wanted,"rollback history expired");
++        catchup_active=true; suppress_render=true; replay_pass=1; ++rollbacks;
++        restore_ms=restore(slot,true);
++    }
++    return true;
++}

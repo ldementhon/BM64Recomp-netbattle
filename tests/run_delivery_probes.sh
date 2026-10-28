@@ -1,0 +1,14 @@
+#!/bin/sh
+# Exploration only; final claims require longer paired runs.
+set -eu
+: "${BM64_EXECUTABLE:?Historical experiment: set BM64_EXECUTABLE to the archived build documented in optimization-decisions-and-delivery.md}"
+cd "$(dirname "$0")/.."
+export BM64_SINGLE_BATTLE=1 BM64_INPUT_SCRIPT=tests/fixtures/rollback-inputs.txt BM64_CHECKPOINT_FRAME=1945 BM64_REQUIRE_BATTLE=1 BM64_INPUT_BUFFER=2 BM64_PROFILE=1
+export BM64_PACING=1 BM64_BOUNDED_PRESENT=1 BM64_INLINE_UPLOADS=1 BM64_SKIP_EMPTY_SUBMISSIONS=1 BM64_INCREMENTAL_WRITEBACK=1 BM64_SKIP_HIDDEN_FENCE=1 BM64_PRESENT_TRACE=1
+unset BM64_NATIVE_LAZY_DITHER BM64_NATIVE_SHARED_UPLOADS BM64_REUSE_SNAPSHOT_MAPPING BM64_LOOP_VERIFY BM64_LOOP_ORACLE BM64_HITCH_MS BM64_HITCH_KIND BM64_RELEASE_LEAD_US
+export BM64_LOOP_FRAMES=480 BM64_ROLLBACK_SPACING=20 BM64_ROLLBACK_LENGTH=4
+for lead in 0 4000 8000 12000; do
+    BM64_RELEASE_LEAD_US="$lead" BM64_RESULT_NAME="delivery-phase-$lead" python3 tests/run_checkpoint_probe.py
+done
+BM64_REUSE_SNAPSHOT_MAPPING=1 BM64_RESULT_NAME=delivery-map-reuse python3 tests/run_checkpoint_probe.py
+BM64_REUSE_SNAPSHOT_MAPPING=1 BM64_LOOP_VERIFY=1 BM64_LOOP_FRAMES=240 BM64_RESULT_NAME=delivery-map-verify python3 tests/run_checkpoint_probe.py

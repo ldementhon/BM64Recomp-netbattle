@@ -1,0 +1,21 @@
+--- a/lib/rt64/src/common/rt64_rollback_probe.h
++++ b/lib/rt64/src/common/rt64_rollback_probe.h
+@@ -80,7 +80,7 @@
+ // Graphics-thread attribution. Front precedes native_stage; tile_load/sample are children of tiles.
+ enum PrepStage { Front, Upload, RSP, Tiles, AddFramebuffer, TextureViews, ShaderViews, Setup, Draw, Writeback, RAMStore, TileLoad, TileSample, PrepCount };
+ inline constexpr const char* prep_names[] = {"front", "upload", "rsp", "tiles", "add_fb", "texture_views", "shader_views", "setup", "draw", "writeback", "RAM_store", "tile_load", "tile_sample"};
+-inline bool prep_profile=false, prep_detail=false;
++inline bool prep_profile=false, prep_detail=false, coalesce_palette=false;
+ inline std::array<std::atomic<uint64_t>, PrepCount> prep_wall{}, prep_cpu{}, prep_calls{};
+ struct PrepTimer {
+     PrepStage stage;
+--- a/src/main/rt64_render_context.cpp
++++ b/src/main/rt64_render_context.cpp
+@@ -208,6 +208,7 @@
+ 
+ zelda64::renderer::RT64Context::RT64Context(uint8_t* rdram, ultramodern::renderer::WindowHandle window_handle, bool debug) {
+     RT64::RollbackProbe::prep_detail = checkpoint::enabled && std::getenv("BM64_PREP_DETAIL");
++    RT64::RollbackProbe::coalesce_palette = checkpoint::enabled && std::getenv("BM64_COALESCE_PALETTE");
+     RT64::RollbackProbe::prep_profile = checkpoint::enabled && std::getenv("BM64_PREP_PROFILE");
+     RT64::RollbackProbe::inline_uploads = checkpoint::enabled && std::getenv("BM64_INLINE_UPLOADS");
+     RT64::RollbackProbe::aligned_pacing = checkpoint::enabled && std::getenv("BM64_PACING");
