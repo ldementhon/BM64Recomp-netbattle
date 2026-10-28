@@ -61,13 +61,17 @@ acceptance run remain open. Historical passes do not certify a rebuilt pair.
 The current wire protocol is version 3 (private owner/game channel version 5).
 Rebuild the relay and every client together, then revalidate their fingerprints.
 Older peers are rejected. Every 300 game updates, the game takes a separate
-copy-on-write image of that boundary, and hashes all 512 MiB plus comparable
-registers on another thread once the boundary is confirmed. Play never waits for
-a check. The hash is built from 128 KiB section hashes. Each player reports one
+copy-on-write image of that boundary. The image is sealed once every input before
+the boundary is confirmed, so a later correction at that boundary's own input
+replays the same state and leaves it alone. Another thread hashes all 512 MiB plus
+comparable registers from sealed images, as 128 KiB section hashes. Up to four
+images may wait for the hash thread; the game thread waits only if hashing falls
+further behind than that (about 20 seconds), and logs `NETWORK_CHECK_WAIT`. Each player reports one
 check at a time. Once every player has reported, the relay acknowledges equal
 states or sends `Desync`. A desync is not repaired: play continues, the match
-window shows a banner, and P1's next window close offers **Restart**, which
-reloads a fresh match with the same roster. A misaligned check frame is a protocol
+window shows a banner, and P1's Quit menu button or window close offers
+**Restart**, **Leave**, or **Keep playing**. Restart reloads a fresh match with the
+same roster; it does not keep the current match's progress. A misaligned check frame is a protocol
 fault and ends the match. `NETWORK_DESYNC` and `NETWORK_SECTIONS` log the frame
 and the nonzero section hashes, so comparing player logs shows where states
 differ. `NETWORK_CHECK_COST` logs the background hash time. These checks are a
@@ -136,6 +140,9 @@ After building the native game and this server's test targets, run
 normal delivery, independent delay/loss, and a changed-input negative control.
 It also changes just one client's replay. All four games must be told about the
 desync and keep playing to the stop frame; then P1 restarts and the fresh match loads.
+The baseline also forces replays onto check 400 while its hash runs and after it
+is acknowledged, and `slowhash` delays every hash beyond the next check; both must
+match the baseline history without a game-thread wait.
 `python3 tests/run_network_game.py match` completes a full first-to-three match
 and enters a rematch with delayed delivery. These explicit macOS tests require a local ROM and open
 four game processes. They hash full RAM at verification boundaries, use recorded

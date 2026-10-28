@@ -6,17 +6,29 @@ struct OwnedMatch {
     unsigned slot = 0, local_port = 0;
     bool started = false, network = std::getenv("BM64_NETWORK_INPUT") != nullptr;
     std::optional<online::RollbackInputs> history;
-    // Full-RAM checks every check_interval updates. A separate image of each
-    // check frame is hashed on another thread once that frame is confirmed, so
-    // play never waits for a check. The relay compares one report at a time.
-    struct Check { uint64_t relative, guest, registers; int32_t overlay; std::optional<StateHash> hash; };
+    // Full-RAM checks every check_interval updates. Each check frame gets its own
+    // image, sealed once the inputs before it are confirmed and then hashed on
+    // another thread. The relay compares one report at a time.
+    struct Check {
+        uint64_t relative, guest, registers = 0; int32_t overlay = 0;
+        std::unique_ptr<CheckpointMemory> image; bool sealed = false;
+        std::optional<StateHash> hash;
+    };
     std::deque<Check> checks;
-    CheckpointMemory check_image;
+    // Boundary N depends only on inputs before N, so a later correction at input N
+    // replays an unchanged sealed state; replays at or before this frame are skipped.
+    std::optional<uint64_t> sealed_through;
+    // Images awaiting a hash; the game thread waits only past this backlog.
+    static constexpr size_t image_limit = 4;
     std::future<StateHash> hashing;
+    uint64_t hashing_frame = 0;
     bool reported = false, stop_checked = false;
     unsigned check_interval = online::state_check_interval;
     std::chrono::steady_clock::time_point epoch, sent{}, progress;
     uint64_t corrections = 0, max_depth = 0;
+    // Test hooks: replay onto check frame test_replay once its hash has started and
+    // again once acknowledged; delay every background hash by test_hash_delay ms.
+    uint64_t test_replay = 0; unsigned test_replays = 0, test_hash_delay = 0; bool test_sealed = false;
 
     explicit OwnedMatch(const char* text) {
         require(online::match_settings_locked, "owned match requires --online-test");
@@ -28,6 +40,8 @@ struct OwnedMatch {
             throw std::runtime_error("invalid owner match ID");
         if (network) {
             check_interval = setting("BM64_NETWORK_VERIFY_EVERY", online::state_check_interval);
+            test_replay = setting("BM64_NETWORK_TEST_REPLAY", 0); test_hash_delay = setting("BM64_NETWORK_TEST_HASH_DELAY_MS", 0);
+            require(!test_replay || test_replay % check_interval == 0, "test replay must target a check frame");
             require(check_interval && check_interval <= online::state_check_interval, "invalid network state-check interval");
             const char* local = std::getenv("BM64_ONLINE_SLOT");
             if (!local || std::strlen(local) != 1 || *local < '0' || unsigned(*local - '0') >= online::human_players)
@@ -89,31 +103,34 @@ struct OwnedMatch {
         fprintf(stderr, "\n"); fflush(stderr);
         if (!online::desync_detected.exchange(true)) zelda64::show_online_desync(slot == 0);
     }
-    // Capture a check frame when it is first simulated; a replay captures it again.
+    // Capture a check frame when it is first simulated; replays before sealing capture it again.
     void record(uint64_t relative) {
-        if (relative % check_interval) return;
+        if (relative % check_interval || (sealed_through && relative <= *sealed_through)) return;
         Check* check = nullptr;
         for (auto& existing : checks) if (existing.relative == relative) check = &existing;
-        if (check) require(!check->hash, "a confirmed state check was replayed");
-        else {
-            // Confirmation trails by at most the prediction window, far less than an
-            // interval, so the previous image has been hashed or is being hashed.
-            if (hashing.valid()) {
+        if (!check) {
+            auto images = [&] { return std::count_if(checks.begin(), checks.end(), [](const Check& c) { return c.image != nullptr; }); };
+            if (size_t(images()) >= image_limit && hashing.valid()) {
                 auto start = std::chrono::steady_clock::now();
                 collect(true);
                 fprintf(stderr, "NETWORK_CHECK_WAIT: ms=%.3f\n", std::chrono::duration<double, std::milli>(std::chrono::steady_clock::now() - start).count());
             }
-            require(checks.empty() || checks.back().hash, "a state check was not confirmed within its interval");
+            require(size_t(images()) < image_limit, "state-check images were not confirmed");
             require(checks.size() < 8, "state checks stopped receiving acknowledgments");
-            check = &checks.emplace_back(Check{relative, frame, 0, 0, {}});
+            check = &checks.emplace_back(Check{relative, frame});
+            check->image = std::make_unique<CheckpointMemory>();
         }
+        require(!check->sealed, "a sealed state check was recaptured");
         check->registers = comparable_registers(); check->overlay = overlay;
-        check_image.capture(ram, recomp::mem_size, std::getenv("BM64_FULL_COPY") != nullptr);
+        check->image->capture(ram, recomp::mem_size, std::getenv("BM64_FULL_COPY") != nullptr);
     }
     void collect(bool wait) {
         if (!hashing.valid() || (!wait && hashing.wait_for(std::chrono::seconds(0)) != std::future_status::ready)) return;
         auto hash = hashing.get();
-        for (auto& check : checks) if (!check.hash) { finish(check, std::move(hash)); return; }
+        for (auto& check : checks) if (check.relative == hashing_frame) {
+            check.image.reset(); finish(check, std::move(hash)); return;
+        }
+        require(false, "hashed state check is missing");
     }
     void finish(Check& check, StateHash hash) {
         check.hash = std::move(hash);
@@ -122,14 +139,23 @@ struct OwnedMatch {
         fprintf(stderr, "NETWORK_CHECK_COST: frame=%llu ms=%.3f\n", check.relative, check.hash->ms);
         fflush(stderr);
     }
-    // Hash the oldest confirmed check, then report it once the previous one is acknowledged.
+    // Seal checks whose earlier inputs are confirmed, hash the oldest sealed one,
+    // then report it once the previous report is acknowledged.
     void check_states(uint64_t relative) {
         collect(false);
         for (auto& check : checks) {
-            if (check.hash) continue;
-            if (!hashing.valid() && check.relative < relative && check.relative <= history->confirmed())
-                hashing = std::async(std::launch::async, [this] { return state_hash(check_image); });
-            break;
+            if (!check.sealed && check.image && check.relative < relative && check.relative <= history->confirmed()) {
+                check.sealed = true; sealed_through = check.relative;
+            }
+        }
+        for (auto& check : checks) {
+            if (hashing.valid() || !check.sealed || !check.image) continue;
+            if (check.relative == test_replay) test_sealed = true;
+            hashing_frame = check.relative;
+            hashing = std::async(std::launch::async, [this, image = check.image.get()] {
+                if (test_hash_delay) std::this_thread::sleep_for(std::chrono::milliseconds(test_hash_delay));
+                return state_hash(*image);
+            });
         }
         // Startup was already compared through Ready.
         if (!checks.empty() && checks.front().hash && !checks.front().relative) checks.pop_front();
@@ -139,6 +165,18 @@ struct OwnedMatch {
             reported = true;
         }
     }
+    // A late input exactly at check frame N replays boundary N after its check was
+    // sealed. Force that replay deterministically, with the same inputs.
+    std::optional<uint64_t> forced_replay(uint64_t relative) {
+        if (!test_replay || test_replays >= 2 || relative <= test_replay ||
+            history->head() - test_replay > online::prediction_limit ||
+            snapshots[1 + test_replay % online::checkpoint_slots].saved_frame != origin + test_replay) return std::nullopt;
+        bool pending = std::any_of(checks.begin(), checks.end(), [&](const Check& c) { return c.relative == test_replay; });
+        if (test_replays == 0 ? !test_sealed : pending) return std::nullopt;
+        fprintf(stderr, "NETWORK_TEST_REPLAY: frame=%llu after=%s head=%llu\n", test_replay,
+                test_replays++ ? "acknowledged" : "sealed", history->head());
+        return test_replay;
+    }
     void network_boundary() {
         for (;;) {
             if (online::leave_requested) leave();
@@ -146,11 +184,14 @@ struct OwnedMatch {
             receive();
             auto relative = frame - origin;
             require(relative <= history->head(), "network simulation advanced without frame inputs");
-            if (auto first = history->take_correction(); first && *first < relative) {
+            auto first = history->take_correction();
+            bool forced = !first && (first = forced_replay(relative));
+            if (first && *first < relative) {
                 auto index = 1 + *first % online::checkpoint_slots;
                 require(snapshots[index].saved_frame == origin + *first, "network checkpoint was overwritten");
                 finish_presentation();
-                ++corrections; max_depth = std::max(max_depth, history->head() - *first);
+                if (!forced) ++corrections;
+                max_depth = std::max(max_depth, history->head() - *first);
                 fprintf(stderr, "NETWORK_ROLLBACK: from=%llu head=%llu confirmed=%llu\n", *first, history->head(), history->confirmed());
                 restore(index, true);
                 relative = *first;
@@ -181,10 +222,10 @@ struct OwnedMatch {
             const auto stop = setting("BM64_NETWORK_STOP", 0);
             // A diagnostic stop never saves its frame, so check the live state there.
             if (stop && relative == stop && !stop_checked && relative <= history->confirmed() &&
-                (checks.empty() || checks.back().hash)) {
+                std::all_of(checks.begin(), checks.end(), [](const Check& c) { return c.hash.has_value(); })) {
                 stop_checked = true; finish_presentation();
-                checks.push_back({relative, frame, comparable_registers(), overlay, {}});
-                finish(checks.back(), live_state_hash());
+                auto& check = checks.emplace_back(Check{relative, frame, comparable_registers(), overlay});
+                finish(check, live_state_hash());
             }
             if (now >= due && history->can_advance() && !(stop && relative >= stop)) {
                 save(1 + relative % online::checkpoint_slots, true); record(relative);

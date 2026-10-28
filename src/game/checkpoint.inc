@@ -16,6 +16,7 @@
 #include <tuple>
 #include <deque>
 #include <future>
+#include <memory>
 #include <optional>
 #ifdef __APPLE__
 #include <mach/mach_time.h>

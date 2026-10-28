@@ -1,7 +1,9 @@
 #include "../server/server.hpp"
 #include "../src/online/lobby_client.hpp"
 #include "../src/online/game_session.hpp"
+#include <algorithm>
 #include <fstream>
+#include <set>
 #include <iostream>
 #include <thread>
 
@@ -22,9 +24,11 @@ struct Peer {
 };
 
 static void run(int argc, char** argv) {
-    check(argc == 8 || (argc == 9 && std::string(argv[8]) == "desync"),
-          "Usage: network_game GAME ROM INPUT_RECORDING OUTPUT_DIR HUMANS DELAY_MS STOP_FRAME [desync]");
-    const bool expect_desync = argc == 9;
+    std::set<std::string> flags(argv + std::min(argc, 8), argv + argc);
+    check(argc >= 8 && std::all_of(flags.begin(), flags.end(), [](const std::string& flag) {
+              return flag == "desync" || flag == "replaycheck" || flag == "slowhash"; }),
+          "Usage: network_game GAME ROM INPUT_RECORDING OUTPUT_DIR HUMANS DELAY_MS STOP_FRAME [desync] [replaycheck] [slowhash]");
+    const bool expect_desync = flags.count("desync");
     auto executable = fs::absolute(argv[1]), rom = fs::absolute(argv[2]), recording = fs::absolute(argv[3]), output = fs::absolute(argv[4]);
     unsigned humans = unsigned(std::stoul(argv[5])), delay = unsigned(std::stoul(argv[6])), stop = unsigned(std::stoul(argv[7]));
     check(humans >= 2 && humans <= 4 && delay <= 200, "invalid test parameters");
@@ -56,6 +60,11 @@ static void run(int argc, char** argv) {
                     // Change only one client's replayed input. Transport still agrees,
                     // so only the live state comparison can detect the resulting desync.
                     if (expect_desync && client.slot() == 1) diagnostics["BM64_NEGATIVE_INPUT"] = "1";
+                    // Replay onto check 400 after its hash starts and after it is acknowledged.
+                    if (flags.count("replaycheck")) diagnostics["BM64_NETWORK_TEST_REPLAY"] = "400";
+                    // Hashes outlast the 200-update (3.3 s) check interval; the backlog must still
+                    // clear within the relay's five-second stall limit after STOP_FRAME.
+                    if (flags.count("slowhash")) diagnostics["BM64_NETWORK_TEST_HASH_DELAY_MS"] = "4000";
                     peer.game.start(event.match, executable, rom, peer.log,
                         {"--checkpoint-test", "--single-battle", "--online-test"}, diagnostics, humans, client.slot());
                     peer.settings = peer.game.settings();

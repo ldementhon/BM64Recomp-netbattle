@@ -42,6 +42,31 @@ current build.
 
 ## Implementation record
 
+- Review fixes for the desync checks (2026-10-28). Boundary N depends only on
+  inputs before N, but input N itself can still be corrected after the check is
+  confirmed. That replay used to recapture the image under the hash thread (on
+  Mac it crashed all four games) or re-create an acknowledged check, whose
+  duplicate report the relay treats as a protocol fault. A check is now sealed
+  when its earlier inputs are confirmed; sealed images are immutable and replays
+  at or before the newest sealed frame are skipped. Each check owns its image, and
+  up to four can wait for the hash thread before the game thread waits. After a
+  desync, P1's Quit button and window close offer Restart, Leave, or Keep playing,
+  so a controller can still leave.
+
+  Mac validation: `BM64_NETWORK_TEST_REPLAY=400` forces a same-input rollback
+  onto check 400 once its hash has started (head 401) and again once it is
+  acknowledged (head 407). The previous code lost all four games at the first one;
+  now the baseline passes with zero real corrections. New `slowhash` mode delays
+  every hash by 4 s, longer than the 3.3 s check interval, and matches the
+  baseline history. Baseline, delayed, negative, slowhash, desync and match modes
+  pass with no game-thread waits, as do the lobby CTests, session/input suites,
+  fingerprint check and runner unit tests. Mac build `a4794a2a…` (fingerprint
+  `953d1475…`). Windows build `aebbdcf3…` (fingerprint `b0c4fa62…`) passes the
+  10 lobby CTests, the real-game lifecycle test, the fingerprint check and the
+  startup transitions, and a Mac/Windows LAN match to frame 1000 has identical
+  hashes at all six checks with no waits (no corrections occurred). The
+  three-button prompt has not been clicked in a real window.
+
 - Desync checks no longer pause or end play (2026-10-27). Each check boundary
   (every 300 updates) is captured into its own copy-on-write image when it is
   simulated, and recaptured if a rollback replays it. Once the boundary is

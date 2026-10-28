@@ -259,34 +259,31 @@ static bool online_player_one() {
 
 void zelda64::show_online_desync(bool player_one) {
     recompui::show_banner(player_one
-        ? "Desync detected: the players' games may now differ. Close the window to restart the match or leave."
+        ? "Desync detected: the players' games may now differ. Choose Quit in the menu, or close the window, to restart or leave."
         : "Desync detected: the players' games may now differ. Player 1 can restart the match.");
 }
-
-static bool restart_prompt_open = false;
 
 void zelda64::open_quit_game_prompt() {
     // An online match window reports the leave so every player returns to the lobby.
     const bool online_match = online::match_settings_locked && std::getenv("BM64_OWNER_MATCH");
-    // After a desync, P1's first close offers a restart; closing again offers to leave.
-    if (online_match && online::desync_detected && online_player_one() &&
-        !(restart_prompt_open && recompui::is_prompt_open())) {
-        restart_prompt_open = true;
-        recompui::open_choice_prompt(
-            "Restart the match?",
-            "The players' games no longer match. Restart starts a fresh match for everyone. Close the window again to leave instead.",
+    // After a desync, P1 can also restart everyone in a fresh match.
+    if (online_match && online::desync_detected && online_player_one()) {
+        recompui::open_three_choice_prompt(
+            "Desync detected",
+            "The players' games may no longer match. Restart starts a fresh match for everyone; Leave returns everyone to the lobby.",
             "Restart",
+            "Leave",
             "Keep playing",
-            []() { restart_prompt_open = false; online::restart_requested = true; },
-            []() { restart_prompt_open = false; },
+            []() { online::restart_requested = true; },
+            []() { online::leave_requested = true; },
+            []() {},
             recompui::ButtonVariant::Warning,
+            recompui::ButtonVariant::Error,
             recompui::ButtonVariant::Tertiary,
-            true,
             "config__quit-game-button"
         );
         return;
     }
-    restart_prompt_open = false;
     recompui::open_choice_prompt(
         online_match ? "Leave the match?" : "Are you sure you want to quit?",
         online_match ? "Everyone returns to the lobby." : "Any progress since your last save will be lost.",

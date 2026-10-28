@@ -103,6 +103,21 @@ namespace recompui {
         bool focus_on_cancel = true,
         const std::string& return_element_id = ""
     );
+    // Like open_choice_prompt with a third button between confirm and cancel; focuses cancel.
+    void open_three_choice_prompt(
+        const std::string& header_text,
+        const std::string& content_text,
+        const std::string& confirm_label_text,
+        const std::string& extra_label_text,
+        const std::string& cancel_label_text,
+        std::function<void()> confirm_action,
+        std::function<void()> extra_action,
+        std::function<void()> cancel_action,
+        ButtonVariant confirm_variant,
+        ButtonVariant extra_variant,
+        ButtonVariant cancel_variant,
+        const std::string& return_element_id = ""
+    );
     void open_info_prompt(
         const std::string& header_text,
         const std::string& content_text,

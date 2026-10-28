@@ -20,6 +20,10 @@ def sha(path):
     return hashlib.sha256(path.read_bytes()).hexdigest()
 
 
+# Baseline also replays onto check 400 after its hash starts and after it is
+# acknowledged; slowhash delays every hash beyond the next check.
+FLAGS = {"desync": ["desync"], "baseline": ["replaycheck"], "slowhash": ["slowhash"]}
+
 # The match mode plays past the first-to-three win (guest 5403) into P1's rematch on Pyramid.
 REMATCH_STOP = 4600
 
@@ -63,7 +67,7 @@ def run(mode):
         with (directory / "runner.log").open("w") as log:
             subprocess.run([str(HARNESS), str(GAME), str(ROOT.parent / "Bomberman 64 (USA).z64"),
                             recording.name, str(directory), "4", "0" if mode == "baseline" else "120",
-                            str(REMATCH_STOP if mode == "match" else 1000)] + (["desync"] if mode == "desync" else []),
+                            str(REMATCH_STOP if mode == "match" else 1000)] + FLAGS.get(mode, []),
                            cwd=ROOT, env=environment, stdout=log, stderr=subprocess.STDOUT, check=True, timeout=170)
     assert sha(GAME) == metadata["game"] and sha(HARNESS) == metadata["harness"], "executable changed during run"
     if mode == "desync":
@@ -75,11 +79,17 @@ def run(mode):
         print("PASS: desync: one client's altered replay is reported to all four games, which keep playing until P1 restarts", flush=True)
         return
     rows = histories(directory, rematch=mode == "match")
+    logs = [(directory / f"player-{slot}.log").read_text() for slot in range(4)]
     if mode == "baseline":
         assert all(int(history[-1][4]) == 0 for history in rows), "baseline used prediction corrections; rerun without host contention"
+        for text in logs:
+            assert "NETWORK_TEST_REPLAY: frame=400 after=sealed" in text, "no replay onto a sealed check"
+            assert "NETWORK_TEST_REPLAY: frame=400 after=acknowledged" in text, "no replay onto an acknowledged check"
+    if mode == "slowhash":
+        assert all("NETWORK_CHECK_WAIT" not in text for text in logs), "a slow hash stalled the game thread"
     if mode != "baseline":
         assert sum(int(history[-1][4]) for history in rows) > 0, "no real correction exercised"
-    if mode in ("delayed", "negative"):
+    if mode in ("delayed", "negative", "slowhash"):
         reference = SCRATCH / "network-rom-baseline"
         assert json.loads((reference / "metadata.json").read_text()) == metadata, "baseline build or recording differs"
         original = histories(reference)[0]
@@ -94,7 +104,7 @@ def run(mode):
 
 if __name__ == "__main__":
     mode = sys.argv[1] if len(sys.argv) == 2 else "all"
-    if len(sys.argv) > 2 or mode not in ("all", "baseline", "delayed", "negative", "match", "desync"):
-        raise SystemExit("Usage: run_network_game.py [baseline|delayed|negative|match|desync]")
-    for selected in (("baseline", "delayed", "negative", "desync") if mode == "all" else (mode,)):
+    if len(sys.argv) > 2 or mode not in ("all", "baseline", "delayed", "negative", "slowhash", "match", "desync"):
+        raise SystemExit("Usage: run_network_game.py [baseline|delayed|negative|slowhash|match|desync]")
+    for selected in (("baseline", "delayed", "negative", "slowhash", "desync") if mode == "all" else (mode,)):
         run(selected)
