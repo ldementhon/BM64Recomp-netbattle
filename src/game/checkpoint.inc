@@ -54,7 +54,8 @@ static uint64_t frame = 0;
 static int32_t players, player_stride, overlay;
 static unsigned replay_pass = 0;
 static bool player_select_ready = false;
-// Set when Player Select is left; online P1 may then steer the stage carousel.
+// Set when Player Select is left, cleared when it opens again after a match;
+// online P1 may steer the stage carousel only in between.
 static bool player_select_passed = false;
 struct Fiber { mco_coro* co; int32_t thread, entry, arg; bool dead; recomp_context* ctx; };
 static std::array<Fiber, 64> fibers{};
@@ -481,7 +482,8 @@ void switch_thread(int32_t thread) {
 }
 }
 extern "C" void bm64_player_select_ready(int ready) {
-    if (checkpoint::player_select_ready && !ready) checkpoint::player_select_passed = true;
+    if (ready) checkpoint::player_select_passed = false;
+    else if (checkpoint::player_select_ready) checkpoint::player_select_passed = true;
     checkpoint::player_select_ready = ready != 0;
 }
 

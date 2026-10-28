@@ -11,6 +11,19 @@
 using namespace online::lobby;
 int main(int argc, char** argv) {
     if (argc == 2 && std::string(argv[1]) == "--crash-child") return 1;
+    if (argc == 2 && std::string(argv[1]) == "--leave-child") {
+        // The player confirms the match window's leave prompt once play starts.
+        auto channel = online::MatchChannel::inherited();
+        auto match = std::stoull(std::getenv("BM64_OWNER_MATCH"));
+        channel.send({online::match_channel_version, online::MatchEvent::Ready, match, 1374, 123, 456});
+        for (;;) {
+            if (auto command = channel.receive(); command && command->event == online::MatchEvent::Start) break;
+            std::this_thread::sleep_for(std::chrono::milliseconds(1));
+        }
+        channel.send({online::match_channel_version, online::MatchEvent::Left, match, 1380});
+        while (!channel.flush()) std::this_thread::sleep_for(std::chrono::milliseconds(1));
+        return 0;
+    }
     if (argc == 2 && std::string(argv[1]) == "--child") {
 #ifndef _WIN32
         // ENet itself does not set CLOEXEC. Verify the owner helper does.
@@ -245,7 +258,17 @@ int main(int argc, char** argv) {
             b.reset();
             until([&] { return a.connection().roster().count == 1; });
         }
-        std::cout << "PASS: application session owns prepare/start/finish, input transfer, preference handoff, cancel/restart/leave, missed epoch and failed launch/crash cleanup\n";
+        // Leaving from a match window returns everyone to the lobby with the leave as the reason.
+        launch.executable = executable; launch.arguments = {"--leave-child"};
+        b = std::make_unique<LobbySession>("127.0.0.1", uint16_t(server.port()), "Bob", fingerprint, launch);
+        until([&] { return a.connection().roster().count == 2 && b->connection().roster().count == 2; });
+        auto left_match = a.connection().roster().match;
+        prepare();
+        until([&] { return a.connection().roster().match > left_match &&
+            a.connection().roster().phase == Phase::Lobby && b->connection().roster().phase == Phase::Lobby; });
+        assert(a.error() == reason_text(Reason::Cancelled) && b->error() == a.error());
+        assert(a.game().state() == online::GameSession::State::Lobby && b->game().state() == online::GameSession::State::Lobby);
+        std::cout << "PASS: application session owns prepare/start/finish, input transfer, preference handoff, cancel/restart/leave, match-window leave, missed epoch and failed launch/crash cleanup\n";
     }
     enet_deinitialize();
     std::cout << "PASS: production client clocks, owned " << (real ? "real game startup/cancel" : "fixture child completion and IPC/ENet input transfer")

@@ -190,7 +190,7 @@ inline const char* reason_text(Reason reason) {
     case Reason::Mismatch: return "Clients disagree on the match state.";
     case Reason::Timeout: return "The match timed out.";
     case Reason::Left: return "A player disconnected.";
-    case Reason::Cancelled: return "A player cancelled the match.";
+    case Reason::Cancelled: return "A player left or cancelled the match.";
     }
     return "Invalid protocol.";
 }

@@ -211,6 +211,10 @@ std::optional<GameSession::Exit> GameSession::poll(std::chrono::steady_clock::ti
                 auto status = reap();
                 cleanup();
                 return Exit{match_, status, false, message->frame, {}};
+            } else if (message->event == MatchEvent::Left && state_ != State::Lobby) {
+                auto status = reap();
+                cleanup();
+                return Exit{match_, status, false, {}, {}, true};
             } else {
                 throw std::runtime_error("unexpected child event");
             }

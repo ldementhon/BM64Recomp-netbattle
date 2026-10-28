@@ -59,6 +59,7 @@ public:
             if (auto exit = game_.poll()) {
                 stopping_ = true;
                 if (exit->completed_frame) connection_.finished(*exit->completed_frame);
+                else if (exit->left) connection_.cancel();
                 else {
                     error_ = exit->error;
                     connection_.cancel(Reason::LoadFailed);

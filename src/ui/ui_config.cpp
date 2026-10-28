@@ -13,6 +13,7 @@
 
 #include "core/ui_context.h"
 #include <algorithm>
+#include <cstdlib>
 #include "../online/match_settings.hpp"
 
 ultramodern::renderer::GraphicsConfig new_options;
@@ -251,13 +252,16 @@ void close_config_menu() {
 }
 
 void zelda64::open_quit_game_prompt() {
+    // An online match window reports the leave so every player returns to the lobby.
+    const bool online_match = online::match_settings_locked && std::getenv("BM64_OWNER_MATCH");
     recompui::open_choice_prompt(
-        "Are you sure you want to quit?",
-        "Any progress since your last save will be lost.",
-        "Quit",
+        online_match ? "Leave the match?" : "Are you sure you want to quit?",
+        online_match ? "Everyone returns to the lobby." : "Any progress since your last save will be lost.",
+        online_match ? "Leave" : "Quit",
         "Cancel",
-        []() {
-            ultramodern::quit();
+        [online_match]() {
+            if (online_match) online::leave_requested = true;
+            else ultramodern::quit();
         },
         []() {},
         recompui::ButtonVariant::Error,

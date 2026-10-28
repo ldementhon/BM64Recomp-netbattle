@@ -98,6 +98,11 @@ int main(int argc, char** argv) {
             std::this_thread::sleep_for(1ms);
         }
         if (std::string(argv[1]) == "--child-play-hold") for (;;) std::this_thread::sleep_for(1s);
+        if (std::string(argv[1]) == "--child-left") {
+            channel.send({online::match_channel_version, online::MatchEvent::Left, match, 1380});
+            while (!channel.flush()) std::this_thread::sleep_for(1ms);
+            return 0;
+        }
         if (std::string(argv[1]) == "--child-input" || std::string(argv[1]) == "--child-bad-input") {
             online::InputBatch input;
             input.match = match; input.count = 1;
@@ -303,6 +308,9 @@ int main(int argc, char** argv) {
         session.start(19, spaced_executable, rom, scratch / "quoted arguments.log", arguments, environment, 2);
         wait_ready(session); assert(session.playing(19));
         assert(wait_exit(session).completed_frame);
+        start(20, "--child-left"); wait_ready(session); assert(session.playing(20));
+        auto left = wait_exit(session);
+        assert(left.left && left.error.empty() && !left.completed_frame && session.state() == online::GameSession::State::Lobby);
 #ifdef _WIN32
         CloseHandle(sentinel);
 #endif

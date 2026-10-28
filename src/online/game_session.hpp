@@ -24,6 +24,7 @@ public:
         bool loading_timeout;
         std::optional<uint64_t> completed_frame = {};
         std::string error;
+        bool left = false; // The player quit from the match window.
     };
     GameSession() = default;
     ~GameSession();

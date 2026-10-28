@@ -44,18 +44,27 @@ struct OwnedMatch {
             channel.send(online::input_message(history->upload(), false)); sent = now;
         }
     }
-    void finish() {
-        channel.send({online::match_channel_version, online::MatchEvent::Finished, match, frame});
+    void report(online::MatchEvent event) {
+        channel.send({online::match_channel_version, event, match, frame});
         auto deadline = std::chrono::steady_clock::now() + std::chrono::seconds(5);
         while (!channel.flush()) {
-            if (std::chrono::steady_clock::now() >= deadline) throw std::runtime_error("owner finish delivery timed out");
+            if (std::chrono::steady_clock::now() >= deadline) throw std::runtime_error("owner event delivery timed out");
             std::this_thread::sleep_for(std::chrono::milliseconds(1));
         }
+    }
+    void leave() {
+        report(online::MatchEvent::Left);
+        fprintf(stderr, "MATCH_LEFT: match=%llu frame=%llu\n", match, frame);
+        fflush(stderr); std::_Exit(0);
+    }
+    void finish() {
+        report(online::MatchEvent::Finished);
         fprintf(stderr, "MATCH_FINISHED: match=%llu frame=%llu corrections=%llu max_depth=%llu replay=%u\n", match, frame, corrections, max_depth, replay_pass);
         fflush(stderr); std::_Exit(0);
     }
     void network_boundary() {
         for (;;) {
+            if (online::leave_requested) leave();
             receive();
             auto relative = frame - origin;
             require(relative <= history->head(), "network simulation advanced without frame inputs");
@@ -68,22 +77,8 @@ struct OwnedMatch {
                 restore(index, true);
                 relative = *first;
             }
-            // A correction can discover the winner before the old predicted
-            // head. All clients must report that same first terminal boundary.
-            if (battle_state().complete()) {
-                if (relative <= history->confirmed()) {
-                    replay_pass = relative < history->head();
-                    finish_presentation();
-                    fprintf(stderr, "NETWORK_STATE: frame=%llu guest=%llu ram=%016llx registers=%016llx corrections=%llu max_depth=%llu\n",
-                            relative, frame, digest().ram, comparable_registers(), corrections, max_depth);
-                    finish();
-                }
-                upload();
-                if (std::chrono::steady_clock::now() - progress >= std::chrono::seconds(5))
-                    throw std::runtime_error("network completion confirmation timed out");
-                std::this_thread::sleep_for(std::chrono::milliseconds(1));
-                continue;
-            }
+            // A win does not end an online match: P1 continues through the award
+            // screens to Player Select and the next battle until a player leaves.
             if (relative < history->head()) {
                 replay_pass = 1; catchup_active = true; audio_output = false;
                 suppress_render = relative + 1 < history->head();
@@ -110,8 +105,8 @@ struct OwnedMatch {
             bool confirmed = relative <= history->confirmed();
             if (now >= due && confirmed && verify && logged != relative) {
                 finish_presentation();
-                fprintf(stderr, "NETWORK_STATE: frame=%llu guest=%llu ram=%016llx registers=%016llx corrections=%llu max_depth=%llu\n",
-                        relative, frame, digest().ram, comparable_registers(), corrections, max_depth);
+                fprintf(stderr, "NETWORK_STATE: frame=%llu guest=%llu ram=%016llx registers=%016llx corrections=%llu max_depth=%llu overlay=%d\n",
+                        relative, frame, digest().ram, comparable_registers(), corrections, max_depth, overlay);
                 fflush(stderr); logged = relative;
             }
             if (now >= due && history->can_advance() && (!verify || confirmed) && !(stop && relative >= stop)) {
@@ -135,6 +130,7 @@ static bool owned_match_boundary() {
     if (!value) return false;
     try {
         static OwnedMatch owner(value);
+        if (online::leave_requested) owner.leave();
         if (!owner.started && player_select_ready && overlay == 13) {
             if (owner.network && !std::getenv("BM64_INPUT_SCRIPT"))
                 require(recomp::online_input_ready(int(owner.local_port)), "selected controller is unavailable or ambiguous; return to the lobby and reconnect");
@@ -158,6 +154,7 @@ static bool owned_match_boundary() {
                         throw std::runtime_error("start does not acknowledge ready state");
                     owner.started = true;
                 } else {
+                    if (online::leave_requested) owner.leave();
                     if (std::chrono::steady_clock::now() >= deadline) throw std::runtime_error("owner start timed out");
                     std::this_thread::sleep_for(std::chrono::milliseconds(1));
                 }

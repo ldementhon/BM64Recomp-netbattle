@@ -1,0 +1,8 @@
+# Append after battle-finish.txt. P1 dismisses the winner and award screens,
+# confirms Player Select, then picks the third stage (Pyramid) for the next battle.
+5460 5461 8000 0 0 0
+5580 5581 8000 0 0 0
+5700 5701 8000 0 0 0
+5816 5820 0000 0.7 0 0
+5852 5856 0000 0.7 0 0
+5880 5881 8000 0 0 0

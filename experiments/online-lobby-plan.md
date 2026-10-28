@@ -41,6 +41,33 @@ current build.
 
 ## Implementation record
 
+- Online matches continue after a win (2026-10-27). A first-to-three win no
+  longer ends a network match; the match window keeps running. After the winner
+  and award screens, the game reopens Player Select: guest frame 5634 with the
+  fixtures, then the next battle at 5940. P1 confirms these menus as before.
+  `player_select_passed` now clears whenever Player Select opens, so P1's
+  left/right reaches only Stage Select, including on later passes. A player
+  leaves through the match window's quit prompt, which now reads "Leave the
+  match?". The game thread sends a new `MatchEvent::Left` (match channel
+  version 3) at its next boundary. The lobby then cancels, and everyone returns
+  to the lobby with "A player left or cancelled the match." Non-network owned
+  matches (a test path) still finish at the win. Each verified `NETWORK_STATE`
+  line now ends with the current overlay.
+
+  `tests/fixtures/battle-rematch.txt` continues `battle-finish.txt`: P1 dismisses
+  the award screens, confirms Player Select, and picks Pyramid. In
+  `run_network_game.py match`, four real clients with delay and loss play to
+  relative frame 4600. They must agree, show Player Select after the win, reach
+  Pyramid (overlay 88), and never finish (corrections 18–39 per client). The
+  game session and lobby tests cover a match window leaving. On the Mac, the
+  network, transition, stage and round layout, and input timing suites pass. On
+  Windows, the lobby CTests and the transitions pass, and the transitions match
+  the Mac under `--cross-build`. Over the LAN, three Mac peers and one Windows
+  peer played through a real `bm64-lobby` into the Pyramid rematch and agreed on
+  all 24 checkpoints. The quit prompt itself was not clicked in a real match
+  window. New validated pair: Mac `32d956f1…` (fingerprint `19d4f269…`) and
+  Windows `db8f0402…` (fingerprint `11ad4744…`).
+
 - Mac controllers in online matches (2026-10-27). The first internet match
   (Mac host, Windows friend, keyboards) finished first-to-three normally. With
   physical controllers, every start then failed: the Mac match process logged
