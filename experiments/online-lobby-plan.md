@@ -6,7 +6,9 @@ match. Audio and controller handoff are implemented; online rumble is disabled.
 The latest source adds Unicode-safe startup validation, executable-relative
 Windows child launch, retained match logs, and periodic confirmed-state checks.
 Protocol version 2 requires rebuilding the relay and all clients. Earlier build
-fingerprints and acceptance results do not certify this revision. Repeated human
+fingerprints do not certify this revision. The updated pair passes Windows
+lifecycle regressions, cross-platform startup comparison, and a 1,000-update
+scripted LAN match (see the newest record below). Repeated human
 controller/audio sessions, broader hardware coverage, and four-remote-player
 acceptance remain open.
 
@@ -23,8 +25,8 @@ current build.
    the other stages. Windows rollback timing is now measured on a fast desktop
    (newest implementation-record entry); measure it on lower-end PCs too. Keep
    the full-RAM checks unchanged.
-2. **Revalidate the updated Mac/Windows pair.** Rebuild both clients and the relay
-   for protocol version 2. Repeat transitions, delayed-input comparisons, and
+2. **Broaden validation of the updated Mac/Windows pair.** Protocol version 2
+   builds pass startup and a short LAN match. Repeat round/rematch transitions, delayed-input comparisons, and
    physical-controller matches on the LAN and internet, then more GPUs and machines. Never
    exclude framebuffer RAM to make a comparison pass.
 3. **Finish playable two-person integration.** Replay-safe audio output exists
@@ -70,9 +72,24 @@ current build.
   prints no PASS. The final Mac build passes the native fingerprint check
   (`f1c4f2c3…`, fingerprint `d3d988bf…`).
 
-  Windows execution and a fresh Mac/Windows comparison remain pending. The
-  source/test transfer to the existing Windows PC was blocked by automatic
-  approval review pending explicit authorization; no remote update was applied.
+  After explicit user approval, the source delta was hash-checked and applied
+  to `dosktep2025`. The Windows full game and relay/test targets build; all ten
+  CTests pass. The real-game lifecycle test cancels one launch and finishes two
+  matches at frame 5401, using Unicode temporary folders and launching outside
+  the executable's directory. Settings are cleaned and ready digests agree.
+  The native fingerprint test passes. Startup replay passes twice plus its
+  negative input control, and the full startup history matches the fresh Mac
+  history under `--cross-build`.
+
+  One Mac and one Windows `network_peer` then play through the real Mac relay
+  to relative frame 1000. All six full-RAM/register checkpoints agree, including
+  the final shared acknowledgment; both peers return PASS. This LAN run has
+  zero corrections, so it does not establish mixed-platform rollback under
+  delay. Per-check hash/drain median/max: Mac 13.5/34.2 ms, Windows 16.0/17.4 ms.
+  Tested pair: Mac `f1c4f2c3…` (fingerprint `d3d988bf…`), Windows `46dc75ba…`
+  (fingerprint `393b5567…`). Audio used the dummy driver for these automated
+  checks; physical-controller feel, audible output, wider hardware, and repeated
+  human matches remain untested on this pair. No ROM was transferred.
 
 - Online matches continue after a win (2026-10-27). A first-to-three win no
   longer ends a network match; the match window keeps running. After the winner

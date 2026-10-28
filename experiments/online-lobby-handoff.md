@@ -3,9 +3,11 @@
 > **Update 2026-10-27:** the six Windows multiplayer review fixes are implemented.
 > See the current status and newest entry in `online-lobby-plan.md`; everything
 > below is historical context. The relay now uses protocol 2 and the private
-> game channel uses version 4. Rebuild and validate both clients and the relay
-> before reusing a mixed-platform setup. Windows validation of this revision is
-> pending; earlier fingerprints are obsolete.
+> game channel uses version 4. Windows regressions, a cross-platform startup
+> comparison, and a 1,000-update Mac/Windows LAN match now pass. The latest plan
+> entry records the tested fingerprints and limits; earlier fingerprints are
+> obsolete. Mixed-platform delay, physical controllers, and audio still need
+> validation on this pair.
 
 > **Update 2026-10-26:** online processes now render display-only by
 > default, which keeps GPU output out of game RAM. `BM64_RENDER_TO_RAM=1` restores
