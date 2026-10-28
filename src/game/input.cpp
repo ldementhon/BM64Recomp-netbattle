@@ -193,6 +193,16 @@ void queue_if_enabled(SDL_Event* event) {
     }
 }
 
+static std::atomic_bool menu_controller_input_blocked = false;
+
+void recomp::set_menu_controller_input_blocked(bool blocked) {
+    menu_controller_input_blocked.store(blocked);
+}
+
+static void queue_controller_if_enabled(SDL_Event* event) {
+    if (!menu_controller_input_blocked.load()) queue_if_enabled(event);
+}
+
 static std::atomic_bool cursor_enabled = true;
 
 void recompui::set_cursor_visible(bool visible) {
@@ -337,7 +347,7 @@ bool sdl_event_filter(void* userdata, SDL_Event* event) {
                 set_scanned_input({(uint32_t)InputType::ControllerDigital, button_event->button});
             }
         } else {
-            queue_if_enabled(event);
+            queue_controller_if_enabled(event);
         }
         break;
     case SDL_EventType::SDL_CONTROLLERAXISMOTION:
@@ -372,7 +382,7 @@ bool sdl_event_filter(void* userdata, SDL_Event* event) {
                 set_scanned_input({(uint32_t)InputType::ControllerAnalog, -axis_event->axis - 1});
             }
         } else {
-            queue_if_enabled(event);
+            queue_controller_if_enabled(event);
         }
         break;
     case SDL_EventType::SDL_CONTROLLERSENSORUPDATE: {

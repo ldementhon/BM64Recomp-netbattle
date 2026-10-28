@@ -37,7 +37,7 @@ int main() {
     assert(decode(encode(h)).name == h.name && decode(encode(h)).fingerprint == fingerprint);
     Packet ready{Op::Ready}; ready.revision = 0x0102030405060708; ready.ready = true;
     auto wire = encode(ready);
-    assert((wire == std::vector<uint8_t>{'B','M','6','4',0,3,3,1,2,3,4,5,6,7,8,1}));
+    assert((wire == std::vector<uint8_t>{'B','M','6','4',0,4,3,1,2,3,4,5,6,7,8,1}));
     auto malformed = [&](const std::vector<uint8_t>& bytes) {
         try { decode(bytes); assert(false); } catch (const std::invalid_argument&) {}
     };
@@ -193,5 +193,35 @@ int main() {
         playing(); p = state(); p.frame = 1374;
         assert(checks.handle(1, p, 1300)[0].packet.reason == Reason::Mismatch);
     }
-    std::cout << "PASS: bounded wire format, compatibility, 2/3/4-seat roster, revisioned readiness, load agreement, repeat matches and disconnects\n";
+    {
+        // Renaming is display-only: it rebroadcasts the roster without unreadying anyone.
+        Packet rename{Op::Rename}; rename.name = "Renamed";
+        assert(decode(encode(rename)).name == "Renamed");
+        for (const auto& name : {std::string{}, std::string(" "), std::string(33, 'a')}) {
+            Packet invalid{Op::Rename}; invalid.name = name;
+            try { encode(invalid); assert(false); } catch (const std::invalid_argument&) {}
+        }
+        // A hand-built empty name decodes as malformed, which the server rejects.
+        malformed({'B','M','6','4',0,4,uint8_t(Op::Rename),0});
+        Room room(fingerprint);
+        room.handle(1, hello(), 0); room.handle(2, hello(), 0);
+        reject(room.handle(3, rename, 0), Reason::Protocol, true);
+        auto ready = command(Op::Ready, room); ready.ready = true;
+        room.handle(2, ready, 0);
+        auto revision = room.revision();
+        auto renamed = room.handle(2, rename, 0);
+        assert(renamed.size() == 2 && renamed[0].packet.op == Op::Roster && renamed[0].packet.players[1].name == "Renamed");
+        assert(room.revision() == revision && room.players()[1].ready && room.players()[0].name == "Player");
+        assert(room.handle(2, rename, 0).empty()); // Same name: nothing to broadcast.
+        Packet empty{Op::Rename};
+        reject(room.handle(1, empty, 0), Reason::Protocol);
+        assert(room.players()[0].name == "Player" && room.count() == 2);
+        ready.ready = false; room.handle(2, ready, 0);
+        start(room);
+        room.handle(1, loaded(room), 200); room.handle(2, loaded(room), 200);
+        rename.name = "Mid-match";
+        renamed = room.handle(1, rename, 300);
+        assert(renamed.size() == 2 && renamed[0].packet.players[0].name == "Mid-match" && room.phase() == Phase::Playing);
+    }
+    std::cout << "PASS: bounded wire format, compatibility, 2/3/4-seat roster, revisioned readiness, load agreement, repeat matches, disconnects and renames\n";
 }

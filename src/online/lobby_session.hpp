@@ -29,6 +29,7 @@ public:
         error_.clear();
     }
     void start() { connection_.start(); }
+    void rename(const std::string& name) { connection_.rename(name); }
     void cancel() {
         game_.cancel(match_);
         connection_.cancel();

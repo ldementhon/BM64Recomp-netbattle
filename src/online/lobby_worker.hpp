@@ -8,7 +8,7 @@
 namespace online::lobby {
 class LobbyWorker {
 public:
-    enum class Action { Connect, Ready, Start, Cancel, Leave };
+    enum class Action { Connect, Ready, Start, Cancel, Leave, Rename };
     struct Command {
         Action action;
         std::string address{}, name{};
@@ -16,11 +16,13 @@ public:
         bool ready = false;
         LocalInput input{};
     };
+    enum class SeatState { Cpu, NotReady, Ready };
     struct View {
         bool connected = false, joined = false, ready = false, can_start = false, in_match = false;
         uint64_t match = 0;
         std::string status = "Enter a server address to join.", fingerprint, latency;
         std::array<std::string, 4> seats{"P1 — CPU", "P2 — CPU", "P3 — CPU", "P4 — CPU"};
+        std::array<SeatState, 4> seat_states{};
         bool operator==(const View&) const = default;
     };
     explicit LobbyWorker(LobbySession::Launch launch)
@@ -71,6 +73,7 @@ private:
                             if (command.action == Action::Ready) session->ready(command.ready, std::move(command.input));
                             else if (command.action == Action::Start) session->start();
                             else if (command.action == Action::Cancel) session->cancel();
+                            else if (command.action == Action::Rename) session->rename(command.name);
                         }
                     } catch (const std::exception& error) {
                         command_error = error.what();
@@ -92,11 +95,12 @@ private:
                         bool all_ready = roster.count >= 2;
                         for (unsigned i = 0; i < 4; ++i) {
                             view.seats[i] = "P" + std::to_string(i + 1) + " — ";
+                            view.seat_states[i] = SeatState::Cpu;
                             if (i >= roster.count) view.seats[i] += "CPU";
                             else {
                                 view.seats[i] += roster.players[i].name;
                                 if (i == connection.slot()) view.seats[i] += " (you)";
-                                view.seats[i] += roster.players[i].ready ? " · Ready" : " · Not ready";
+                                view.seat_states[i] = roster.players[i].ready ? SeatState::Ready : SeatState::NotReady;
                                 all_ready &= roster.players[i].ready;
                             }
                         }

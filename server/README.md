@@ -30,8 +30,12 @@ the fingerprint CTest also covers standard vectors and build/ROM changes. The ex
 includes the statically linked recomp, patches, and runtime. This identifies the
 build/profile; it does not certify cross-machine determinism or audit every setting.
 The Mac and Windows launchers' **Online Battle** screen uses this fingerprint and rechecks
-the executable/ROM before every match. Enter the server address, port, and name;
-choose the local controls to use, then Ready. P1 can start once at least two humans
+the executable/ROM before every match. Enter the server address, port, and name
+(remembered in `online-lobby.json` on Connect); choose the local controls to use,
+then Ready. Each seat shows Ready in green and Not ready in red, and P1's Start
+button is highlighted once everyone is ready. A name edited after joining is sent
+half a second after typing stops and updates every player's list without
+unreadying anyone; an empty or invalid name is not sent, and the server rejects one. P1 can start once at least two humans
 are ready. Empty seats are CPUs. The lobby stays connected while a fresh game
 window runs the match; Cancel or Leave tears it down. A failed launch returns the
 room to Lobby. Local input preferences are copied into disposable settings.
@@ -95,7 +99,7 @@ numbers and bounded simulation lead still need the input protocol; clock estimat
 alone cannot synchronize gameplay over asymmetric routes.
 
 Control messages use reliable ordered channel 0, explicit big-endian fields,
-protocol version 3, and a 1,199-byte maximum. Channels 1–4 carry separate unreliable
+protocol version 4, and a 1,199-byte maximum. Channels 1–4 carry separate unreliable
 sequenced input streams, with 32 recent inputs per upload. There are eight transport slots (four
 playable seats plus pending/rejected joins), a five-second handshake deadline,
 120 incoming messages per connection per second, a 64-KiB incoming wait

@@ -17,6 +17,11 @@
             .online-field--port { width: 130dp; }
             .online-seats { margin-top: 22dp; margin-bottom: 18dp; }
             .online-seat { padding: 12dp; border-bottom: 1dp #667080; }
+            .online-seat__ready { color: #45D043; }
+            .online-seat__not-ready { color: #F86039; }
+            /* Everyone is ready: make Start the obvious next step. */
+            .online-panel .button.online-start--go { border-width: 4dp; border-color: #45D043; background-color: rgba(69, 208, 67, 0.25); color: #F2F2F2; }
+            .online-panel .button.online-start--go:focus, .online-panel .button.online-start--go:hover { background-color: rgba(69, 208, 67, 0.45); }
             .online-status { min-height: 42dp; margin-top: 16dp; }
             .online-panel .button { display: inline-block; margin: 12dp 14dp 0 0; padding: 12dp 22dp; }
             .online-note { font-size: 23dp; color: #bfc7d4; margin-top: 10dp; }
@@ -88,7 +93,7 @@
                         <input id="online-server-port" type="text" data-value="online_server_port" maxlength="5" data-attrif-disabled="online_connected"/>
                     </label>
                     <label class="online-field">Your name
-                        <input id="online-name" type="text" data-value="online_name" maxlength="32" data-attrif-disabled="online_connected"/>
+                        <input id="online-name" type="text" data-value="online_name" maxlength="32"/>
                     </label>
                 </div>
                 <div class="online-fields">
@@ -101,15 +106,17 @@
                     <button class="button" onclick="open_controls" data-attrif-disabled="online_ready || online_in_match">Setup controls</button>
                 </div>
                 <div class="online-seats">
-                    <div class="online-seat">{{online_seat0}}</div><div class="online-seat">{{online_seat1}}</div>
-                    <div class="online-seat">{{online_seat2}}</div><div class="online-seat">{{online_seat3}}</div>
+                    <div class="online-seat">{{online_seat0}}<span class="online-seat__ready" data-if="online_seat0_state == 2"> · Ready</span><span class="online-seat__not-ready" data-if="online_seat0_state == 1"> · Not ready</span></div>
+                    <div class="online-seat">{{online_seat1}}<span class="online-seat__ready" data-if="online_seat1_state == 2"> · Ready</span><span class="online-seat__not-ready" data-if="online_seat1_state == 1"> · Not ready</span></div>
+                    <div class="online-seat">{{online_seat2}}<span class="online-seat__ready" data-if="online_seat2_state == 2"> · Ready</span><span class="online-seat__not-ready" data-if="online_seat2_state == 1"> · Not ready</span></div>
+                    <div class="online-seat">{{online_seat3}}<span class="online-seat__ready" data-if="online_seat3_state == 2"> · Ready</span><span class="online-seat__not-ready" data-if="online_seat3_state == 1"> · Not ready</span></div>
                 </div>
                 <div class="online-status">{{online_status}}</div>
                 <div class="online-note">{{online_latency}}</div>
                 <button id="online-connect" class="button" data-if="!online_connected" data-event-click="online_action('connect')">Connect</button>
                 <button id="online-ready" class="button" data-if="online_joined &amp;&amp; !online_in_match &amp;&amp; !online_ready" data-event-click="online_action('ready')">Ready</button>
                 <button class="button" data-if="online_joined &amp;&amp; !online_in_match &amp;&amp; online_ready" data-event-click="online_action('ready')">Not ready</button>
-                <button id="online-start" class="button" data-if="online_joined &amp;&amp; !online_in_match" data-attrif-disabled="!online_can_start" data-event-click="online_action('start')">Start battle (P1)</button>
+                <button id="online-start" class="button" data-if="online_joined &amp;&amp; !online_in_match" data-attrif-disabled="!online_can_start" data-class-online-start--go="online_can_start" data-event-click="online_action('start')">Start battle (P1)</button>
                 <button class="button" data-if="online_in_match" data-event-click="online_action('cancel')">Cancel battle</button>
                 <button id="online-leave" class="button" data-if="online_connected" data-event-click="online_action('leave')">Leave</button>
                 <button class="button" data-event-click="online_action('back')">Back</button>

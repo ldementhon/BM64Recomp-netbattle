@@ -57,6 +57,15 @@ public:
             return out;
         }
         if (slot == count_) { reject(Reason::Protocol, true); return out; }
+        if (p.op == Op::Rename) {
+            // A name is only displayed, so it changes in any phase without unreadying anyone.
+            if (!valid_name(p.name)) reject(Reason::Protocol);
+            else if (players_[slot].name != p.name) {
+                players_[slot].name = p.name;
+                publish(out);
+            }
+            return out;
+        }
         if (p.op == Op::Ready || p.op == Op::Start) {
             if (phase_ != Phase::Lobby) reject(Reason::InProgress);
             else if (p.revision != revision_) reject(Reason::StaleRoster);

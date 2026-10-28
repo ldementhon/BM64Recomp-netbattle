@@ -73,6 +73,11 @@ public:
     }
     // Only P1 may restart; the relay ends this match and prepares another.
     void restart() { require_phase(Phase::Playing); send(command(Op::Restart)); }
+    void rename(const std::string& name) {
+        if (!joined()) throw std::logic_error("command invalid in current lobby state");
+        if (!valid_name(name)) throw std::invalid_argument("invalid display name");
+        auto p = command(Op::Rename); p.name = name; send(p);
+    }
 
     std::vector<Packet> poll() {
         std::vector<Packet> events;

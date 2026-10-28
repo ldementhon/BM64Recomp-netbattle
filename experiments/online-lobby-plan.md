@@ -42,6 +42,40 @@ current build.
 
 ## Implementation record
 
+- Online Battle screen improvements (2026-10-28). The server address, port and
+  name are saved to `online-lobby.json` on Connect and restored next time;
+  malformed files or fields fall back to the defaults. Seat states show Ready in
+  green and Not ready in red, and P1's Start button gets a thick green border
+  once everyone is ready. The name field stays editable after joining: 500 ms
+  after typing stops, a valid changed name is sent as the new Rename message
+  (protocol 4, fingerprint domain v4). The server updates the name in any phase
+  without changing the roster revision or anyone's readiness; an empty or
+  invalid name is never sent, fails to decode, and the server rejects it.
+  `lobby_room`, `lobby_worker` (two real clients) and the new
+  `lobby_preferences` CTest cover this. Mac `2d797999…` (fingerprint
+  `e6367ff2…`) and Windows `857dd865…` (fingerprint `cf3abe03…`) pass the lobby,
+  controller, fingerprint and network checks, and a Mac/Windows LAN match to
+  frame 1000 has identical hashes. The launcher loads the new markup without
+  RmlUi errors; the colors and Start border have not yet been seen on screen.
+
+- Online menu ignores controller input during a match (2026-10-28). In a Mac
+  vs Windows match, the Windows player's game closed on every A press to
+  place a bomb. Their match logs agreed with the Mac's at every check and simply
+  stopped, and Windows recorded no crash: Background Input (on by default) let
+  the launcher behind the match window receive the press, and A clicked its
+  focused Cancel battle/Leave/Back button, which cancels the match. Our tests
+  drive matches without the launcher, so they never saw it. While its match
+  runs, the launcher now drops controller button and stick events before they
+  reach its menus; the mouse still works and the match window is unaffected.
+  Background Input now also defaults to Off for new settings; existing
+  `general.json` files keep their saved value.
+  `tests/run_controller_tests.py` checks presses reach the menus before and
+  after a match but not during one, with the controller still readable, and
+  now ignores physical controllers. Mac `4e8ac4a7…` (fingerprint `7ee26f3e…`)
+  passes it and the network baseline; Windows `2547301f…` (fingerprint
+  `2d7eb6e4…`) passes it, the lobby CTests, lifecycle, fingerprint and startup
+  checks, and a Mac/Windows LAN match to frame 1000 has identical hashes.
+
 - Review fixes for the desync checks (2026-10-28). Boundary N depends only on
   inputs before N, but input N itself can still be corrected after the check is
   confirmed. That replay used to recapture the image under the hash thread (on

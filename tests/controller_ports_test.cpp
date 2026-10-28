@@ -18,8 +18,11 @@ int get_rumble_strength() { return 50; }
 int get_scanned_input_index() { return -1; }
 void cancel_scanning_input() { stop_scanning_input(); }
 }
+static int queued_controller_events = 0;
 namespace recompui {
-void queue_event(const SDL_Event&) {}
+void queue_event(const SDL_Event& event) {
+    if (event.type == SDL_CONTROLLERBUTTONDOWN || event.type == SDL_CONTROLLERAXISMOTION) ++queued_controller_events;
+}
 void activate_mouse() {}
 void toggle_fullscreen() {}
 bool is_context_capturing_input() { return false; }
@@ -110,6 +113,8 @@ int main(int argc, char** argv) {
     if (child) check(zelda64::load_online_input(handoff), "restore selection before SDL enumerates any devices");
     SDL_SetMainReady();
     SDL_SetHint(SDL_HINT_JOYSTICK_ALLOW_BACKGROUND_EVENTS, "1");
+    // Count only the fixture pads, even with a physical controller connected.
+    SDL_SetHint(SDL_HINT_GAMECONTROLLER_IGNORE_DEVICES_EXCEPT, "0x1234/0x0001,0x1234/0x0002,0x1234/0x0003,0x1234/0x0004");
     check(SDL_Init(SDL_INIT_GAMECONTROLLER | SDL_INIT_EVENTS) == 0, "SDL init");
     if (!child) zelda64::reset_input_bindings();
     std::array<SDL_Joystick*, 4> sticks{};
@@ -300,6 +305,36 @@ int main(int argc, char** argv) {
     check(load_controls_config(path), "load old single-player config");
     check(recomp::get_input_binding(recomp::GameInput::A, 0, recomp::InputDevice::Controller, 0).input_id == 3,
         "legacy custom bindings are preserved");
+    // A running online match leaves the launcher menu receiving background
+    // controller events; they must not press its Cancel/Leave buttons.
+    recomp::set_port_mode(0, recomp::ControllerPortMode::Controller);
+    pump();
+    check(recomp::port_controller_connected(0), "port 0 has a controller for the menu checks");
+    // Press on every pad, so the check does not depend on which one port 0 holds.
+    auto press = [&](bool down) {
+        for (auto joystick : sticks) {
+            SDL_JoystickSetVirtualButton(joystick, SDL_CONTROLLER_BUTTON_A, down);
+            // The legacy config loaded above binds N64 A to SDL Y.
+            SDL_JoystickSetVirtualButton(joystick, SDL_CONTROLLER_BUTTON_Y, down);
+            SDL_JoystickSetVirtualAxis(joystick, SDL_CONTROLLER_AXIS_LEFTX, down ? 32767 : 0);
+        }
+        pump();
+    };
+    queued_controller_events = 0;
+    press(true); press(false);
+    check(queued_controller_events > 0, "menus receive controller presses outside a match");
+    recomp::set_menu_controller_input_blocked(true);
+    queued_controller_events = 0;
+    press(true);
+    uint16_t held_buttons; float held_x, held_y;
+    check(recomp::get_n64_input(0, &held_buttons, &held_x, &held_y) && (held_buttons & 0x8000),
+        "blocking menu input leaves the controller readable");
+    press(false);
+    check(queued_controller_events == 0, "menus ignore controller presses during an online match");
+    recomp::set_menu_controller_input_blocked(false);
+    queued_controller_events = 0;
+    press(true); press(false);
+    check(queued_controller_events > 0, "menus receive controller presses again after the match");
     for (auto joystick : sticks) SDL_JoystickClose(joystick);
     SDL_Quit();
     std::cout << checks << " controller routing and config checks passed.\n";

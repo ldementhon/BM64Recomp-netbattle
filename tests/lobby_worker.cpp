@@ -40,6 +40,17 @@ int main() {
         until([&] { return a.view().joined && b.view().joined && server.room().count() == 2; });
         assert(!a.view().fingerprint.empty());
         assert(a.view().seats[2] == "P3 — CPU" && b.view().seats[3] == "P4 — CPU");
+        assert(a.view().seat_states[0] == LobbyWorker::SeatState::NotReady && a.view().seat_states[1] == LobbyWorker::SeatState::NotReady &&
+               a.view().seat_states[2] == LobbyWorker::SeatState::Cpu);
+        // A rename reaches every player; the room can rename without anyone readying again.
+        LobbyWorker::Command rename{LobbyWorker::Action::Rename}; rename.name = "Bobby";
+        b.send(std::move(rename));
+        auto shows = [](const LobbyWorker::View& view, const std::string& suffix) {
+            return std::any_of(view.seats.begin(), view.seats.begin() + 2, [&](const std::string& seat) {
+                return seat.size() >= suffix.size() && seat.compare(seat.size() - suffix.size(), suffix.size(), suffix) == 0;
+            });
+        };
+        until([&] { return shows(a.view(), " — Bobby") && shows(b.view(), " — Bobby (you)") && shows(a.view(), " — Alice (you)"); });
         auto ready = [](LobbyWorker& worker) {
             LobbyWorker::Command command{LobbyWorker::Action::Ready}; command.ready = true;
             command.input = {2, R"({"controls":{},"joystick_deadzone":17})"};
@@ -48,6 +59,7 @@ int main() {
         for (uint64_t match = 1; match <= 2; ++match) {
             ready(a); ready(b);
             until([&] { return a.view().ready && b.view().ready && (a.view().can_start || b.view().can_start); });
+            assert(a.view().seat_states[0] == LobbyWorker::SeatState::Ready && a.view().seat_states[1] == LobbyWorker::SeatState::Ready);
             (a.view().can_start ? a : b).send({LobbyWorker::Action::Start});
             // Only the server is serviced here: no render/UI polling is needed
             // for either client to load, start, exchange inputs, and finish.
@@ -73,5 +85,5 @@ int main() {
         until([&] { return a.view().status == reason_text(Reason::Incompatible); });
     }
     enet_deinitialize(); fs::remove_all(scratch);
-    std::cout << "PASS: background owners finish repeat matches without UI polls, publish seats/Ready, reject changed ROM on Prepare/reconnect, and leave cleanly\n";
+    std::cout << "PASS: background owners finish repeat matches without UI polls, publish seats/Ready, rename, reject changed ROM on Prepare/reconnect, and leave cleanly\n";
 }

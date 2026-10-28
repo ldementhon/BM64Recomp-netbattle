@@ -245,6 +245,9 @@ namespace recomp {
 
     bool game_input_disabled();
     bool all_input_disabled();
+    // While this process's online match runs in another window, background
+    // controller events would also press the online menu's buttons.
+    void set_menu_controller_input_blocked(bool blocked);
 }
 
 #endif

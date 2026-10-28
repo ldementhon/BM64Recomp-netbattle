@@ -7,12 +7,12 @@
 #include <vector>
 
 namespace online::lobby {
-constexpr uint16_t protocol_version = 3;
+constexpr uint16_t protocol_version = 4;
 constexpr size_t packet_limit = 1199;
 constexpr uint8_t control_channel = 0, channel_count = 5;
 using Fingerprint = std::array<uint8_t, 32>;
 enum class Phase : uint8_t { Lobby, Loading, Playing };
-enum class Op : uint8_t { Hello = 1, Roster, Ready, Start, Prepare, Loaded, Commit, Cancel, Finished, End, Reject, Ping, Pong, State, StateChecked, Desync, Restart };
+enum class Op : uint8_t { Hello = 1, Roster, Ready, Start, Prepare, Loaded, Commit, Cancel, Finished, End, Reject, Ping, Pong, State, StateChecked, Desync, Restart, Rename };
 enum class Reason : uint8_t { None, Protocol, Incompatible, Full, InProgress, StaleRoster, NotReady, NotP1, LoadFailed, Mismatch, Timeout, Left, Cancelled, Restarted };
 struct Player { uint64_t id = 0; std::string name; bool ready = false; };
 
@@ -98,6 +98,7 @@ inline std::vector<uint8_t> encode(const Packet& p) {
     case Op::Hello:
         for (auto byte : p.fingerprint) w.number(byte, 1);
         w.name(p.name); break;
+    case Op::Rename: w.name(p.name); break;
     case Op::Roster:
         if (p.count > 4) throw std::invalid_argument("invalid roster size");
         w.number(p.identity, 8); w.number(p.revision, 8); w.number(p.match, 8);
@@ -142,6 +143,7 @@ inline Packet decode(std::span<const uint8_t> bytes) {
     case Op::Hello:
         for (auto& byte : p.fingerprint) byte = uint8_t(r.number(1));
         p.name = r.name(); break;
+    case Op::Rename: p.name = r.name(); break;
     case Op::Roster:
         p.identity = r.number(8); p.revision = r.number(8); p.match = r.number(8);
         p.phase = Phase(r.number(1)); p.count = uint8_t(r.number(1));
