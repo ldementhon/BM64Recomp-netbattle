@@ -37,7 +37,7 @@ static void run(int argc, char** argv) {
                     {"--checkpoint-test", "--single-battle", "--online-test"},
                     {{"BM64_INPUT_SCRIPT", recording.string()}, {"BM64_NETWORK_INPUT", "1"},
                      {"BM64_NETWORK_VERIFY_EVERY", "200"}, {"BM64_NETWORK_STOP", std::to_string(stop)}},
-                    humans, client.slot());
+                    humans, client.slot(), {}, {event.pausing, 50});
                 settings = game.settings();
                 std::cout << "PEER: slot=" << client.slot() << " match=" << event.match << " log=" << log.string() << std::endl;
             } else if (event.op == Op::End) {

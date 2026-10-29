@@ -42,6 +42,37 @@ current build.
 
 ## Implementation record
 
+- Pausing and a remembered match volume (2026-10-29). Playtesters asked for
+  anyone to be able to pause, with no unpause timer, and for the match window's
+  volume to be remembered at 50% by default. RAM samples of offline single
+  battles showed the ROM battle pause: any player's Start pauses (word
+  `8029f84c` and `802a0b80` go 0 to 1 and the game processes' exec mode goes 2
+  to 3), any player's Start resumes, and while paused every other button and
+  stick direction leaves RAM identical to a pause with no input, so the pause
+  offers no way out of the battle. Pausing is now a room rule, on by default:
+  P1 sets it in the lobby with a new `Rules` op, the server carries it in
+  `Roster` and `Prepare` (protocol 6, fingerprint domain v6, release v2), and
+  each game receives it as `BM64_ONLINE_PAUSE`; with it on, the battle input
+  filter keeps every human's Start. The owner also passes `BM64_MAIN_VOLUME`
+  from `match_volume` in `online-lobby.json` (default 50), the game saves its
+  `sound.json` at startup and on menu close, and the owner reads the main volume
+  back when the match ends. `run_network_game.py pause` has P2 and P4 pause and
+  P3 and P1 resume under 120 ms delay and receiver loss; all four histories agree
+  and first differ from the baseline at check 600, after the first pause.
+  `nopause` turns the rule off and matches the baseline with the same presses.
+  An input script line replaces all of that controller's scripted input on its
+  frames, so the presses sit on frames with no other input for that controller.
+  `lobby_room`, `lobby_client`, `lobby_worker`, `game_session`, `match_input` and
+  `lobby_preferences` cover the rule, its P1 and lobby-only limits, the volume
+  round trip and invalid values; the real-game session test confirms the game
+  saves the volume it was given. Windows passes the lobby CTests, the real-game
+  session test (volume included), fingerprint and startup transitions; its
+  controller checks stopped because a Bluetooth Xbox controller was connected
+  and counted as a fifth device (that code is unchanged). A Mac/Windows LAN
+  match in which P2 pauses, P1 resumes, P1 pauses and P2 resumes agrees at every
+  check to frame 1000. The Pausing button and the volume round trip have not
+  been checked in a real window.
+
 - Numbered online releases (2026-10-28). Playtesters received new zips every
   few days and the server took two raw fingerprints, so nobody could tell which
   build they had. `BM64_ONLINE_RELEASE` in `src/online/release.hpp` now numbers

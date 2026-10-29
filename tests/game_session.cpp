@@ -71,6 +71,17 @@ int main(int argc, char** argv) {
             assert(text == R"({"controls":{},"joystick_deadzone":17})");
             online::validate_match_folder(settings);
         }
+        // The owner passes the room's pause rule and this player's volume, and reads back
+        // the volume the game's menu saved.
+        if (std::string(argv[1]) == "--child-options") {
+            assert(std::string(std::getenv("BM64_ONLINE_PAUSE")) == "1");
+            assert(std::string(std::getenv("BM64_MAIN_VOLUME")) == "35");
+            std::ofstream(settings / "sound.json") << R"({"main_volume": 72, "bgm_volume": 100})";
+        } else if (std::string(argv[1]) == "--child-bad-volume") {
+            assert(std::string(std::getenv("BM64_ONLINE_PAUSE")) == "0");
+            assert(std::string(std::getenv("BM64_MAIN_VOLUME")) == "50");
+            std::ofstream(settings / "sound.json") << R"({"main_volume": 101})";
+        }
         std::ofstream(settings / "child-save") << "match only";
         if (std::string(argv[1]) == "--child-crash") {
 #ifdef _WIN32
@@ -200,7 +211,8 @@ int main(int argc, char** argv) {
                         std::map<std::string, std::string>{}, 4, 0,
             real_game && match == 3 ? online::LocalInput{2,
                 R"({"controls":{"controller_defaults_version":1,"ports":[{"mode":"Keyboard","keyboard":{"A":[{"input_type":1,"input_id":27}]}},{"mode":"Off"},{"mode":"Keyboard","stick_sensitivity":150,"stick_calibration":{"enabled":true,"center_x":0.2,"center_y":0,"left":1,"right":1,"up":1,"down":1}}]},"joystick_deadzone":17})"}
-                : online::LocalInput{});
+                : online::LocalInput{},
+            online::MatchOptions{false, 37});
     };
     start(1, "--child-hold");
     auto first_settings = session.settings();
@@ -231,6 +243,8 @@ int main(int argc, char** argv) {
         assert(result.match == match && !result.loading_timeout);
         assert(result.error.empty() && result.completed_frame == (real_game ? 5401 : 2000));
         assert(!fs::exists(settings));
+        // The real game saves the volume it was given; the fixture child saves none.
+        assert(session.take_volume() == (real_game ? std::optional<int>(37) : std::nullopt));
         assert(session.state() == online::GameSession::State::Lobby);
         connection.send({online::match_channel_version, online::MatchEvent::Ready, match, 1});
         assert(peer.receive()->match == match);
@@ -375,6 +389,22 @@ int main(int argc, char** argv) {
         }
         assert(restart && !session.take_restart() && session.state() == online::GameSession::State::Playing);
         assert(session.cancel(22) && session.state() == online::GameSession::State::Lobby);
+        assert(!session.take_volume()); // These children never saved a sound.json.
+        for (int volume : {-1, 101}) {
+            try {
+                session.start(23, executable, rom, scratch / "invalid-volume.log", {}, {}, 2, 0, {}, {false, volume});
+                assert(false);
+            } catch (const std::invalid_argument&) {}
+        }
+        // Diagnostics cannot override the owner's options.
+        session.start(23, executable, rom, scratch / "options.log", {"--child-options"},
+                      {{"BM64_ONLINE_PAUSE", "0"}, {"BM64_MAIN_VOLUME", "99"}}, 2, 0, {}, {true, 35});
+        wait_ready(session); assert(session.playing(23));
+        assert(wait_exit(session).completed_frame);
+        assert(session.take_volume() == 72 && !session.take_volume());
+        session.start(24, executable, rom, scratch / "bad-volume.log", {"--child-bad-volume"}, {}, 2);
+        wait_ready(session); assert(session.playing(24));
+        assert(wait_exit(session).completed_frame && !session.take_volume());
 #ifdef _WIN32
         CloseHandle(sentinel);
 #endif

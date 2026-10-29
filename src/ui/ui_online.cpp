@@ -23,7 +23,8 @@ struct OnlineMenu {
     bool available = false;
 #endif
     bool visible = false, connected = false, joined = false, ready = false, can_start = false, in_match = false;
-    int port = 0;
+    bool pausing = true, can_change_rules = false;
+    int port = 0, volume = 50;
     std::string address = "127.0.0.1", server_port = "6464", name = "Player", release = online::release_name;
     std::string status = "Enter a server address to join.", latency, local_error;
     std::array<std::string, 4> seats{"P1 — CPU", "P2 — CPU", "P3 — CPU", "P4 — CPU"};
@@ -46,10 +47,11 @@ struct OnlineMenu {
                     launch.executable = online::lobby::current_executable();
                     launch.rom = zelda64::get_app_folder_path() / "bm64_us.z64";
                     launch.log = zelda64::get_app_folder_path() / "online-match.log";
+                    launch.volume = volume;
                     worker = std::make_unique<Worker>(std::move(launch));
                 }
                 // Remember what was entered, even if this attempt fails.
-                online::lobby::save_lobby_preferences(preferences_path(), {address, server_port, name});
+                online::lobby::save_lobby_preferences(preferences_path(), {address, server_port, name, volume});
                 Worker::Command command{Worker::Action::Connect};
                 command.address = address; command.port = uint16_t(number); command.name = name;
                 worker->send(std::move(command));
@@ -65,6 +67,8 @@ struct OnlineMenu {
                             throw std::runtime_error("Connect a controller for this local port before readying up.");
                         command.input = {unsigned(port), zelda64::serialize_online_input(port)};
                     }
+                } else if (action == "pausing") {
+                    command.action = Worker::Action::Rules; command.pausing = !pausing;
                 } else if (action == "start") command.action = Worker::Action::Start;
                 else if (action == "cancel") command.action = Worker::Action::Cancel;
                 worker->send(std::move(command));
@@ -83,6 +87,12 @@ struct OnlineMenu {
         last_view = next;
         connected = next.connected; joined = next.joined; ready = next.ready;
         can_start = next.can_start; in_match = next.in_match;
+        pausing = next.pausing; can_change_rules = next.can_change_rules;
+        if (next.volume != volume) {
+            // A match window's volume becomes the next match's.
+            volume = next.volume;
+            online::lobby::save_lobby_preferences(preferences_path(), {address, server_port, name, volume});
+        }
         // The match window has focus; the menu still sees background controller events.
         recomp::set_menu_controller_input_blocked(in_match);
         status = local_error.empty() ? next.status : local_error; latency = next.latency; seats = next.seats;
@@ -113,7 +123,7 @@ struct OnlineMenu {
             command.name = name;
             worker->send(std::move(command));
             sent_name = name;
-            online::lobby::save_lobby_preferences(preferences_path(), {address, server_port, name});
+            online::lobby::save_lobby_preferences(preferences_path(), {address, server_port, name, volume});
         } catch (const std::exception& error) { status = local_error = error.what(); }
         model.DirtyAllVariables();
     }
@@ -128,6 +138,7 @@ void recompui::bind_online_menu(Rml::DataModelConstructor& constructor) {
         if (!saved->address.empty()) menu->address = saved->address;
         if (!saved->port.empty()) menu->server_port = saved->port;
         if (!saved->name.empty()) menu->name = saved->name;
+        menu->volume = saved->volume;
     }
     menu->model = constructor.GetModelHandle();
     constructor.Bind("online_available", &menu->available);
@@ -138,6 +149,8 @@ void recompui::bind_online_menu(Rml::DataModelConstructor& constructor) {
     constructor.Bind("online_ready", &menu->ready);
     constructor.Bind("online_can_start", &menu->can_start);
     constructor.Bind("online_in_match", &menu->in_match);
+    constructor.Bind("online_pausing", &menu->pausing);
+    constructor.Bind("online_can_change_rules", &menu->can_change_rules);
     constructor.Bind("online_address", &menu->address);
     constructor.Bind("online_server_port", &menu->server_port);
     constructor.Bind("online_name", &menu->name);

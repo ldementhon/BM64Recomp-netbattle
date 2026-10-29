@@ -8,36 +8,43 @@
 namespace online::lobby {
 class LobbyWorker {
 public:
-    enum class Action { Connect, Ready, Start, Cancel, Leave, Rename };
+    enum class Action { Connect, Ready, Start, Cancel, Leave, Rename, Rules };
     struct Command {
         Action action;
         std::string address{}, name{};
         uint16_t port = 6464;
-        bool ready = false;
+        bool ready = false, pausing = true;
         LocalInput input{};
     };
     enum class SeatState { Cpu, NotReady, Ready };
     struct View {
         bool connected = false, joined = false, ready = false, can_start = false, in_match = false;
+        // The room's pause rule; only P1 in the lobby can change it.
+        bool pausing = true, can_change_rules = false;
         uint64_t match = 0;
+        int volume = 50; // Main volume for the next match, as last set in a match window.
         std::string status = "Enter a server address to join.", fingerprint, latency;
         std::array<std::string, 4> seats{"P1 — CPU", "P2 — CPU", "P3 — CPU", "P4 — CPU"};
         std::array<SeatState, 4> seat_states{};
         bool operator==(const View&) const = default;
     };
     explicit LobbyWorker(LobbySession::Launch launch)
-        : thread_([this, launch = std::move(launch)](std::stop_token stop) mutable { run(stop, std::move(launch)); }) {}
+        : volume_(launch.volume), thread_([this, launch = std::move(launch)](std::stop_token stop) mutable { run(stop, std::move(launch)); }) {}
     ~LobbyWorker() { thread_.request_stop(); thread_.join(); }
     void send(Command command) {
         std::lock_guard lock(mutex_);
         if (commands_.size() >= 16) throw std::runtime_error("Please wait for the current lobby action.");
         commands_.push_back(std::move(command));
     }
-    View view() const { std::lock_guard lock(mutex_); return view_; }
+    View view() const {
+        std::lock_guard lock(mutex_);
+        auto view = view_; view.volume = volume_; return view;
+    }
 private:
     mutable std::mutex mutex_;
     std::deque<Command> commands_;
     View view_;
+    int volume_;
     std::jthread thread_;
     void publish(const View& view) { std::lock_guard lock(mutex_); view_ = view; }
     void run(std::stop_token stop, LobbySession::Launch launch) {
@@ -74,6 +81,7 @@ private:
                             else if (command.action == Action::Start) session->start();
                             else if (command.action == Action::Cancel) session->cancel();
                             else if (command.action == Action::Rename) session->rename(command.name);
+                            else if (command.action == Action::Rules) session->rules(command.pausing);
                         }
                     } catch (const std::exception& error) {
                         command_error = error.what();
@@ -83,6 +91,8 @@ private:
                 }
                 if (session) {
                     session->poll();
+                    launch.volume = session->volume();
+                    { std::lock_guard lock(mutex_); volume_ = launch.volume; }
                     const auto& connection = session->connection();
                     if (connection.disconnected()) {
                         auto error = session->error(); session.reset(); view = {}; view.status = error;
@@ -105,6 +115,8 @@ private:
                             }
                         }
                         view.can_start = connection.slot() == 0 && all_ready && !view.in_match;
+                        view.pausing = roster.pausing;
+                        view.can_change_rules = connection.slot() == 0 && !view.in_match;
                         auto clock = connection.clock();
                         view.latency = clock ? "Server round trip: " + std::to_string(clock->round_trip) + " ms" : "Measuring server round trip…";
                         if (!session->error().empty()) view.status = session->error();

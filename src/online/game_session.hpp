@@ -16,6 +16,12 @@
 #include "local_input.hpp"
 
 namespace online {
+// Per-match settings the owner passes to its game process.
+struct MatchOptions {
+    bool pausing = false;  // The room's pause rule, identical for every player.
+    int volume = 50;       // This player's main volume, 0 to 100.
+};
+
 class GameSession {
 public:
     enum class State { Lobby, Loading, Playing };
@@ -37,7 +43,7 @@ public:
                const std::vector<std::string>& arguments,
                const std::map<std::string, std::string>& diagnostic_environment = {},
                unsigned human_players = 4, unsigned local_slot = 0,
-               const LocalInput& local_input = {});
+               const LocalInput& local_input = {}, const MatchOptions& options = {});
     bool playing(uint64_t match);
     bool cancel(uint64_t match);
     std::optional<Exit> poll(std::chrono::steady_clock::time_point now = std::chrono::steady_clock::now());
@@ -50,6 +56,8 @@ public:
     bool state_checked(uint64_t frame, bool desync = false);
     // True once after P1 confirms a restart in the match window.
     bool take_restart() { return std::exchange(restart_, false); }
+    // The main volume the last finished game saved from its menu, once.
+    std::optional<int> take_volume() { return std::exchange(volume_, std::nullopt); }
 
 private:
     int reap();
@@ -73,6 +81,7 @@ private:
     std::vector<MatchMessage> states_;
     std::optional<uint64_t> pending_state_;
     bool restart_ = false;
+    std::optional<int> volume_;
     unsigned humans_ = 4, local_slot_ = 0;
 };
 }

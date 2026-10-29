@@ -617,12 +617,14 @@ int main(int argc, char** argv) {
         return EXIT_FAILURE;
     }
     if (online::match_settings_locked) {
-        if (const char* humans = std::getenv("BM64_ONLINE_HUMANS")) {
-            try { online::human_players = online::parse_human_players(humans); }
-            catch (const std::invalid_argument& error) {
-                fprintf(stderr, "%s\n", error.what());
-                return EXIT_FAILURE;
-            }
+        try {
+            if (const char* humans = std::getenv("BM64_ONLINE_HUMANS")) online::human_players = online::parse_human_players(humans);
+            if (const char* pausing = std::getenv("BM64_ONLINE_PAUSE")) online::pausing_allowed = online::parse_switch(pausing);
+            // Checked here so a bad value fails before a window opens; applied after the config loads.
+            if (const char* volume = std::getenv("BM64_MAIN_VOLUME")) online::parse_volume(volume);
+        } catch (const std::invalid_argument& error) {
+            fprintf(stderr, "%s\n", error.what());
+            return EXIT_FAILURE;
         }
         // Local input preferences cannot import gameplay settings, saves, or mods.
         try { online::validate_match_folder(zelda64::get_app_folder_path()); }
@@ -740,6 +742,12 @@ int main(int argc, char** argv) {
         if (std::filesystem::exists(input_path) && !zelda64::load_online_input(input_path)) {
             fprintf(stderr, "Invalid online input settings\n");
             return EXIT_FAILURE;
+        }
+        // The launcher's saved match volume. The owner reads sound.json back after the
+        // match, so save it now in case the menu never does.
+        if (const char* volume = std::getenv("BM64_MAIN_VOLUME")) {
+            zelda64::set_main_volume(online::parse_volume(volume));
+            zelda64::save_config();
         }
     }
 

@@ -26,6 +26,7 @@ public:
     uint64_t match() const { return match_; }
     uint64_t start_epoch() const { return start_epoch_; }
     unsigned count() const { return count_; }
+    bool pausing() const { return pausing_; }
     const std::array<Player, 4>& players() const { return players_; }
     uint64_t initial_frame() const { return loaded_[0] ? loaded_[0]->frame : 0; }
     std::vector<Delivery> abort(Reason reason) {
@@ -62,6 +63,16 @@ public:
             if (!valid_name(p.name)) reject(Reason::Protocol);
             else if (players_[slot].name != p.name) {
                 players_[slot].name = p.name;
+                publish(out);
+            }
+            return out;
+        }
+        if (p.op == Op::Rules) {
+            // P1 sets the room's rules in the lobby; readiness is kept.
+            if (slot != 0) reject(Reason::NotP1);
+            else if (phase_ != Phase::Lobby) reject(Reason::InProgress);
+            else if (pausing_ != p.pausing) {
+                pausing_ = p.pausing;
                 publish(out);
             }
             return out;
@@ -171,6 +182,7 @@ private:
     std::optional<Digest> checked_;
     unsigned count_ = 0;
     Phase phase_ = Phase::Lobby;
+    bool pausing_ = true;
     uint64_t revision_ = 0, match_ = 0, deadline_ = 0, start_epoch_ = 0;
 
     unsigned find(uint64_t peer) const {
@@ -184,7 +196,7 @@ private:
     void publish(std::vector<Delivery>& out) const {
         Packet roster{Op::Roster};
         roster.revision = revision_; roster.match = match_; roster.phase = phase_;
-        roster.players = players_; roster.count = uint8_t(count_);
+        roster.players = players_; roster.count = uint8_t(count_); roster.pausing = pausing_;
         for (unsigned i = 0; i < count_; ++i) {
             roster.identity = players_[i].id;
             out.push_back({roster.identity, roster});
@@ -204,6 +216,7 @@ private:
         publish(out);
         Packet prepare{Op::Prepare};
         prepare.revision = revision_; prepare.match = match_; prepare.count = uint8_t(count_);
+        prepare.pausing = pausing_;
         broadcast(out, prepare);
     }
     void end(std::vector<Delivery>& out, Reason reason, uint64_t frame = 0) {

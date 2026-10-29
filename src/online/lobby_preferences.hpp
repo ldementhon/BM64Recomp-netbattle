@@ -7,9 +7,11 @@
 #include <system_error>
 
 namespace online::lobby {
-// The server and name last used to connect from the Online Battle screen.
+// The server and name last used to connect from the Online Battle screen, and the
+// main volume last chosen in a match window.
 struct LobbyPreferences {
     std::string address, port, name;
+    int volume = 50;
 };
 
 namespace detail {
@@ -40,6 +42,9 @@ inline std::optional<LobbyPreferences> load_lobby_preferences(const std::filesys
         preferences.port = *port;
     if (auto name = detail::field(json, "name"); name && detail::printable(*name, 32, true))
         preferences.name = *name;
+    if (auto volume = json.find("match_volume"); volume != json.end() && volume->is_number_integer() &&
+        *volume >= 0 && *volume <= 100)
+        preferences.volume = volume->get<int>();
     return preferences;
 }
 
@@ -49,7 +54,7 @@ inline bool save_lobby_preferences(const std::filesystem::path& path, const Lobb
     {
         std::ofstream output(temporary, std::ios::binary | std::ios::trunc);
         output << nlohmann::json{{"address", preferences.address}, {"port", preferences.port},
-                                 {"name", preferences.name}}.dump(4);
+                                 {"name", preferences.name}, {"match_volume", preferences.volume}}.dump(4);
         if (!output.flush()) return false;
     }
     std::error_code error;

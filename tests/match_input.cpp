@@ -7,6 +7,24 @@ int main() {
         try { online::parse_human_players(bad); assert(false); }
         catch (const std::invalid_argument&) {}
     }
+    for (auto bad : {"", "2", "01x", "true"}) {
+        try { online::parse_switch(bad); assert(false); } catch (const std::invalid_argument&) {}
+    }
+    assert(online::parse_switch("1") && !online::parse_switch("0"));
+    for (auto bad : {"", "-1", "101", "1000", "5a", " 5"}) {
+        try { online::parse_volume(bad); assert(false); } catch (const std::invalid_argument&) {}
+    }
+    assert(online::parse_volume("0") == 0 && online::parse_volume("50") == 50 && online::parse_volume("100") == 100);
+    // With the room's pausing on, every human's Start reaches battle; menus are unchanged.
+    online::pausing_allowed = true;
+    for (int port = 0; port < 4; ++port) for (int scene : {13, 17, 86}) {
+        online::human_players = 3;
+        uint16_t buttons = 0xffff; float x = 0, y = 0;
+        online::filter_match_input(port, scene, false, buttons, x, y);
+        const bool human = port < 3;
+        assert(buttons == (!human ? 0 : scene == 86 ? 0xffff : port == 0 ? 0x8000 : 0));
+    }
+    online::pausing_allowed = false;
     for (auto text : {"2", "3", "4"}) {
         online::human_players = online::parse_human_players(text);
         for (bool stage : {false, true}) for (int scene : {13, 17, 86}) for (int port = 0; port < 4; ++port) {
@@ -26,5 +44,5 @@ int main() {
             assert(buttons == old_buttons && x == old_x && y == old_y);
         }
     }
-    std::cout << "PASS: 2/3/4-human layout validation, CPU neutral inputs, P1 menus and stage choice, and stable gameplay reads\n";
+    std::cout << "PASS: 2/3/4-human layout validation, CPU neutral inputs, P1 menus and stage choice, the pause rule, and stable gameplay reads\n";
 }

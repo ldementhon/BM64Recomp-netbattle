@@ -13,6 +13,7 @@ public:
         std::vector<std::string> arguments{"--checkpoint-test", "--single-battle", "--online-test"};
         std::map<std::string, std::string> diagnostics{{"BM64_NETWORK_INPUT", "1"}};
         std::function<void()> verify_compatibility = {};
+        int volume = 50; // Main volume for the next match, 0 to 100.
     };
     LobbySession(const std::string& address, uint16_t port, std::string name,
                  Fingerprint fingerprint, Launch launch)
@@ -21,6 +22,8 @@ public:
     const LobbyClient& connection() const { return connection_; }
     const GameSession& game() const { return game_; }
     const std::string& error() const { return error_.empty() ? connection_.error() : error_; }
+    // The volume the next match starts with; a game's menu changes it when that game ends.
+    int volume() const { return launch_.volume; }
     void ready(bool value, LocalInput input = {}) {
         if (input.port >= 4 || input.settings.size() > local_input_limit)
             throw std::invalid_argument("invalid local input settings");
@@ -29,6 +32,7 @@ public:
         error_.clear();
     }
     void start() { connection_.start(); }
+    void rules(bool pausing) { connection_.rules(pausing); }
     void rename(const std::string& name) { connection_.rename(name); }
     void cancel() {
         game_.cancel(match_);
@@ -37,6 +41,10 @@ public:
     }
 
     void poll() {
+        struct KeepVolume {
+            LobbySession& session;
+            ~KeepVolume() { if (auto volume = session.game_.take_volume()) session.launch_.volume = *volume; }
+        } keep_volume{*this};
         try {
             for (const auto& event : connection_.poll()) {
                 if (event.op == Op::Prepare) {
@@ -47,7 +55,8 @@ public:
                     if (launch_.verify_compatibility) launch_.verify_compatibility();
                     log_ = new_match_log(launch_.log, match_);
                     game_.start(match_, launch_.executable, launch_.rom, log_,
-                                launch_.arguments, launch_.diagnostics, event.count, connection_.slot(), input_);
+                                launch_.arguments, launch_.diagnostics, event.count, connection_.slot(), input_,
+                                {event.pausing, launch_.volume});
                 } else if (event.op == Op::End) {
                     if (error_.empty() && event.reason != Reason::None && event.reason != Reason::Cancelled &&
                         event.reason != Reason::Restarted && !log_.empty())

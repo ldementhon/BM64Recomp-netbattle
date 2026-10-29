@@ -4,7 +4,7 @@ cd "$(dirname "$0")/.."
 mkdir -p build/experiments
 for optimization in 0 2; do
     clang++ -std=c++20 -Wall -Wextra -Werror -O"$optimization" \
-        src/online/game_session.cpp tests/game_session.cpp -o build/experiments/game-session-test
+        -Ilib/N64ModernRuntime/thirdparty src/online/game_session.cpp tests/game_session.cpp -o build/experiments/game-session-test
     build/experiments/game-session-test
     clang++ -std=c++20 -Wall -Wextra -Werror -O"$optimization" \
         tests/match_channel.cpp -o build/experiments/match-channel-test

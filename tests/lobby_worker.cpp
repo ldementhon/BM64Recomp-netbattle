@@ -21,7 +21,9 @@ int main() {
         ENetAddress address{}; assert(enet_address_set_host(&address, "127.0.0.1") == 0);
         Server server(address, client_fingerprint(fixture, rom));
         LobbySession::Launch launch{fixture, rom, scratch / "a.log", {"--child"}, {}};
-        LobbyWorker a(launch); launch.log = scratch / "b.log"; LobbyWorker b(launch);
+        launch.volume = 35;
+        LobbyWorker a(launch); launch.log = scratch / "b.log"; launch.volume = 100; LobbyWorker b(launch);
+        assert(a.view().volume == 35 && b.view().volume == 100);
         auto connect = [&](LobbyWorker& worker, std::string name) {
             LobbyWorker::Command command{LobbyWorker::Action::Connect};
             command.address = "127.0.0.1"; command.port = uint16_t(server.port()); command.name = std::move(name);
@@ -51,6 +53,14 @@ int main() {
             });
         };
         until([&] { return shows(a.view(), " — Bobby") && shows(b.view(), " — Bobby (you)") && shows(a.view(), " — Alice (you)"); });
+        // Only P1 sees the pause rule as changeable; the change reaches both screens.
+        assert(a.view().pausing && b.view().pausing && a.view().can_change_rules != b.view().can_change_rules);
+        auto& first = a.view().can_change_rules ? a : b;
+        LobbyWorker::Command rules{LobbyWorker::Action::Rules}; rules.pausing = false;
+        first.send(rules);
+        until([&] { return !a.view().pausing && !b.view().pausing && !server.room().pausing(); });
+        rules.pausing = true; first.send(rules);
+        until([&] { return a.view().pausing && b.view().pausing && server.room().pausing(); });
         auto ready = [](LobbyWorker& worker) {
             LobbyWorker::Command command{LobbyWorker::Action::Ready}; command.ready = true;
             command.input = {2, R"({"controls":{},"joystick_deadzone":17})"};
@@ -72,6 +82,9 @@ int main() {
             until([&] { return a.view().match == match && b.view().match == match && !a.view().in_match && !b.view().in_match; });
             assert(a.view().status == "Ready up. P1 starts when everyone is ready.");
             assert(b.view().status == a.view().status && !a.view().ready && !b.view().ready);
+            // Each match window's saved volume becomes that player's next match volume.
+            until([&] { return a.view().volume == int(35 + match) && b.view().volume == (match == 1 ? 0 : 1); });
+            assert(!a.view().can_change_rules || !a.view().in_match);
         }
         std::ofstream(rom) << "changed after connecting";
         ready(a); ready(b);
@@ -85,5 +98,5 @@ int main() {
         until([&] { return a.view().status == incompatible_text(online::release); });
     }
     enet_deinitialize(); fs::remove_all(scratch);
-    std::cout << "PASS: background owners finish repeat matches without UI polls, publish seats/Ready, rename, reject changed ROM on Prepare/reconnect, and leave cleanly\n";
+    std::cout << "PASS: background owners finish repeat matches without UI polls, publish seats/Ready, rename, set the pause rule, carry each match's volume to the next, reject changed ROM on Prepare/reconnect, and leave cleanly\n";
 }

@@ -22,7 +22,11 @@ def sha(path):
 
 # Baseline also replays onto check 400 after its hash starts and after it is
 # acknowledged; slowhash delays every hash beyond the next check.
-FLAGS = {"desync": ["desync"], "baseline": ["replaycheck"], "slowhash": ["slowhash"]}
+FLAGS = {"desync": ["desync"], "baseline": ["replaycheck"], "slowhash": ["slowhash"], "nopause": ["nopause"]}
+
+# Mid-battle Start presses on the default stage: P2 pauses, P3 resumes, P4 pauses, P1 resumes.
+# Each is on a frame where that controller has no other scripted input, which it would replace.
+PAUSES = "1900 1901 1000 0 0 1\n2030 2031 1000 0 0 2\n2100 2101 1000 0 0 3\n2160 2161 1000 0 0 0\n"
 
 # The match mode plays past the first-to-three win (guest 5403) into P1's rematch on Pyramid.
 REMATCH_STOP = 4600
@@ -60,6 +64,8 @@ def run(mode):
         recording.write(FIXTURE.read_text())
         if mode == "negative":
             recording.write("\n1950 1970 0000 -0.7 0 0\n")
+        if mode in ("pause", "nopause"):
+            recording.write("\n" + PAUSES)
         if mode == "match":
             for fixture in ("battle-finish.txt", "battle-rematch.txt"):
                 recording.write("\n" + (ROOT / "tests/fixtures" / fixture).read_text())
@@ -89,13 +95,17 @@ def run(mode):
         assert all("NETWORK_CHECK_WAIT" not in text for text in logs), "a slow hash stalled the game thread"
     if mode != "baseline":
         assert sum(int(history[-1][4]) for history in rows) > 0, "no real correction exercised"
-    if mode in ("delayed", "negative", "slowhash"):
+    if mode == "pause":
+        # Paused frames hold the battle, so states leave the baseline at the first check after 1900.
+        for text in logs:
+            assert all(f"NETWORK_STATE: frame={frame} " in text for frame in (600, 800, 1000))
+    if mode in ("delayed", "negative", "slowhash", "pause", "nopause"):
         reference = SCRATCH / "network-rom-baseline"
         assert json.loads((reference / "metadata.json").read_text()) == metadata, "baseline build or recording differs"
         original = histories(reference)[0]
         differences = [int(a[0]) for a, b in zip(original, rows[0]) if a[:4] != b[:4]]
-        if mode == "negative":
-            assert differences and differences[0] == 600, f"unexpected negative-control divergence: {differences}"
+        if mode in ("negative", "pause"):
+            assert differences and differences[0] == 600, f"unexpected {mode} divergence: {differences}"
         else:
             assert not differences, f"corrected ROM differs from baseline at {differences}"
     (directory / "metadata.json").write_text(json.dumps(metadata, indent=2) + "\n")
@@ -104,7 +114,8 @@ def run(mode):
 
 if __name__ == "__main__":
     mode = sys.argv[1] if len(sys.argv) == 2 else "all"
-    if len(sys.argv) > 2 or mode not in ("all", "baseline", "delayed", "negative", "slowhash", "match", "desync"):
-        raise SystemExit("Usage: run_network_game.py [baseline|delayed|negative|slowhash|match|desync]")
-    for selected in (("baseline", "delayed", "negative", "slowhash", "desync") if mode == "all" else (mode,)):
+    modes = ("baseline", "delayed", "negative", "slowhash", "pause", "nopause", "desync")
+    if len(sys.argv) > 2 or mode not in ("all", "match") + modes:
+        raise SystemExit("Usage: run_network_game.py [" + "|".join(modes + ("match",)) + "]")
+    for selected in (modes if mode == "all" else (mode,)):
         run(selected)

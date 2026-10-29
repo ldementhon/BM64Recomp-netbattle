@@ -1,5 +1,6 @@
 #pragma once
 #include <atomic>
+#include <charconv>
 #include <cstdint>
 #include <stdexcept>
 #include <string_view>
@@ -9,6 +10,9 @@ namespace online {
 // override; personal settings are never loaded into this disposable match.
 inline bool match_settings_locked = false;
 inline unsigned human_players = 4;
+// The room's pause rule, the same for every player. In battle, the ROM pause
+// ignores everything but Start, and any player's Start resumes.
+inline bool pausing_allowed = false;
 // Set by a match window's quit prompt; its game thread leaves at the next boundary.
 inline std::atomic<bool> leave_requested = false;
 // Set by the game thread when the relay reports differing states; the match keeps
@@ -33,9 +37,22 @@ inline void filter_match_input(int port, int overlay, bool stage_select, uint16_
         // P1 confirms the fixed preset; no client edits seats, costumes or rules.
         buttons = port == 0 ? buttons & 0x8000 : 0;
         x = y = 0;
-    } else {
+    } else if (!pausing_allowed) {
         // Online cancellation belongs to the owner; do not enter the ROM pause menu.
         buttons &= ~uint16_t(0x1000);
     }
+}
+
+inline bool parse_switch(std::string_view value) {
+    if (value != "0" && value != "1") throw std::invalid_argument("online switch must be 0 or 1");
+    return value == "1";
+}
+inline int parse_volume(std::string_view value) {
+    int volume = -1;
+    auto end = value.data() + value.size();
+    auto parsed = std::from_chars(value.data(), end, volume);
+    if (parsed.ec != std::errc{} || parsed.ptr != end || volume < 0 || volume > 100)
+        throw std::invalid_argument("online volume must be 0 to 100");
+    return volume;
 }
 }

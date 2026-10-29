@@ -1,4 +1,5 @@
 #include "game_session.hpp"
+#include "json/json.hpp"
 #include <cerrno>
 #include <csignal>
 #include <cstdlib>
@@ -25,6 +26,14 @@ void GameSession::cleanup() {
     inputs_.clear();
     states_.clear(); pending_state_.reset(); restart_ = false;
     if (!settings_.empty()) {
+        // The game's menu writes sound.json; keep its main volume for the next match.
+        std::ifstream sound(settings_ / "sound.json", std::ios::binary);
+        auto json = nlohmann::json::parse(sound, nullptr, false);
+        if (json.is_object() && json.contains("main_volume") && json["main_volume"].is_number_integer()) {
+            auto volume = json["main_volume"].get<int64_t>();
+            if (volume >= 0 && volume <= 100) volume_ = int(volume);
+        }
+        sound.close();
         std::error_code ignored;
         std::filesystem::remove_all(settings_, ignored);
         settings_.clear();
@@ -76,13 +85,15 @@ void GameSession::start(uint64_t match, const std::filesystem::path& executable,
                         const std::filesystem::path& rom, const std::filesystem::path& log,
                         const std::vector<std::string>& arguments,
                         const std::map<std::string, std::string>& diagnostic_environment,
-                        unsigned human_players, unsigned local_slot, const LocalInput& local_input) {
+                        unsigned human_players, unsigned local_slot, const LocalInput& local_input,
+                        const MatchOptions& options) {
     if (state_ != State::Lobby || child_ != no_child) throw std::logic_error("match already running");
     if (!match || match <= match_) throw std::invalid_argument("match ID must increase");
     if (human_players < 2 || human_players > 4) throw std::invalid_argument("online match requires 2, 3, or 4 humans");
     if (local_slot >= human_players) throw std::invalid_argument("local player is not a human slot");
     if (local_input.port >= 4 || local_input.settings.size() > local_input_limit)
         throw std::invalid_argument("invalid local input settings");
+    if (options.volume < 0 || options.volume > 100) throw std::invalid_argument("invalid match volume");
     // Consume IDs even on failed launches: queued events must never become valid later.
     match_ = match;
 #ifdef _WIN32
@@ -135,6 +146,8 @@ void GameSession::start(uint64_t match, const std::filesystem::path& executable,
         environment["BM64_ONLINE_HUMANS"] = std::to_string(human_players);
         environment["BM64_ONLINE_SLOT"] = std::to_string(local_slot);
         environment["BM64_LOCAL_PORT"] = std::to_string(local_input.port);
+        environment["BM64_ONLINE_PAUSE"] = options.pausing ? "1" : "0";
+        environment["BM64_MAIN_VOLUME"] = std::to_string(options.volume);
 #ifdef _WIN32
         auto process = detail::launch_windows_game(executable, log, settings_, child.fd(), arguments, environment);
         child_ = process.process; job_ = process.job;

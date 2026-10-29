@@ -39,7 +39,7 @@ int main() {
     h.release = 0x0107;
     auto hello_wire = encode(h);
     assert(decode(hello_wire).release == 0x0107 && hello_release(hello_wire) == 0x0107);
-    assert((std::vector<uint8_t>(hello_wire.begin(), hello_wire.begin() + 9) == std::vector<uint8_t>{'B','M','6','4',0,5,1,1,7}));
+    assert((std::vector<uint8_t>(hello_wire.begin(), hello_wire.begin() + 9) == std::vector<uint8_t>{'B','M','6','4',0,6,1,1,7}));
     assert(!hello_release({hello_wire.begin(), hello_wire.begin() + 8}));
     auto old_hello = hello_wire; old_hello[5] = 4;
     assert(!hello_release(old_hello) && wire_protocol(old_hello) == 4);
@@ -50,7 +50,7 @@ int main() {
     h.release = 0;
     Packet ready{Op::Ready}; ready.revision = 0x0102030405060708; ready.ready = true;
     auto wire = encode(ready);
-    assert((wire == std::vector<uint8_t>{'B','M','6','4',0,5,3,1,2,3,4,5,6,7,8,1}));
+    assert((wire == std::vector<uint8_t>{'B','M','6','4',0,6,3,1,2,3,4,5,6,7,8,1}));
     auto malformed = [&](const std::vector<uint8_t>& bytes) {
         try { decode(bytes); assert(false); } catch (const std::invalid_argument&) {}
     };
@@ -236,5 +236,42 @@ int main() {
         renamed = room.handle(1, rename, 300);
         assert(renamed.size() == 2 && renamed[0].packet.players[0].name == "Mid-match" && room.phase() == Phase::Playing);
     }
-    std::cout << "PASS: bounded wire format, compatibility, 2/3/4-seat roster, revisioned readiness, load agreement, repeat matches, disconnects and renames\n";
+    {
+        // Pausing is a room rule: on by default, set by P1 in the lobby, and copied into every match.
+        Packet rules{Op::Rules}; rules.pausing = false;
+        assert((encode(rules) == std::vector<uint8_t>{'B','M','6','4',0,6,uint8_t(Op::Rules),0}) && !decode(encode(rules)).pausing);
+        malformed({'B','M','6','4',0,6,uint8_t(Op::Rules),2});
+        Room room(fingerprint);
+        assert(room.pausing());
+        room.handle(1, hello(), 0); room.handle(2, hello(), 0);
+        reject(room.handle(3, rules, 0), Reason::Protocol, true);
+        reject(room.handle(2, rules, 0), Reason::NotP1);
+        assert(room.pausing());
+        auto ready = command(Op::Ready, room); ready.ready = true;
+        room.handle(2, ready, 0);
+        auto revision = room.revision();
+        auto changed = room.handle(1, rules, 0);
+        assert(changed.size() == 2 && changed[1].packet.op == Op::Roster && !changed[1].packet.pausing);
+        assert(!decode(encode(changed[1].packet)).pausing && !room.pausing());
+        assert(room.revision() == revision && room.players()[1].ready); // Readiness is kept.
+        assert(room.handle(1, rules, 0).empty()); // Unchanged rule: nothing to broadcast.
+        auto prepared = [&](bool pausing) {
+            for (unsigned i = 0; i < room.count(); ++i) {
+                auto now_ready = command(Op::Ready, room); now_ready.ready = true;
+                room.handle(room.players()[i].id, now_ready, 100);
+            }
+            auto out = room.handle(1, command(Op::Start, room), 100);
+            assert(out.back().packet.op == Op::Prepare && decode(encode(out.back().packet)).pausing == pausing);
+            for (auto& delivery : out) if (delivery.packet.op == Op::Roster) assert(delivery.packet.pausing == pausing);
+            reject(room.handle(1, rules, 101), Reason::InProgress);
+            auto cancel = command(Op::Cancel, room); cancel.reason = Reason::Cancelled;
+            room.handle(2, cancel, 102);
+            assert(room.phase() == Phase::Lobby);
+        };
+        prepared(false);
+        rules.pausing = true;
+        assert(room.handle(1, rules, 200).size() == 2 && room.pausing());
+        prepared(true);
+    }
+    std::cout << "PASS: bounded wire format, compatibility, 2/3/4-seat roster, revisioned readiness, load agreement, repeat matches, disconnects, renames and the pause rule\n";
 }

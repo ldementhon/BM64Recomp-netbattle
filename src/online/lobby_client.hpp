@@ -67,6 +67,11 @@ public:
         auto p = command(Op::Ready); p.ready = value; send(p);
     }
     void start() { require_phase(Phase::Lobby); send(command(Op::Start)); }
+    // Only P1 may change the room's rules, and only in the lobby.
+    void rules(bool pausing) {
+        require_phase(Phase::Lobby);
+        auto p = command(Op::Rules); p.pausing = pausing; send(p);
+    }
     void loaded(uint64_t frame, uint64_t ram, uint64_t registers) {
         require_phase(Phase::Loading);
         if (!clock()) throw std::logic_error("wait for server clock before acknowledging load");
@@ -124,7 +129,7 @@ public:
                         throw std::runtime_error("invalid server control channel");
                     std::span<const uint8_t> bytes{wire->data, wire->dataLength};
                     if (auto server = release_mismatch(bytes)) throw std::runtime_error(release_mismatch_text(*server, release_));
-                    if (auto protocol = wire_protocol(bytes); protocol && *protocol < protocol_version)
+                    if (auto protocol = wire_protocol(bytes); protocol && *protocol < 5)
                         throw std::runtime_error("This server runs an online build from before v1. Ask the host to update it.");
                     auto p = decode(bytes);
                     if (p.op == Op::Pong) {
@@ -145,7 +150,8 @@ public:
                         roster_ = p;
                     } else if (p.op == Op::Prepare) {
                         require_phase(Phase::Loading);
-                        if (p.match != roster_.match || p.revision != roster_.revision || p.count != roster_.count)
+                        if (p.match != roster_.match || p.revision != roster_.revision || p.count != roster_.count ||
+                            p.pausing != roster_.pausing)
                             throw std::runtime_error("match preparation differs from locked roster");
                         start_at_.reset(); error_.clear(); input_events_.clear(); checked_frame_ = 0;
                     } else if (p.op == Op::Commit) {

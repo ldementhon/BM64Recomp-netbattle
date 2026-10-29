@@ -39,7 +39,7 @@ try {
     [IO.File]::WriteAllBytes($rom, $fixture)
     $gameBytes = [IO.File]::ReadAllBytes($Game)
     $gameHash = $sha.ComputeHash($gameBytes)
-    $profile = [Text.Encoding]::UTF8.GetBytes('BM64 online v5; Windows x86_64; fixed Battle profile 1; delay 2')
+    $profile = [Text.Encoding]::UTF8.GetBytes('BM64 online v6; Windows x86_64; fixed Battle profile 1; delay 2')
     $expected = ([BitConverter]::ToString($sha.ComputeHash([byte[]]($profile + $gameHash + $sha.ComputeHash($fixture))))).Replace('-', '').ToLowerInvariant()
     $actual = Invoke-Fingerprint
     if ($actual.Code -ne 0 -or $actual.Output -cne $expected) {

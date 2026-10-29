@@ -26,8 +26,8 @@ struct Peer {
 static void run(int argc, char** argv) {
     std::set<std::string> flags(argv + std::min(argc, 8), argv + argc);
     check(argc >= 8 && std::all_of(flags.begin(), flags.end(), [](const std::string& flag) {
-              return flag == "desync" || flag == "replaycheck" || flag == "slowhash"; }),
-          "Usage: network_game GAME ROM INPUT_RECORDING OUTPUT_DIR HUMANS DELAY_MS STOP_FRAME [desync] [replaycheck] [slowhash]");
+              return flag == "desync" || flag == "replaycheck" || flag == "slowhash" || flag == "nopause"; }),
+          "Usage: network_game GAME ROM INPUT_RECORDING OUTPUT_DIR HUMANS DELAY_MS STOP_FRAME [desync] [replaycheck] [slowhash] [nopause]");
     const bool expect_desync = flags.count("desync");
     auto executable = fs::absolute(argv[1]), rom = fs::absolute(argv[2]), recording = fs::absolute(argv[3]), output = fs::absolute(argv[4]);
     unsigned humans = unsigned(std::stoul(argv[5])), delay = unsigned(std::stoul(argv[6])), stop = unsigned(std::stoul(argv[7]));
@@ -39,7 +39,7 @@ static void run(int argc, char** argv) {
     for (unsigned i = 0; i < humans; ++i) peers.push_back(std::make_unique<Peer>(server.port(), fingerprint));
     struct Pending { uint64_t due; unsigned peer; bool upload; InputBatch input; };
     std::vector<Pending> pending;
-    bool ready_sent = false, start_sent = false, cancel_sent = false, restart_sent = false, loss_triggered = false;
+    bool rules_sent = false, ready_sent = false, start_sent = false, cancel_sent = false, restart_sent = false, loss_triggered = false;
     uint64_t loss_end = 0, last_log_read = 0, dropped = 0;
     unsigned restarts = 0;
     const auto deadline = monotonic_ms() + 150000;
@@ -66,7 +66,8 @@ static void run(int argc, char** argv) {
                     // clear within the relay's five-second stall limit after STOP_FRAME.
                     if (flags.count("slowhash")) diagnostics["BM64_NETWORK_TEST_HASH_DELAY_MS"] = "4000";
                     peer.game.start(event.match, executable, rom, peer.log,
-                        {"--checkpoint-test", "--single-battle", "--online-test"}, diagnostics, humans, client.slot());
+                        {"--checkpoint-test", "--single-battle", "--online-test"}, diagnostics, humans, client.slot(),
+                        {}, {event.pausing, 50});
                     peer.settings = peer.game.settings();
                 } else if (event.op == Op::End) {
                     check(event.reason == Reason::None || (cancel_sent && event.reason == Reason::Cancelled) ||
@@ -126,7 +127,17 @@ static void run(int argc, char** argv) {
             }
             item = pending.erase(item);
         }
-        if (all_joined && !ready_sent) {
+        // The room allows pausing by default; nopause turns it off before anyone readies.
+        if (all_joined && flags.count("nopause") && !rules_sent) {
+            for (auto& peer : peers) if (peer->connection.slot() == 0) peer->connection.rules(false);
+            rules_sent = true;
+        }
+        bool rules_seen = !flags.count("nopause");
+        if (!rules_seen) {
+            rules_seen = true;
+            for (auto& peer : peers) rules_seen &= !peer->connection.roster().pausing;
+        }
+        if (all_joined && rules_seen && !ready_sent) {
             for (auto& peer : peers) peer->connection.ready(true);
             ready_sent = true;
         }

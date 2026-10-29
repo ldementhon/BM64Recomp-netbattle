@@ -6,7 +6,7 @@ Build independently of the game, ROM, renderer, and game submodules:
 cmake -S server -B build/lobby -DCMAKE_BUILD_TYPE=Release
 cmake --build build/lobby -j 4
 ctest --test-dir build/lobby --output-on-failure
-build/lobby/bm64-lobby 0.0.0.0 6464 build/share/release-v1.txt
+build/lobby/bm64-lobby 0.0.0.0 6464 build/share/release-v2.txt
 ```
 
 ## Releases
@@ -73,6 +73,20 @@ unreadying anyone; an empty or invalid name is not sent, and the server rejects 
 are ready. Empty seats are CPUs. The lobby stays connected while a fresh game
 window runs the match; Cancel or Leave tears it down. A failed launch returns the
 room to Lobby. Local input preferences are copied into disposable settings.
+
+Pausing is a room rule, on by default, shown on every player's screen. Only P1 can
+change it, from the lobby, with the **Pausing** button; readiness is kept. The server
+sends the rule in `Roster` and copies it into each `Prepare`, so every game in a match
+applies the same rule (clients refuse a `Prepare` that differs from their roster).
+With it on, any human's Start reaches the battle. The ROM's battle pause ignores every
+other input, and any player's Start resumes; with it off, Start is removed in battle
+as before. Shared menus still take only P1's A.
+
+Each match starts at the player's saved match volume, `match_volume` in
+`online-lobby.json` (50 for new players and older files). The game window saves its
+`sound.json` at startup and whenever its menu closes; when the match ends, the launcher
+reads the main volume from it and saves that for the next match. Offline play keeps its
+own volume.
 Existing transport fixtures continue to use their test token.
 
 To admit a Mac/Windows pair, build both from the same commit and run
@@ -96,7 +110,7 @@ completed a human Mac/Windows internet match and scripted LAN rematches. Repeate
 physical-controller sessions, wider hardware coverage, and the four-person remote
 acceptance run remain open. Historical passes do not certify a rebuilt pair.
 
-The current wire protocol is version 5 (private owner/game channel version 5).
+The current wire protocol is version 6 (private owner/game channel version 5).
 Rebuild the relay and every client together, then revalidate their fingerprints.
 Older peers are rejected. Every 300 game updates, the game takes a separate
 copy-on-write image of that boundary. The image is sealed once every input before
@@ -133,7 +147,7 @@ numbers and bounded simulation lead still need the input protocol; clock estimat
 alone cannot synchronize gameplay over asymmetric routes.
 
 Control messages use reliable ordered channel 0, explicit big-endian fields,
-protocol version 5, and a 1,199-byte maximum. Channels 1–4 carry separate unreliable
+protocol version 6, and a 1,199-byte maximum. Channels 1–4 carry separate unreliable
 sequenced input streams, with 32 recent inputs per upload. There are eight transport slots (four
 playable seats plus pending/rejected joins), a five-second handshake deadline,
 120 incoming messages per connection per second, a 64-KiB incoming wait

@@ -34,6 +34,11 @@ int main(int argc, char** argv) {
 #endif
         auto channel = online::MatchChannel::inherited();
         auto match = std::stoull(std::getenv("BM64_OWNER_MATCH"));
+        // Stand in for the match menu: raise the volume by one, as the real game would save it.
+        auto pausing = std::string(std::getenv("BM64_ONLINE_PAUSE"));
+        assert(pausing == "0" || pausing == "1");
+        std::ofstream(std::filesystem::path(std::getenv("APP_FOLDER_PATH")) / "sound.json")
+            << "{\"main_volume\": " << (std::stoi(std::getenv("BM64_MAIN_VOLUME")) + 1) % 101 << "}";
         channel.send({online::match_channel_version, online::MatchEvent::Ready, match, 1374, 123, 456});
         for (;;) {
             if (auto command = channel.receive()) {
@@ -122,6 +127,16 @@ int main(int argc, char** argv) {
         until([&] { return a.roster().count == 2 && b.roster().count == 2 && a.clock() && b.clock(); });
         auto a_id = a.roster().identity, b_id = b.roster().identity;
         auto& p1 = a.roster().players[0].id == a_id ? a : b;
+        auto& p2 = &p1 == &a ? b : a;
+        // P1 sets the room's pause rule for everyone; another player is refused.
+        assert(a.roster().pausing && b.roster().pausing);
+        p2.rules(false);
+        until([&] { return !p2.error().empty(); });
+        assert(p2.error() == reason_text(Reason::NotP1) && a.roster().pausing && b.roster().pausing);
+        p1.rules(false);
+        until([&] { return !a.roster().pausing && !b.roster().pausing; });
+        p1.rules(true);
+        until([&] { return a.roster().pausing && b.roster().pausing; });
         std::optional<online::MatchMessage> initial;
         auto game_log = [&](unsigned i) {
             return scratch / ("match-" + std::to_string(a.roster().match) + "-player-" + std::to_string(i) + ".log");

@@ -84,7 +84,7 @@
             <div class="online-panel" data-if="online_visible">
                 <h2>Online Battle</h2>
                 <p>Fixed player colors. P1 advances the shared menus. Empty seats use CPUs.</p>
-                <p class="online-note">{{online_release}} early playtest: audio enabled; rumble disabled. P1 chooses stages. Leave ends play for everyone.</p>
+                <p class="online-note">{{online_release}} early playtest: audio enabled; rumble disabled. P1 chooses stages. With pausing on, anyone's Start pauses and resumes. Leave ends play for everyone.</p>
                 <div class="online-fields">
                     <label class="online-field">Server address
                         <input id="online-address" type="text" data-value="online_address" maxlength="253" data-attrif-disabled="online_connected"/>
@@ -116,6 +116,7 @@
                 <button id="online-connect" class="button" data-if="!online_connected" data-event-click="online_action('connect')">Connect</button>
                 <button id="online-ready" class="button" data-if="online_joined &amp;&amp; !online_in_match &amp;&amp; !online_ready" data-event-click="online_action('ready')">Ready</button>
                 <button class="button" data-if="online_joined &amp;&amp; !online_in_match &amp;&amp; online_ready" data-event-click="online_action('ready')">Not ready</button>
+                <button id="online-pausing" class="button" data-if="online_joined &amp;&amp; !online_in_match" data-attrif-disabled="!online_can_change_rules" data-event-click="online_action('pausing')">Pausing: {{online_pausing ? 'On' : 'Off'}} (P1)</button>
                 <button id="online-start" class="button" data-if="online_joined &amp;&amp; !online_in_match" data-attrif-disabled="!online_can_start" data-class-online-start--go="online_can_start" data-event-click="online_action('start')">Start battle (P1)</button>
                 <button class="button" data-if="online_in_match" data-event-click="online_action('cancel')">Cancel battle</button>
                 <button id="online-leave" class="button" data-if="online_connected" data-event-click="online_action('leave')">Leave</button>

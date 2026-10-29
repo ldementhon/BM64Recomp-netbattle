@@ -9,12 +9,12 @@
 
 namespace online::lobby {
 constexpr uint32_t magic = 0x424d3634;
-constexpr uint16_t protocol_version = 5;
+constexpr uint16_t protocol_version = 6;
 constexpr size_t packet_limit = 1199;
 constexpr uint8_t control_channel = 0, channel_count = 5;
 using Fingerprint = std::array<uint8_t, 32>;
 enum class Phase : uint8_t { Lobby, Loading, Playing };
-enum class Op : uint8_t { Hello = 1, Roster, Ready, Start, Prepare, Loaded, Commit, Cancel, Finished, End, Reject, Ping, Pong, State, StateChecked, Desync, Restart, Rename };
+enum class Op : uint8_t { Hello = 1, Roster, Ready, Start, Prepare, Loaded, Commit, Cancel, Finished, End, Reject, Ping, Pong, State, StateChecked, Desync, Restart, Rename, Rules };
 enum class Reason : uint8_t { None, Protocol, Incompatible, Full, InProgress, StaleRoster, NotReady, NotP1, LoadFailed, Mismatch, Timeout, Left, Cancelled, Restarted };
 struct Player { uint64_t id = 0; std::string name; bool ready = false; };
 
@@ -28,6 +28,8 @@ struct Packet {
     std::array<Player, 4> players{};
     uint8_t count = 0;
     bool ready = false;
+    // Room rule set by P1 in the lobby; the server copies it into each match.
+    bool pausing = true;
     Phase phase = Phase::Lobby;
     Reason reason = Reason::None;
 };
@@ -129,10 +131,11 @@ inline std::vector<uint8_t> encode(const Packet& p) {
         for (auto byte : p.fingerprint) w.number(byte, 1);
         w.name(p.name); break;
     case Op::Rename: w.name(p.name); break;
+    case Op::Rules: w.number(p.pausing, 1); break;
     case Op::Roster:
         if (p.count > 4) throw std::invalid_argument("invalid roster size");
         w.number(p.identity, 8); w.number(p.revision, 8); w.number(p.match, 8);
-        w.number(uint8_t(p.phase), 1); w.number(p.count, 1);
+        w.number(uint8_t(p.phase), 1); w.number(p.pausing, 1); w.number(p.count, 1);
         for (unsigned i = 0; i < p.count; ++i) {
             w.number(p.players[i].id, 8); w.name(p.players[i].name); w.number(p.players[i].ready, 1);
         }
@@ -143,7 +146,7 @@ inline std::vector<uint8_t> encode(const Packet& p) {
         w.number(p.revision, 8); w.number(p.match, 8); w.number(p.count, 1);
         // Profile 1: fixed colors, P1 stage choice, first to three, deterministic boot,
         // boot-seed profile/time origin zero, two-update scheduling offset.
-        w.number(1, 2); w.number(0, 8); w.number(0, 8); w.number(2, 1); break;
+        w.number(1, 2); w.number(0, 8); w.number(0, 8); w.number(2, 1); w.number(p.pausing, 1); break;
     case Op::Loaded:
     case Op::State:
         w.number(p.match, 8); w.number(p.frame, 8); w.number(p.ram, 8); w.number(p.registers, 8); break;
@@ -175,9 +178,10 @@ inline Packet decode(std::span<const uint8_t> bytes) {
         for (auto& byte : p.fingerprint) byte = uint8_t(r.number(1));
         p.name = r.name(); break;
     case Op::Rename: p.name = r.name(); break;
+    case Op::Rules: p.pausing = r.boolean(); break;
     case Op::Roster:
         p.identity = r.number(8); p.revision = r.number(8); p.match = r.number(8);
-        p.phase = Phase(r.number(1)); p.count = uint8_t(r.number(1));
+        p.phase = Phase(r.number(1)); p.pausing = r.boolean(); p.count = uint8_t(r.number(1));
         if (p.phase > Phase::Playing || p.count > 4) throw std::invalid_argument("invalid roster");
         for (unsigned i = 0; i < p.count; ++i) {
             auto& player = p.players[i];
@@ -193,6 +197,7 @@ inline Packet decode(std::span<const uint8_t> bytes) {
         p.revision = r.number(8); p.match = r.number(8); p.count = uint8_t(r.number(1));
         if (p.count < 2 || p.count > 4 || r.number(2) != 1 || r.number(8) != 0 || r.number(8) != 0 || r.number(1) != 2)
             throw std::invalid_argument("unsupported match profile");
+        p.pausing = r.boolean();
         break;
     case Op::Loaded:
     case Op::State:

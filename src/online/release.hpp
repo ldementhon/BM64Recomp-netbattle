@@ -4,7 +4,7 @@
 
 // One number for each set of Mac and Windows downloads sent out together.
 // Bump it before building new downloads; server/make_release.py reads it from here.
-#define BM64_ONLINE_RELEASE 1
+#define BM64_ONLINE_RELEASE 2
 #define BM64_ONLINE_STRING2(x) #x
 #define BM64_ONLINE_STRING(x) BM64_ONLINE_STRING2(x)
 
