@@ -82,7 +82,7 @@ int main() {
         a.send({LobbyWorker::Action::Leave}); b.send({LobbyWorker::Action::Leave});
         until([&] { return !a.view().connected && !b.view().connected && server.room().count() == 0; });
         connect(a, "Alice");
-        until([&] { return a.view().status == reason_text(Reason::Incompatible); });
+        until([&] { return a.view().status == incompatible_text(online::release); });
     }
     enet_deinitialize(); fs::remove_all(scratch);
     std::cout << "PASS: background owners finish repeat matches without UI polls, publish seats/Ready, rename, reject changed ROM on Prepare/reconnect, and leave cleanly\n";

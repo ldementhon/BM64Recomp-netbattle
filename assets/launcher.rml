@@ -78,13 +78,13 @@
 					</div>
 				</div>
 				<div class="bottom-left">
-					<label>v{{version_number}}</label>
+					<label>v{{version_number}} · {{online_release}}</label>
 				</div>
 			</div>
             <div class="online-panel" data-if="online_visible">
                 <h2>Online Battle</h2>
                 <p>Fixed player colors. P1 advances the shared menus. Empty seats use CPUs.</p>
-                <p class="online-note">Early playtest: audio enabled; rumble disabled. P1 chooses stages. Leave ends play for everyone.</p>
+                <p class="online-note">{{online_release}} early playtest: audio enabled; rumble disabled. P1 chooses stages. Leave ends play for everyone.</p>
                 <div class="online-fields">
                     <label class="online-field">Server address
                         <input id="online-address" type="text" data-value="online_address" maxlength="253" data-attrif-disabled="online_connected"/>

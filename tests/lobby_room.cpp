@@ -35,9 +35,22 @@ int main() {
         assert(!valid_name(name));
     auto h = hello();
     assert(decode(encode(h)).name == h.name && decode(encode(h)).fingerprint == fingerprint);
+    // Any two releases can read each other's release number from these fixed layouts.
+    h.release = 0x0107;
+    auto hello_wire = encode(h);
+    assert(decode(hello_wire).release == 0x0107 && hello_release(hello_wire) == 0x0107);
+    assert((std::vector<uint8_t>(hello_wire.begin(), hello_wire.begin() + 9) == std::vector<uint8_t>{'B','M','6','4',0,5,1,1,7}));
+    assert(!hello_release({hello_wire.begin(), hello_wire.begin() + 8}));
+    auto old_hello = hello_wire; old_hello[5] = 4;
+    assert(!hello_release(old_hello) && wire_protocol(old_hello) == 4);
+    auto release_reply = encode_release_mismatch(0x0203);
+    assert((release_reply == std::vector<uint8_t>{'B','M','6','4',0,0,2,3}) && release_mismatch(release_reply) == 0x0203);
+    assert(!release_mismatch(hello_wire) && !hello_release(release_reply));
+    try { decode(release_reply); assert(false); } catch (const std::invalid_argument&) {}
+    h.release = 0;
     Packet ready{Op::Ready}; ready.revision = 0x0102030405060708; ready.ready = true;
     auto wire = encode(ready);
-    assert((wire == std::vector<uint8_t>{'B','M','6','4',0,4,3,1,2,3,4,5,6,7,8,1}));
+    assert((wire == std::vector<uint8_t>{'B','M','6','4',0,5,3,1,2,3,4,5,6,7,8,1}));
     auto malformed = [&](const std::vector<uint8_t>& bytes) {
         try { decode(bytes); assert(false); } catch (const std::invalid_argument&) {}
     };

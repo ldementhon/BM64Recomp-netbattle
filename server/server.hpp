@@ -2,6 +2,7 @@
 #include "../src/online/lobby_room.hpp"
 #include "../src/online/enet_host.hpp"
 #include "../src/online/input_protocol.hpp"
+#include "../src/online/release.hpp"
 #include <deque>
 #include <memory>
 
@@ -9,8 +10,8 @@ namespace online::lobby {
 // One serialized room. Pending handshakes have their own bounded transport slots.
 class Server {
 public:
-    Server(const ENetAddress& address, std::vector<Fingerprint> accepted)
-        : host_(make_host(&address, 8)), room_(std::move(accepted)) {}
+    Server(const ENetAddress& address, std::vector<Fingerprint> accepted, uint16_t release = online::release)
+        : host_(make_host(&address, 8)), room_(std::move(accepted)), release_(release) {}
     Server(const ENetAddress& address, Fingerprint fingerprint)
         : Server(address, std::vector<Fingerprint>{fingerprint}) {}
     unsigned port() const { return host_->address.port; }
@@ -41,7 +42,11 @@ public:
                 try {
                     if (event.channelID == control_channel) {
                         if (!(packet->flags & ENET_PACKET_FLAG_RELIABLE)) throw std::invalid_argument("unreliable control message");
-                        auto decoded = decode({packet->data, packet->dataLength});
+                        std::span<const uint8_t> bytes{packet->data, packet->dataLength};
+                        if (auto theirs = hello_release(bytes); theirs && *theirs != release_) {
+                            reject_release(event.peer); continue;
+                        }
+                        auto decoded = decode(bytes);
                         if ((decoded.op == Op::Finished || decoded.op == Op::State) && room_.phase() == Phase::Playing && decoded.match == room_.match() &&
                             decoded.frame > room_.initial_frame() && decoded.frame - room_.initial_frame() > input_confirmed())
                             deliver(room_.abort(Reason::Mismatch));
@@ -83,6 +88,7 @@ private:
     };
     Host host_;
     Room room_;
+    uint16_t release_;
     std::array<Connection, 8> connections_{};
     uint64_t next_identity_ = 0;
     std::optional<InputRelay> inputs_;
@@ -116,6 +122,15 @@ private:
         }
     }
 
+    // Another release may not parse a Reject, so it gets the fixed release reply instead.
+    void reject_release(ENetPeer* peer) {
+        auto& connection = connections_[peer - host_->peers];
+        if (!send_packet(peer, control_channel, encode_release_mismatch(release_), ENET_PACKET_FLAG_RELIABLE)) {
+            enet_peer_reset(peer); connection = {}; return;
+        }
+        connection.closing = true; connection.connected = monotonic_ms();
+        enet_peer_disconnect_later(peer, 0);
+    }
     void reject(ENetPeer* peer, Reason reason) {
         Packet packet{Op::Reject}; packet.reason = reason;
         deliver({{connections_[peer - host_->peers].identity, packet, true}});

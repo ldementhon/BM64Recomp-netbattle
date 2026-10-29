@@ -81,6 +81,27 @@ int main(int argc, char** argv) {
     auto rom = real ? fs::absolute(argv[2]) : scratch / "fixture.rom";
     if (!real) std::ofstream(rom) << "fixture";
     assert(enet_initialize() == 0);
+    if (!real) {
+        // Players are told which release to get, or why files of the same release were refused.
+        ENetAddress address{}; assert(enet_address_set_host(&address, "127.0.0.1") == 0);
+        Fingerprint fingerprint{42}, other{43};
+        auto refused = [&](uint16_t server_release, uint16_t client_release, Fingerprint sent) {
+            Server server(address, std::vector<Fingerprint>{fingerprint}, server_release);
+            LobbyClient client("127.0.0.1", uint16_t(server.port()), "Alice", sent, client_release);
+            auto deadline = monotonic_ms() + 7000;
+            while (!client.disconnected()) {
+                assert(monotonic_ms() < deadline);
+                server.service(); client.poll();
+                std::this_thread::sleep_for(std::chrono::milliseconds(1));
+            }
+            assert(!client.joined() && server.room().count() == 0);
+            return client.error();
+        };
+        assert(refused(3, 2, fingerprint) == "This server runs online v3 and you have v2. Get the v3 download to join.");
+        assert(refused(2, 3, fingerprint) == "This server runs online v2 and you have v3. Ask the host to update the server to v3.");
+        assert(refused(2, 2, other) == "Your game files don't match online v2 on this server. "
+                                       "Reinstall from the v2 download, and use the same US ROM as the host.");
+    }
     {
         ENetAddress address{}; assert(enet_address_set_host(&address, "127.0.0.1") == 0);
         Fingerprint fingerprint{42};

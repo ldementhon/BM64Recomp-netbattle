@@ -11,6 +11,7 @@ struct Client {
     ENetPeer* peer = nullptr;
     bool connected = false, disconnected = false;
     unsigned relays = 0;
+    std::optional<uint16_t> server_release;
     Packet roster{Op::Roster};
     std::vector<Packet> events;
     explicit Client(unsigned port) {
@@ -45,6 +46,9 @@ struct Client {
                     enet_packet_destroy(event.packet); continue;
                 }
                 assert(event.channelID == control_channel && (event.packet->flags & ENET_PACKET_FLAG_RELIABLE));
+                if ((server_release = release_mismatch({event.packet->data, event.packet->dataLength}))) {
+                    enet_packet_destroy(event.packet); continue;
+                }
                 auto packet = decode({event.packet->data, event.packet->dataLength});
                 enet_packet_destroy(event.packet);
                 if (packet.op == Op::Roster) roster = packet;
@@ -78,9 +82,9 @@ struct Fixture {
         } while (monotonic_ms() < deadline);
         throw std::runtime_error("network test deadline exceeded");
     }
-    void join(Client& client, bool compatible = true) {
+    void join(Client& client, bool compatible = true, uint16_t release = online::release) {
         until([&] { return client.connected; });
-        Packet hello{Op::Hello}; hello.name = "Player"; hello.fingerprint = fingerprint;
+        Packet hello{Op::Hello}; hello.name = "Player"; hello.fingerprint = fingerprint; hello.release = release;
         if (!compatible) hello.fingerprint[0] ^= 1;
         client.send(hello);
     }
@@ -115,7 +119,8 @@ int main() {
         f.until([&] { for (auto& c : f.clients) if (!c->connected) return false; return true; });
         // Queue all hellos before the server runs: serialized allocation must stay unique.
         for (auto& c : f.clients) {
-            Packet hello{Op::Hello}; hello.name = "Player"; hello.fingerprint = fingerprint; c->send(hello);
+            Packet hello{Op::Hello}; hello.name = "Player"; hello.fingerprint = fingerprint; hello.release = online::release;
+            c->send(hello);
         }
         f.until([&] { for (auto& c : f.clients) if (c->roster.count != count) return false; return true; });
         for (unsigned i = 0; i < count; ++i) {
@@ -124,6 +129,13 @@ int main() {
         }
         auto& incompatible = f.add(); f.join(incompatible, false);
         f.until([&] { return incompatible.saw(Op::Reject, Reason::Incompatible) && incompatible.disconnected; });
+        // Another release gets the server's release number instead of a Reject it might not parse,
+        // even when its fingerprint would otherwise be accepted.
+        for (uint16_t release : {uint16_t(online::release - 1), uint16_t(online::release + 1)}) {
+            auto& other = f.add(); f.join(other, true, release);
+            f.until([&] { return other.server_release == online::release && other.disconnected; });
+            assert(other.events.empty() && f.server.room().count() == count);
+        }
         if (count == 4) {
             auto& fifth = f.add(); f.join(fifth);
             f.until([&] { return fifth.saw(Op::Reject, Reason::Full) && fifth.disconnected; });

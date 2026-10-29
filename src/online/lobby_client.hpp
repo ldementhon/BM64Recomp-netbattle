@@ -3,23 +3,37 @@
 #include "server_clock.hpp"
 #include "enet_host.hpp"
 #include "input_protocol.hpp"
+#include "release.hpp"
 #include <deque>
 #include <memory>
 
 namespace online::lobby {
+inline std::string release_mismatch_text(uint16_t server, uint16_t client) {
+    auto theirs = release_label(server), ours = release_label(client);
+    auto text = "This server runs online " + theirs + " and you have " + ours + ". ";
+    return text + (server > client ? "Get the " + theirs + " download to join."
+                                   : "Ask the host to update the server to " + ours + ".");
+}
+inline std::string incompatible_text(uint16_t client) {
+    auto ours = release_label(client);
+    return "Your game files don't match online " + ours + " on this server. Reinstall from the " + ours +
+           " download, and use the same US ROM as the host.";
+}
+
 // Connection owner, independent of the disposable game process and renderer.
 // Call ENet initialization once before constructing any clients.
 class LobbyClient {
 public:
-    LobbyClient(const std::string& address, uint16_t port, std::string name, Fingerprint fingerprint)
-        : host_(make_host(nullptr, 1)) {
+    LobbyClient(const std::string& address, uint16_t port, std::string name, Fingerprint fingerprint,
+                uint16_t release = online::release)
+        : host_(make_host(nullptr, 1)), release_(release) {
         if (!valid_name(name) || !port) throw std::invalid_argument("invalid server port or display name");
         ENetAddress endpoint{}; endpoint.port = port;
         if (enet_address_set_host(&endpoint, address.c_str()) < 0) throw std::runtime_error("cannot resolve server address");
         peer_ = enet_host_connect(host_.get(), &endpoint, channel_count, 0);
         if (!peer_) throw std::runtime_error("cannot connect to server");
         enet_peer_timeout(peer_, 8, 1000, 5000);
-        hello_.name = std::move(name); hello_.fingerprint = fingerprint;
+        hello_.name = std::move(name); hello_.fingerprint = fingerprint; hello_.release = release;
         connected_at_ = now();
     }
     ~LobbyClient() { if (peer_) enet_peer_disconnect_now(peer_, 0); }
@@ -108,7 +122,11 @@ public:
                     }
                     if (!(wire->flags & ENET_PACKET_FLAG_RELIABLE))
                         throw std::runtime_error("invalid server control channel");
-                    auto p = decode({wire->data, wire->dataLength});
+                    std::span<const uint8_t> bytes{wire->data, wire->dataLength};
+                    if (auto server = release_mismatch(bytes)) throw std::runtime_error(release_mismatch_text(*server, release_));
+                    if (auto protocol = wire_protocol(bytes); protocol && *protocol < protocol_version)
+                        throw std::runtime_error("This server runs an online build from before v1. Ask the host to update it.");
+                    auto p = decode(bytes);
                     if (p.op == Op::Pong) {
                         if (pings_.empty() || pings_.front().nonce != p.identity)
                             throw std::runtime_error("unexpected server clock response");
@@ -145,7 +163,8 @@ public:
                         start_at_.reset(); input_events_.clear();
                         if (p.reason != Reason::None && p.reason != Reason::Restarted && error_.empty()) error_ = reason_text(p.reason);
                         if (p.reason == Reason::Mismatch && p.frame) error_ += " Frame " + std::to_string(p.frame) + ".";
-                    } else if (p.op == Op::Reject) error_ = reason_text(p.reason);
+                    } else if (p.op == Op::Reject)
+                        error_ = p.reason == Reason::Incompatible ? incompatible_text(release_) : reason_text(p.reason);
                     else throw std::runtime_error("unexpected server message");
                     events.push_back(p);
                 }
@@ -167,6 +186,7 @@ public:
     }
 private:
     Host host_;
+    uint16_t release_;
     ENetPeer* peer_ = nullptr;
     Packet hello_{Op::Hello}, roster_{Op::Roster};
     ServerClock clock_;

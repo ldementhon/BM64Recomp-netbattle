@@ -9,6 +9,7 @@
 #include "../online/lobby_worker.hpp"
 #endif
 #include "../online/lobby_preferences.hpp"
+#include "../online/release.hpp"
 
 namespace {
 std::filesystem::path preferences_path() { return zelda64::get_app_folder_path() / "online-lobby.json"; }
@@ -23,7 +24,7 @@ struct OnlineMenu {
 #endif
     bool visible = false, connected = false, joined = false, ready = false, can_start = false, in_match = false;
     int port = 0;
-    std::string address = "127.0.0.1", server_port = "6464", name = "Player";
+    std::string address = "127.0.0.1", server_port = "6464", name = "Player", release = online::release_name;
     std::string status = "Enter a server address to join.", latency, local_error;
     std::array<std::string, 4> seats{"P1 — CPU", "P2 — CPU", "P3 — CPU", "P4 — CPU"};
     // 0 = CPU, 1 = not ready, 2 = ready.
@@ -130,6 +131,7 @@ void recompui::bind_online_menu(Rml::DataModelConstructor& constructor) {
     }
     menu->model = constructor.GetModelHandle();
     constructor.Bind("online_available", &menu->available);
+    constructor.Bind("online_release", &menu->release);
     constructor.Bind("online_visible", &menu->visible);
     constructor.Bind("online_connected", &menu->connected);
     constructor.Bind("online_joined", &menu->joined);

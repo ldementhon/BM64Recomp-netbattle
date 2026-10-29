@@ -42,6 +42,27 @@ current build.
 
 ## Implementation record
 
+- Numbered online releases (2026-10-28). Playtesters received new zips every
+  few days and the server took two raw fingerprints, so nobody could tell which
+  build they had. `BM64_ONLINE_RELEASE` in `src/online/release.hpp` now numbers
+  each Mac/Windows pair (starting at v1), shown in the launcher corner and on the
+  Online Battle screen. `server/make_release.py` checks both staged executables
+  carry the number and that no ROM is staged, then writes `release-vN.txt` and
+  `BM64Recompiled-vN-{mac,windows}.zip`; `bm64-lobby` takes that file and
+  refuses one for another release. Fingerprints are still checked. Protocol 5
+  (fingerprint domain v5) puts the release number right after the Hello op, and
+  a server of another release answers with a fixed 8-byte reply naming its own,
+  so clients say which download to get or that the host must update; a matching
+  release with other files says the files or ROM don't match. `lobby_room`
+  pins both layouts, `lobby_network` and `lobby_client` cover older and newer
+  releases over real ENet, and the new `release_file` CTest covers the file.
+  v1 is Mac `988812fb…` (fingerprint `12b8f82b…`) and Windows `30494e28…`
+  (fingerprint `9e79a695…`). Both pass the lobby CTests, fingerprint, controller
+  and startup checks plus the Mac network baseline, and a Mac/Windows LAN match
+  served from `release-v1.txt` agrees at every check to frame 1000. The script
+  refuses a staged ROM-header file and a repackaged v1 with other files; the
+  server refuses a v2 release file.
+
 - Online Battle screen improvements (2026-10-28). The server address, port and
   name are saved to `online-lobby.json` on Connect and restored next time;
   malformed files or fields fall back to the defaults. Seat states show Ready in

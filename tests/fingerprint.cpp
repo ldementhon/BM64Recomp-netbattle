@@ -16,11 +16,11 @@ int main(int argc, char** argv) {
     assert(fingerprint_hex(file_sha256(rom)) == "e3b0c44298fc1c149afbf4c8996fb92427ae41e4649b934ca495991b7852b855");
     auto original = client_fingerprint(game, rom);
 #if defined(_WIN32)
-    assert(fingerprint_hex(original) == "7c2f3b02b10486a1f2cb7cd03ab948f4bd551f5ab3728e5b77229048dd6399d8");
+    assert(fingerprint_hex(original) == "8c68b28d3bcd6629395d90628e74b944b4b8dbe8eb95bfbf855f5af9993422e2");
 #elif defined(__aarch64__)
-    assert(fingerprint_hex(original) == "78545be658092eece652324c21486329e7b95874583b848398a09ad7203e2739");
+    assert(fingerprint_hex(original) == "b8b4d5b1e7c1e88120054fb1746a6f78120ae1f7c6de0952fdc3e8b6a5c326ce");
 #else
-    assert(fingerprint_hex(original) == "5cc85e3180b7c875ab290f272b110a2ecdfeceef3b437579c33eee68a0fc98e2");
+    assert(fingerprint_hex(original) == "98b97f6e63b1f8a8a6f53c014b080bdc092f6cf9a297ca253fd9ff84ee1d4952");
 #endif
     assert(client_fingerprint(game, rom) == original);
     assert(client_fingerprint(rom, game) != original);

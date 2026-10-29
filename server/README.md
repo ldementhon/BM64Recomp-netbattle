@@ -6,8 +6,42 @@ Build independently of the game, ROM, renderer, and game submodules:
 cmake -S server -B build/lobby -DCMAKE_BUILD_TYPE=Release
 cmake --build build/lobby -j 4
 ctest --test-dir build/lobby --output-on-failure
-build/lobby/bm64-lobby 127.0.0.1 6464 CLIENT_FINGERPRINT_HEX [CLIENT_FINGERPRINT_HEX ...]
+build/lobby/bm64-lobby 0.0.0.0 6464 build/share/release-v1.txt
 ```
+
+## Releases
+
+Each pair of Mac and Windows downloads is one numbered online release (v1, v2, ...).
+The number is `BM64_ONLINE_RELEASE` in `src/online/release.hpp`; the launcher shows it in
+its bottom-left corner and on the Online Battle screen ("Online v1"). To send out new builds:
+
+1. Bump `BM64_ONLINE_RELEASE`, then build the Mac and Windows games and this server.
+2. Copy the Mac app into `build/share/staging-mac/BM64Recompiled/` and the Windows
+   executable and assets into `build/share/staging-windows/BM64Recompiled/`.
+3. Run `python3 server/make_release.py --rom PATH_TO_ROM` on the Mac. It checks that both
+   staged executables were built with the current number and that no ROM is staged,
+   then writes `build/share/BM64Recompiled-vN-mac.zip`, `BM64Recompiled-vN-windows.zip`
+   and `release-vN.txt`, and prints the server command. It refuses to package a number
+   again with different files.
+
+`release-vN.txt` lists the accepted builds:
+
+```text
+release 1
+macOS-arm64 <64 hex digits>
+Windows-x86_64 <64 hex digits>
+```
+
+The server refuses to start if the file's number differs from its own. A client of another
+release is told both numbers ("This server runs online v3 and you have v2. Get the v3
+download to join."), and a client of the same release whose fingerprint differs is told its
+files or ROM don't match. Each Hello starts with the magic, protocol, `Hello` op and release
+number, and the reply to another release is the magic, protocol 0 and the server's release
+number; both layouts stay fixed so releases with different protocols can still name each other.
+Fingerprints can still be passed directly in place of the file to test local builds:
+`bm64-lobby 127.0.0.1 6464 CLIENT_FINGERPRINT_HEX [CLIENT_FINGERPRINT_HEX ...]`.
+
+## Builds and fingerprints
 
 ENet 1.3.18 is pinned to upstream commit
 `2662c0de09e36f2a2030ccc2c528a3e4c9e8138a`. CMake fetches it during configuration.
@@ -62,7 +96,7 @@ completed a human Mac/Windows internet match and scripted LAN rematches. Repeate
 physical-controller sessions, wider hardware coverage, and the four-person remote
 acceptance run remain open. Historical passes do not certify a rebuilt pair.
 
-The current wire protocol is version 3 (private owner/game channel version 5).
+The current wire protocol is version 5 (private owner/game channel version 5).
 Rebuild the relay and every client together, then revalidate their fingerprints.
 Older peers are rejected. Every 300 game updates, the game takes a separate
 copy-on-write image of that boundary. The image is sealed once every input before
@@ -99,7 +133,7 @@ numbers and bounded simulation lead still need the input protocol; clock estimat
 alone cannot synchronize gameplay over asymmetric routes.
 
 Control messages use reliable ordered channel 0, explicit big-endian fields,
-protocol version 4, and a 1,199-byte maximum. Channels 1–4 carry separate unreliable
+protocol version 5, and a 1,199-byte maximum. Channels 1–4 carry separate unreliable
 sequenced input streams, with 32 recent inputs per upload. There are eight transport slots (four
 playable seats plus pending/rejected joins), a five-second handshake deadline,
 120 incoming messages per connection per second, a 64-KiB incoming wait

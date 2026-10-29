@@ -1,13 +1,15 @@
 #pragma once
 #include <array>
 #include <cstdint>
+#include <optional>
 #include <span>
 #include <stdexcept>
 #include <string>
 #include <vector>
 
 namespace online::lobby {
-constexpr uint16_t protocol_version = 4;
+constexpr uint32_t magic = 0x424d3634;
+constexpr uint16_t protocol_version = 5;
 constexpr size_t packet_limit = 1199;
 constexpr uint8_t control_channel = 0, channel_count = 5;
 using Fingerprint = std::array<uint8_t, 32>;
@@ -20,6 +22,7 @@ struct Player { uint64_t id = 0; std::string name; bool ready = false; };
 struct Packet {
     Op op;
     uint64_t revision = 0, match = 0, identity = 0, frame = 0, ram = 0, registers = 0, time = 0;
+    uint16_t release = 0;
     Fingerprint fingerprint{};
     std::string name{};
     std::array<Player, 4> players{};
@@ -91,11 +94,38 @@ public:
     bool end() const { return at_ == bytes_.size(); }
 };
 
+// Every release keeps these layouts, so builds from different releases can name each other's
+// release even when the rest of the protocol changed. A Hello starts with magic, protocol,
+// Op::Hello and the release number. A server of another release answers with magic,
+// protocol 0 and its own release number, then disconnects.
+inline std::optional<uint16_t> wire_protocol(std::span<const uint8_t> bytes) {
+    if (bytes.size() < 6) return std::nullopt;
+    Reader r(bytes);
+    if (r.number(4) != magic) return std::nullopt;
+    return uint16_t(r.number(2));
+}
+inline std::optional<uint16_t> hello_release(std::span<const uint8_t> bytes) {
+    // Protocol 5 is the first with a release number.
+    auto protocol = wire_protocol(bytes);
+    if (!protocol || *protocol < 5 || bytes.size() < 9 || bytes[6] != uint8_t(Op::Hello)) return std::nullopt;
+    return uint16_t(bytes[7] << 8 | bytes[8]);
+}
+inline std::vector<uint8_t> encode_release_mismatch(uint16_t server_release) {
+    Writer w;
+    w.number(magic, 4); w.number(0, 2); w.number(server_release, 2);
+    return w.bytes;
+}
+inline std::optional<uint16_t> release_mismatch(std::span<const uint8_t> bytes) {
+    if (bytes.size() != 8 || wire_protocol(bytes) != 0) return std::nullopt;
+    return uint16_t(bytes[6] << 8 | bytes[7]);
+}
+
 inline std::vector<uint8_t> encode(const Packet& p) {
     Writer w;
-    w.number(0x424d3634, 4); w.number(protocol_version, 2); w.number(uint8_t(p.op), 1);
+    w.number(magic, 4); w.number(protocol_version, 2); w.number(uint8_t(p.op), 1);
     switch (p.op) {
     case Op::Hello:
+        w.number(p.release, 2);
         for (auto byte : p.fingerprint) w.number(byte, 1);
         w.name(p.name); break;
     case Op::Rename: w.name(p.name); break;
@@ -136,11 +166,12 @@ inline std::vector<uint8_t> encode(const Packet& p) {
 inline Packet decode(std::span<const uint8_t> bytes) {
     if (bytes.size() > packet_limit) throw std::invalid_argument("oversized lobby packet");
     Reader r(bytes);
-    if (r.number(4) != 0x424d3634 || r.number(2) != protocol_version)
+    if (r.number(4) != magic || r.number(2) != protocol_version)
         throw std::invalid_argument("incompatible lobby protocol");
     Packet p{Op(r.number(1))};
     switch (p.op) {
     case Op::Hello:
+        p.release = uint16_t(r.number(2));
         for (auto& byte : p.fingerprint) byte = uint8_t(r.number(1));
         p.name = r.name(); break;
     case Op::Rename: p.name = r.name(); break;
