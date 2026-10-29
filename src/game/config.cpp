@@ -428,6 +428,7 @@ nlohmann::json controls_config() {
         // Save mode
         recomp::to_json(port_json["mode"], recomp::get_port_mode(p));
         port_json["stick_sensitivity"] = recomp::get_stick_sensitivity(p);
+        port_json["stick_release_filter"] = recomp::get_stick_release_filter(p);
         auto calibration = recomp::get_stick_calibration(p);
         port_json["stick_calibration"] = {
             {"enabled", calibration.enabled},
@@ -549,6 +550,7 @@ bool set_controls_from_json(const nlohmann::json& config_json) {
         recomp::set_port_mode(p, p == 0 ? recomp::ControllerPortMode::Keyboard : recomp::ControllerPortMode::Off);
         recomp::set_stick_sensitivity(p, 100);
         recomp::set_stick_calibration(p, {});
+        recomp::set_stick_release_filter(p, false);
     }
     bool upgrade_controller_defaults = from_or_default(config_json, "controller_defaults_version", 0) < controller_defaults_version;
 
@@ -564,6 +566,7 @@ bool set_controls_from_json(const nlohmann::json& config_json) {
                 p == 0 ? recomp::ControllerPortMode::Keyboard : recomp::ControllerPortMode::Off);
             recomp::set_port_mode(p, mode);
             recomp::set_stick_sensitivity(p, from_or_default(port_json, "stick_sensitivity", 100));
+            recomp::set_stick_release_filter(p, from_or_default(port_json, "stick_release_filter", false));
             recomp::set_stick_calibration(p, {});
             auto calibration_it = port_json.find("stick_calibration");
             if (calibration_it != port_json.end() && calibration_it->is_object()) {

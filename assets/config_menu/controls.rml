@@ -114,6 +114,12 @@
                     />
                 </div>
                 <p style="font-size: 16dp; margin: 4dp 0dp 0dp;">Manual adjustment: increase if a fully tilted stick cannot reach full running speed. Default: 100%.</p>
+                <div style="display: flex; align-items: center; gap: 16dp; margin-top: 12dp;">
+                    <button id="stick_release_filter_button" class="button" data-class-button--success="stick_release_filter" data-attrif-disabled="calibrating_stick" data-event-click="toggle_stick_release_filter">
+                        <div class="button__label">Snapback Filter: {{stick_release_filter ? 'On' : 'Off'}}</div>
+                    </button>
+                    <p style="font-size: 16dp; margin: 0dp;">When you let go, ignore the stick springing back for a moment, so your character keeps facing the way you pushed, diagonals included. A firm push still turns at once. Default: Off.</p>
+                </div>
             </div>
             <div class="config__wrapper input-config">
                 <div class="input-config__horizontal-split">

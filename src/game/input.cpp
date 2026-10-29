@@ -44,6 +44,17 @@ void recomp::set_stick_sensitivity(int port, int percent) {
     stick_sensitivities[port].store(std::clamp(percent, 100, 200));
 }
 
+static std::array<std::atomic_bool, recomp::max_ports> stick_release_filters{};
+
+bool recomp::get_stick_release_filter(int port) {
+    return port >= 0 && port < recomp::max_ports && stick_release_filters[port].load();
+}
+
+void recomp::set_stick_release_filter(int port, bool enabled) {
+    if (port < 0 || port >= recomp::max_ports) return;
+    stick_release_filters[port].store(enabled);
+}
+
 recomp::ControllerPortMode recomp::get_port_mode(int port) {
     if (port < 0 || port >= recomp::max_ports) return recomp::ControllerPortMode::Off;
     return port_modes[port].load();

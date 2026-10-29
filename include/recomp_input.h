@@ -118,6 +118,9 @@ namespace recomp {
     void set_stick_sensitivity(int port, int percent);
     StickCalibration get_stick_calibration(int port);
     bool set_stick_calibration(int port, const StickCalibration& calibration);
+    // Per-player snapback filter (StickReleaseFilter); off by default.
+    bool get_stick_release_filter(int port);
+    void set_stick_release_filter(int port, bool enabled);
     // Reads the assigned stick before calibration, deadzone, or sensitivity.
     bool get_raw_controller_stick(int port, float* x_out, float* y_out, int32_t* controller_id_out,
         std::span<float> axes_out = {});

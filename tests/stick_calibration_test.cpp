@@ -133,5 +133,37 @@ int main() {
     x = .1f; y = .1f;
     recomp::apply_stick_deadzone(x, y, .15f);
     check(x == 0 && y == 0, "radial deadzone suppresses diagonal resting noise");
+    {
+        // Snapback filter: the rebound after a firm push reads as centered for a moment.
+        auto filtered = [](recomp::StickReleaseFilter& filter, float x, float y, double now) {
+            filter.apply(x, y, now);
+            return std::array<float, 2>{x, y};
+        };
+        recomp::StickReleaseFilter filter;
+        check(filtered(filter, -.45f, 0, 0) == std::array<float, 2>{-.45f, 0}, "partial tilt passes before any firm push");
+        check(filtered(filter, 1, 0, 1) == std::array<float, 2>{1, 0}, "firm push passes");
+        check(filtered(filter, .3f, 0, 1.02) == std::array<float, 2>{.3f, 0}, "straight return toward center passes");
+        check(filtered(filter, 0, 0, 1.03) == std::array<float, 2>{0, 0}, "center passes");
+        check(filtered(filter, -.55f, .1f, 1.05) == std::array<float, 2>{0, 0}, "opposite rebound reads as centered");
+        check(filtered(filter, .1f, .4f, 1.08) == std::array<float, 2>{0, 0}, "sideways wobble reads as centered");
+        check(filtered(filter, -.55f, 0, 1.101) == std::array<float, 2>{-.55f, 0}, "partial tilts pass again after the hold");
+        check(filtered(filter, 1, 0, 2) == std::array<float, 2>{1, 0}, "firm push again");
+        check(filtered(filter, -.7f, 0, 2.02) == std::array<float, 2>{-.7f, 0}, "a firm reversal turns at once");
+        check(filtered(filter, .4f, 0, 2.05) == std::array<float, 2>{0, 0}, "the hold follows the latest firm direction");
+
+        // Letting go of a diagonal: the axes return unevenly, so the last readings lean
+        // toward one side. Those read as centered, and the game keeps the diagonal facing.
+        recomp::StickReleaseFilter diagonal;
+        check(filtered(diagonal, .7f, .7f, 0) == std::array<float, 2>{.7f, .7f}, "firm diagonal passes");
+        check(filtered(diagonal, .45f, .4f, .02) == std::array<float, 2>{.45f, .4f}, "near-diagonal return passes");
+        check(filtered(diagonal, .45f, .15f, .04) == std::array<float, 2>{0, 0}, "return leaning right reads as centered");
+        check(filtered(diagonal, .05f, .4f, .06) == std::array<float, 2>{0, 0}, "return leaning up reads as centered");
+        // Circling the rim stays firm, so the filter never interrupts it.
+        recomp::StickReleaseFilter circle;
+        for (int i = 0; i <= 64; ++i) {
+            float angle = i * (6.28318530718f / 64), x = .9f * std::cos(angle), y = .9f * std::sin(angle);
+            check(filtered(circle, x, y, i * .016) == std::array<float, 2>{x, y}, "circling the rim passes");
+        }
+    }
     std::cout << checks << " stick calibration checks passed.\n";
 }

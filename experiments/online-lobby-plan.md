@@ -42,6 +42,25 @@ current build.
 
 ## Implementation record
 
+- Optional snapback filter (2026-10-29). Playtesters found that letting go of
+  the stick often turned the character around even with a 20% deadzone, and
+  that diagonals were hard to keep. RAM samples of offline battles show the
+  game keeps the stick's angle (`8030df50`) and rounds facing (`800a13b0`, in
+  degrees) to the nearest of 8 equal 45° slices, so diagonals are not narrow.
+  Facing changes on a single frame at 24 of the stick's 82 units, about 29% of
+  full tilt, and not at 23; that threshold comes after our deadzone, so with 20%
+  a rebound past about 43% turns the character. Releasing a diagonal likewise
+  leaves the last readings leaning toward one side. Each player can now turn on
+  **Snapback Filter** under the stick settings in Controls (off by default, saved
+  per player in `controls.json` and carried into online matches with the other
+  controls). For 0.1 s after the last reading at 60% or more, weaker readings more
+  than 15° away from that push read as centered; firm pushes, straight returns and
+  circling the rim pass unchanged. It filters only the local stick before
+  sampling, so online inputs stay deterministic. The stick test covers rebounds,
+  sideways wobble, diagonal release, firm reversals and the rim; the controller
+  test covers the default, reload per player, and the online snapshot. Not yet
+  tried with physical controllers.
+
 - Pausing and a remembered match volume (2026-10-29). Playtesters asked for
   anyone to be able to pause, with no unpause timer, and for the match window's
   volume to be remembered at 50% by default. RAM samples of offline single

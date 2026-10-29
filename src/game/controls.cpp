@@ -1,4 +1,5 @@
 #include <array>
+#include <chrono>
 #include <cmath>
 #include <mutex>
 
@@ -14,6 +15,8 @@ static std::array<input_mapping_array, recomp::max_ports> keyboard_input_mapping
 static std::array<input_mapping_array, recomp::max_ports> controller_input_mappings{};
 static std::array<recomp::StickCalibration, recomp::max_ports> stick_calibrations{};
 static std::mutex stick_calibrations_mutex;
+static std::array<recomp::StickReleaseFilter, recomp::max_ports> stick_release_filters{};
+static std::mutex stick_release_filters_mutex;
 
 recomp::StickCalibration recomp::get_stick_calibration(int port) {
     if (port < 0 || port >= recomp::max_ports) return {};
@@ -170,6 +173,11 @@ bool recomp::get_n64_input(int controller_num, uint16_t* buttons_out, float* x_o
 
             recomp::get_stick_calibration(controller_num).apply(joystick_x, joystick_y,
                 recomp::get_joystick_deadzone() / 100.0f);
+            if (recomp::get_stick_release_filter(controller_num)) {
+                double now = std::chrono::duration<double>(std::chrono::steady_clock::now().time_since_epoch()).count();
+                std::lock_guard lock{stick_release_filters_mutex};
+                stick_release_filters[controller_num].apply(joystick_x, joystick_y, now);
+            }
 
             // Adapters and worn N64 sticks may not reach the full reported range.
             // Limit both axes together to retain the stick's direction at saturation.

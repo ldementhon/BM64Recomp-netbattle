@@ -1035,6 +1035,7 @@ public:
                     zelda64::reset_cont_input_bindings(selected_port);
                     recomp::set_stick_sensitivity(selected_port, 100);
                     recomp::set_stick_calibration(selected_port, {});
+                    recomp::set_stick_release_filter(selected_port, false);
                 } else {
                     zelda64::reset_kb_input_bindings(selected_port);
                 }
@@ -1282,6 +1283,14 @@ public:
             [](const Rml::Variant& in) {
                 recomp::set_stick_sensitivity(selected_port, in.Get<int>());
                 controls_model_handle.DirtyVariable("stick_sensitivity");
+                zelda64::save_config();
+            });
+        constructor.BindFunc("stick_release_filter",
+            [](Rml::Variant& out) { out = recomp::get_stick_release_filter(selected_port); });
+        constructor.BindEventCallback("toggle_stick_release_filter",
+            [](Rml::DataModelHandle model_handle, Rml::Event&, const Rml::VariantList&) {
+                recomp::set_stick_release_filter(selected_port, !recomp::get_stick_release_filter(selected_port));
+                model_handle.DirtyVariable("stick_release_filter");
                 zelda64::save_config();
             });
         constructor.RegisterArray<std::vector<std::string>>();

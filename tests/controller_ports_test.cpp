@@ -191,13 +191,18 @@ int main(int argc, char** argv) {
 
     auto path = std::filesystem::path(argv[1]) / "controls.json";
     recomp::set_stick_sensitivity(1, 150);
+    check(!recomp::get_stick_release_filter(1), "snapback filter is off by default");
+    recomp::set_stick_release_filter(1, true);
     recomp::set_input_binding(recomp::GameInput::A, 0, recomp::InputDevice::Controller, {3, SDL_CONTROLLER_BUTTON_Y}, 1);
     check(save_controls_config(path), "save four-player config");
     recomp::set_stick_calibration(1, {});
     recomp::set_stick_sensitivity(1, 100);
+    recomp::set_stick_release_filter(1, false);
     check(load_controls_config(path), "reload four-player config");
     check(recomp::get_stick_sensitivity(1) == 150 && recomp::get_stick_calibration(1).center_x == .2f,
         "sensitivity and calibration survive reload");
+    check(recomp::get_stick_release_filter(1) && !recomp::get_stick_release_filter(0) && !recomp::get_stick_release_filter(2),
+        "snapback filter survives reload for its player only");
     check(recomp::get_input_binding(recomp::GameInput::A, 0, recomp::InputDevice::Controller, 1).input_id == SDL_CONTROLLER_BUTTON_Y,
         "custom per-player binding survives reload");
     auto online_path = std::filesystem::path(argv[1]) / "online-input.json";
@@ -210,9 +215,11 @@ int main(int argc, char** argv) {
     recomp::set_joystick_deadzone(0);
     recomp::set_stick_sensitivity(1, 100);
     recomp::set_stick_calibration(1, {});
+    recomp::set_stick_release_filter(1, false);
     recomp::set_port_mode(1, recomp::ControllerPortMode::Off);
     zelda64::reset_input_bindings();
     check(zelda64::load_online_input(online_path), "load isolated online input snapshot");
+    check(recomp::get_stick_release_filter(1), "online snapshot restores the snapback filter");
     check(recomp::get_joystick_deadzone() == 17 && recomp::get_stick_sensitivity(1) == 150 &&
           recomp::get_stick_calibration(1).center_x == .2f &&
           recomp::get_port_mode(1) == recomp::ControllerPortMode::Controller,

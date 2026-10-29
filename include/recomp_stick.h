@@ -56,6 +56,35 @@ struct StickCalibration {
     }
 };
 
+// Optional per-player snapback filter. A stick let go after a firm push springs
+// past center, and the game turns the character on a single such reading. For a
+// moment after the last firm reading, weaker readings that point away from that
+// push read as centered, so the character keeps facing the way it was pushed.
+// A firm push in any direction counts at once.
+class StickReleaseFilter {
+public:
+    static constexpr float firm = 0.6f;          // Calibrated magnitude of a deliberate push.
+    static constexpr double hold_seconds = 0.1;  // Longer than a stick's first rebound.
+    static constexpr float along_cos = 0.9659258f; // Within 15 degrees: still returning straight.
+
+    void apply(float& x, float& y, double now) {
+        float magnitude = std::hypot(x, y);
+        if (magnitude >= firm) {
+            direction_x_ = x / magnitude;
+            direction_y_ = y / magnitude;
+            firm_at_ = now;
+            return;
+        }
+        if (firm_at_ < 0.0 || now - firm_at_ > hold_seconds || magnitude == 0.0f) return;
+        if ((x * direction_x_ + y * direction_y_) / magnitude >= along_cos) return;
+        x = y = 0.0f;
+    }
+
+private:
+    float direction_x_ = 0.0f, direction_y_ = 0.0f;
+    double firm_at_ = -1.0;
+};
+
 // UI-owned capture state. Sample raw controller events and once per frame while idle.
 class StickCalibrationSession {
 public:
