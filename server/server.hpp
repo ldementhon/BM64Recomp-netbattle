@@ -35,9 +35,15 @@ public:
             } else if (event.type == ENET_EVENT_TYPE_RECEIVE) {
                 std::unique_ptr<ENetPacket, decltype(&enet_packet_destroy)> packet(event.packet, enet_packet_destroy);
                 if (connection.closing || !connection.identity) continue;
-                if (now - connection.rate_window >= 1000) { connection.rate_window = now; connection.received = 0; }
-                if (++connection.received > 120) {
-                    reject(event.peer, Reason::Protocol); continue;
+                if (now - connection.rate_window >= 1000) {
+                    connection.rate_window = now; connection.received = connection.inputs_received = 0;
+                }
+                // Too many control messages is a protocol fault. Input packets arrive in bursts
+                // after a network or machine hitch, and each repeats the newest inputs, so excess
+                // ones are dropped instead.
+                if (event.channelID == control_channel ? ++connection.received > 120 : ++connection.inputs_received > 240) {
+                    if (event.channelID == control_channel) reject(event.peer, Reason::Protocol);
+                    continue;
                 }
                 try {
                     if (event.channelID == control_channel) {
@@ -83,7 +89,7 @@ public:
 private:
     struct Connection {
         uint64_t identity = 0, connected = 0, rate_window = 0;
-        unsigned received = 0;
+        unsigned received = 0, inputs_received = 0;
         bool closing = false;
     };
     Host host_;
@@ -116,9 +122,9 @@ private:
             bool joined = false;
             for (const auto& player : room_.players()) joined |= player.id && player.id == connection.identity;
             if (!joined || connection.closing) continue;
-            if (!send_packet(&host_->peers[i], uint8_t(batch.slot + 1), bytes, 0)) {
-                reject(&host_->peers[i], Reason::Timeout); break;
-            }
+            // A peer whose queue is full misses this relay; later relays repeat the inputs,
+            // and ENet's own timeout still removes a peer that stopped responding.
+            send_packet(&host_->peers[i], uint8_t(batch.slot + 1), bytes, 0);
         }
     }
 

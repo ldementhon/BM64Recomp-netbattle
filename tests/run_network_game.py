@@ -22,7 +22,8 @@ def sha(path):
 
 # Baseline also replays onto check 400 after its hash starts and after it is
 # acknowledged; slowhash delays every hash beyond the next check.
-FLAGS = {"desync": ["desync"], "baseline": ["replaycheck"], "slowhash": ["slowhash"], "nopause": ["nopause"]}
+FLAGS = {"desync": ["desync"], "baseline": ["replaycheck"], "slowhash": ["slowhash"], "nopause": ["nopause"],
+         "burst": ["burst"], "freeze": ["freeze"]}
 
 # Mid-battle Start presses on the default stage: P2 pauses, P3 resumes, P4 pauses, P1 resumes.
 # Each is on a frame where that controller has no other scripted input, which it would replace.
@@ -99,7 +100,7 @@ def run(mode):
         # Paused frames hold the battle, so states leave the baseline at the first check after 1900.
         for text in logs:
             assert all(f"NETWORK_STATE: frame={frame} " in text for frame in (600, 800, 1000))
-    if mode in ("delayed", "negative", "slowhash", "pause", "nopause"):
+    if mode in ("delayed", "negative", "slowhash", "pause", "nopause", "burst", "freeze"):
         reference = SCRATCH / "network-rom-baseline"
         assert json.loads((reference / "metadata.json").read_text()) == metadata, "baseline build or recording differs"
         original = histories(reference)[0]
@@ -114,7 +115,7 @@ def run(mode):
 
 if __name__ == "__main__":
     mode = sys.argv[1] if len(sys.argv) == 2 else "all"
-    modes = ("baseline", "delayed", "negative", "slowhash", "pause", "nopause", "desync")
+    modes = ("baseline", "delayed", "negative", "slowhash", "pause", "nopause", "burst", "freeze", "desync")
     if len(sys.argv) > 2 or mode not in ("all", "match") + modes:
         raise SystemExit("Usage: run_network_game.py [" + "|".join(modes + ("match",)) + "]")
     for selected in (modes if mode == "all" else (mode,)):

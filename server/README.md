@@ -150,8 +150,15 @@ Control messages use reliable ordered channel 0, explicit big-endian fields,
 protocol version 6, and a 1,199-byte maximum. Channels 1–4 carry separate unreliable
 sequenced input streams, with 32 recent inputs per upload. There are eight transport slots (four
 playable seats plus pending/rejected joins), a five-second handshake deadline,
-120 incoming messages per connection per second, a 64-KiB incoming wait
-limit, and a 128-command outgoing queue limit. Slow or invalid peers are removed.
+120 incoming control messages per connection per second, a 64-KiB incoming wait
+limit, and a 128-command outgoing queue limit. Invalid peers, and peers that exceed the
+control-message limit, are removed. Input packets have their own budget of 240 per
+second; packets beyond it are dropped, not punished, because a network or machine
+hitch delivers a second of them at once and each repeats the newest inputs. A relay
+that would overflow a peer's outgoing queue is skipped for that peer, and ENet's
+five-second timeout removes a peer that stops responding. Clients likewise keep only
+the newest upload from their game after a stall, and drop the oldest queued relay that
+a newer one from the same player supersedes.
 Loading has a 30-second deadline; partial finish agreement and stalled input
 confirmation each have five seconds. Input repeats are forwarded immediately,
 even if previously accepted, so a receiver can repair a lost relay while stalled.

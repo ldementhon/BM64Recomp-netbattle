@@ -26,8 +26,8 @@ struct Peer {
 static void run(int argc, char** argv) {
     std::set<std::string> flags(argv + std::min(argc, 8), argv + argc);
     check(argc >= 8 && std::all_of(flags.begin(), flags.end(), [](const std::string& flag) {
-              return flag == "desync" || flag == "replaycheck" || flag == "slowhash" || flag == "nopause"; }),
-          "Usage: network_game GAME ROM INPUT_RECORDING OUTPUT_DIR HUMANS DELAY_MS STOP_FRAME [desync] [replaycheck] [slowhash] [nopause]");
+              return flag == "desync" || flag == "replaycheck" || flag == "slowhash" || flag == "nopause" || flag == "burst" || flag == "freeze"; }),
+          "Usage: network_game GAME ROM INPUT_RECORDING OUTPUT_DIR HUMANS DELAY_MS STOP_FRAME [desync] [replaycheck] [slowhash] [nopause] [burst] [freeze]");
     const bool expect_desync = flags.count("desync");
     auto executable = fs::absolute(argv[1]), rom = fs::absolute(argv[2]), recording = fs::absolute(argv[3]), output = fs::absolute(argv[4]);
     unsigned humans = unsigned(std::stoul(argv[5])), delay = unsigned(std::stoul(argv[6])), stop = unsigned(std::stoul(argv[7]));
@@ -42,6 +42,8 @@ static void run(int argc, char** argv) {
     bool rules_sent = false, ready_sent = false, start_sent = false, cancel_sent = false, restart_sent = false, loss_triggered = false;
     uint64_t loss_end = 0, last_log_read = 0, dropped = 0;
     unsigned restarts = 0;
+    // freeze: P1's owner services nothing for one second, as when its machine stalls.
+    int frozen = -1; uint64_t frozen_until = 0;
     const auto deadline = monotonic_ms() + 150000;
     while (monotonic_ms() < deadline) {
         server.service();
@@ -49,6 +51,10 @@ static void run(int argc, char** argv) {
         bool all_joined = true, all_reached = true, all_done = true;
         for (unsigned i = 0; i < peers.size(); ++i) {
             auto& peer = *peers[i]; auto& client = peer.connection;
+            if (flags.count("freeze") && frozen < 0 && client.joined() && client.slot() == 0 && peer.sampled >= 650) {
+                frozen = int(i); frozen_until = now + 1000;
+            }
+            if (int(i) == frozen && now < frozen_until) { all_reached = all_done = false; continue; }
             for (const auto& event : client.poll()) {
                 if (event.op == Op::Prepare) {
                     // A restart keeps the first match's logs.
@@ -97,6 +103,9 @@ static void run(int argc, char** argv) {
                 auto extra = delay ? delay / 3 : 0;
                 if (delay && input.slot == 1 && peer.sampled % 180 < 60) extra = delay;
                 if (delay && input.slot == 3 && peer.sampled % 2 == 0) extra = delay * 2 / 3;
+                // burst: P1's uploads from 650 to 710 reach the server together, one second late.
+                if (flags.count("burst") && input.slot == 0 && peer.sampled >= 650 && peer.sampled < 710)
+                    extra = 1000 - (peer.sampled - 650) * 16;
                 pending.push_back({now + extra, i, true, input});
             }
             for (const auto& state : peer.game.take_states()) client.check_state(state.frame, state.ram, state.registers);

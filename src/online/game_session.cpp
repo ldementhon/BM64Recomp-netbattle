@@ -225,9 +225,10 @@ std::optional<GameSession::Exit> GameSession::poll(std::chrono::steady_clock::ti
             if (message->event == MatchEvent::Ready && state_ == State::Loading && !ready_) {
                 ready_ = *message;
             } else if (message->event == MatchEvent::InputUpload && state_ == State::Playing) {
-                if (message->input.slot != local_slot_ || inputs_.size() >= 128)
-                    throw std::runtime_error("invalid or excessive game input uploads");
-                inputs_.push_back(message->input);
+                if (message->input.slot != local_slot_) throw std::runtime_error("invalid game input upload");
+                // Each upload carries the newest inputs and covers the whole lead bound, so only the
+                // latest is worth sending. After a stall this avoids a burst to the relay.
+                inputs_.assign(1, message->input);
             } else if (message->event == MatchEvent::State && state_ == State::Playing && ready_ &&
                        message->frame > ready_->frame && !pending_state_ && states_.empty()) {
                 states_.push_back(*message); pending_state_ = message->frame;

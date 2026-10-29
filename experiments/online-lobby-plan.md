@@ -42,6 +42,24 @@ current build.
 
 ## Implementation record
 
+- Hitches no longer remove players (2026-10-29). In a playtest, one player
+  left the room mid-match while every input was still arriving on time (the
+  Windows log shows inputs confirmed within four frames to the end, then the
+  slot shift). Holding one player's uploads for a second and releasing them
+  together, or freezing one owner for a second, reproduced it: the server
+  counted more than 120 messages in a second and removed the player with
+  `Protocol`. Clients could also disconnect themselves after a freeze (128
+  queued relays) or end the match on a full send queue. Each upload covers the
+  whole lead bound (`2 * prediction_limit + 2 * input_delay + 3 <= input_slots`),
+  so the owner now forwards only the game's newest upload, the client drops
+  superseded relays instead of disconnecting, the server gives inputs their own
+  240-per-second budget and drops the excess, and a full outgoing queue skips
+  that relay instead of removing the peer. Control-message flooding still
+  removes a peer. New `burst` and `freeze` modes of `run_network_game.py`
+  reproduce both hitches under delay and loss; all four histories agree and
+  match the baseline. `lobby_network` covers a 400-packet burst and a control
+  flood; `input_network` covers a one-second frozen client and a 60-upload burst.
+
 - Optional snapback filter (2026-10-29). Playtesters found that letting go of
   the stick often turned the character around even with a 20% deadzone, and
   that diagonals were hard to keep. RAM samples of offline battles show the

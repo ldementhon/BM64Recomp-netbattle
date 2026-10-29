@@ -4,6 +4,7 @@
 #include "enet_host.hpp"
 #include "input_protocol.hpp"
 #include "release.hpp"
+#include <algorithm>
 #include <deque>
 #include <memory>
 
@@ -54,8 +55,8 @@ public:
     void send_inputs(const InputBatch& batch) {
         require_phase(Phase::Playing);
         if (batch.match != roster_.match || batch.slot != slot()) throw std::invalid_argument("input does not match assigned player");
-        if (!send_packet(peer_, uint8_t(batch.slot + 1), encode_input(batch, false), 0))
-            throw std::runtime_error("server input queue is full");
+        // A full queue drops this upload; the next one repeats its inputs.
+        send_packet(peer_, uint8_t(batch.slot + 1), encode_input(batch, false), 0);
     }
     std::vector<InputBatch> take_inputs() {
         auto result = std::move(input_events_); input_events_.clear(); return result;
@@ -120,8 +121,15 @@ public:
                         auto input = decode_input({wire->data, wire->dataLength}, true);
                         if (event.channelID != input.slot + 1) throw std::runtime_error("wrong server input channel");
                         if (!joined() || roster_.phase == Phase::Lobby || input.match != roster_.match) continue;
-                        if (input.slot >= roster_.count || input_events_.size() >= 128)
-                            throw std::runtime_error("invalid or excessive relayed input");
+                        if (input.slot >= roster_.count) throw std::runtime_error("invalid relayed input");
+                        // After a stall, keep the queue bounded by dropping the oldest relay that a
+                        // newer one from the same player supersedes.
+                        if (input_events_.size() >= 128) {
+                            for (auto old = input_events_.begin(); old != input_events_.end(); ++old)
+                                if (std::any_of(old + 1, input_events_.end(), [&](const InputBatch& later) { return later.slot == old->slot; })) {
+                                    input_events_.erase(old); break;
+                                }
+                        }
                         input_events_.push_back(input);
                         continue;
                     }

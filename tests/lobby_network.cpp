@@ -204,6 +204,33 @@ int main() {
         f.until([&] { return sender.saw(Op::Reject, Reason::Protocol) && sender.disconnected; });
         assert(f.server.room().phase() == Phase::Lobby && f.server.room().count() == 1);
     }
+    {
+        // A burst of input packets, as after a network or machine hitch, is dropped beyond
+        // the input budget instead of removing the player. Flooding control messages still does.
+        Fixture f;
+        for (unsigned i = 0; i < 2; ++i) { auto& client = f.add(); f.join(client); }
+        f.until([&] { return f.clients[0]->roster.count == 2 && f.clients[1]->roster.count == 2; });
+        f.start(2);
+        for (auto& client : f.clients) {
+            auto loaded = client->command(Op::Loaded); loaded.frame = 1374; loaded.ram = 123; loaded.registers = 456;
+            client->send(loaded);
+        }
+        f.until([&] { return f.server.room().phase() == Phase::Playing; });
+        auto& sender = f.p1();
+        auto& other = *f.clients[&sender == f.clients[0].get() ? 1 : 0];
+        online::InputBatch batch; batch.match = sender.roster.match; batch.count = 1;
+        batch.received = {2, 2, 0, 0}; batch.pads[0].buttons = 0x8000;
+        for (unsigned i = 0; i < 400; ++i) sender.upload(batch);
+        f.until([&] { return other.relays > 0; });
+        auto started = monotonic_ms();
+        f.until([&] { return monotonic_ms() - started >= 300; });
+        assert(!sender.disconnected && !sender.saw(Op::Reject, Reason::Protocol));
+        assert(f.server.room().phase() == Phase::Playing && f.server.room().count() == 2);
+        assert(other.relays <= 240); // Excess copies were dropped, not relayed.
+        for (unsigned i = 0; i < 121; ++i) { Packet ping{Op::Ping}; ping.identity = i + 1; sender.send(ping); }
+        f.until([&] { return sender.saw(Op::Reject, Reason::Protocol) && sender.disconnected; });
+        assert(f.server.room().phase() == Phase::Lobby && f.server.room().count() == 1);
+    }
     enet_deinitialize();
-    std::cout << "PASS: real ENet 2/3/4-client joins, rejection, readiness, repeated matches, loading failure and disconnects\n";
+    std::cout << "PASS: real ENet 2/3/4-client joins, rejection, readiness, repeated matches, loading failure, disconnects, and input bursts without removal\n";
 }

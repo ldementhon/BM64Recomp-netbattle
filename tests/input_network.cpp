@@ -41,9 +41,14 @@ int main() {
         std::vector<std::unique_ptr<LobbyClient>> clients;
         for (unsigned i = 0; i < 4; ++i)
             clients.push_back(std::make_unique<LobbyClient>("127.0.0.1", uint16_t(server.port()), "Player", fingerprint));
+        // A frozen client is neither polled nor sending, as when its machine stalls.
+        int frozen = -1;
         auto pump = [&] {
             server.service();
-            for (auto& client : clients) { client->poll(); assert(!client->disconnected()); }
+            for (unsigned i = 0; i < clients.size(); ++i) {
+                if (int(i) == frozen) continue;
+                clients[i]->poll(); assert(!clients[i]->disconnected());
+            }
         };
         auto until = [&](const std::function<bool()>& done) {
             auto deadline = monotonic_ms() + 8000;
@@ -70,12 +75,15 @@ int main() {
         for (auto& client : clients) games.emplace_back(client->roster().match, client->slot());
         struct Delivery { uint64_t due; unsigned client; InputBatch batch; };
         std::vector<Delivery> pending;
-        unsigned dropped = 0, stalled = 0, duplicate = 0;
+        unsigned dropped = 0, stalled = 0, duplicate = 0, burst = 0;
         bool done = false;
         for (uint64_t tick = 0; tick < 600 && !done; ++tick) {
             auto begin = monotonic_ms();
+            // Client 1 freezes for about one second; relays to it pile up in the meantime.
+            frozen = tick >= 100 && tick < 160 ? 1 : -1;
             pump();
             for (unsigned i = 0; i < clients.size(); ++i) {
+                if (int(i) == frozen) continue;
                 for (const auto& batch : clients[i]->take_inputs()) {
                     if (clients[i]->slot() == 2 && tick >= 50 && tick < 95) { ++dropped; continue; }
                     auto delay = (batch.slot * 7 + clients[i]->slot() * 3 + tick) % 7;
@@ -83,7 +91,7 @@ int main() {
                     if (batch.slot == 3 && tick % 11 == 0) { pending.push_back({tick + 1, i, batch}); ++duplicate; }
                 }
             }
-            assert(pending.size() < 256);
+            assert(pending.size() < 512); // A thawed client delivers up to 128 queued relays at once.
             for (auto it = pending.begin(); it != pending.end();) {
                 if (it->due <= tick) { games[it->client].input.receive(it->batch); it = pending.erase(it); }
                 else ++it;
@@ -97,7 +105,10 @@ int main() {
                     else ++stalled;
                 }
                 // Send on a wall-time cadence even when all simulation is stalled.
+                if (int(i) == frozen) continue;
                 clients[i]->send_inputs(game.input.upload());
+                // Client 3 sends one second of uploads at once, as after a network hitch.
+                if (i == 3 && tick == 120) for (unsigned copy = 0; copy < 60; ++copy, ++burst) clients[i]->send_inputs(game.input.upload());
                 done &= game.input.head() == 180 && game.input.confirmed() >= 180;
                 assert(game.input.head() <= game.input.confirmed() + prediction_limit);
             }
@@ -105,7 +116,7 @@ int main() {
             auto elapsed = monotonic_ms() - begin;
             if (elapsed < 17) std::this_thread::sleep_for(std::chrono::milliseconds(17 - elapsed));
         }
-        assert(done && dropped > 0 && stalled > 0 && duplicate > 0);
+        assert(done && dropped > 0 && stalled > 0 && duplicate > 0 && burst == 60);
         uint64_t reference = 0;
         for (unsigned frame = 0; frame < 180; ++frame) {
             Pads pads{};
@@ -129,5 +140,5 @@ int main() {
         for (auto& client : clients) assert(client->error() == reason_text(Reason::Timeout) && client->joined());
     }
     enet_deinitialize();
-    std::cout << "PASS: four ENet input streams, independent delayed/dropped/duplicate delivery, stalled resend, confirmed finish and timeout\n";
+    std::cout << "PASS: four ENet input streams, independent delayed/dropped/duplicate delivery, a frozen client and an upload burst, stalled resend, confirmed finish and timeout\n";
 }
