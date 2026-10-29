@@ -48,7 +48,7 @@ old RAM baseline and menu-fixture behavior. Independent baseline/scene checks ca
 this despite same-process replay passing. No expected hash or replay check was relaxed.
 `prep-perf-*`, `prep-final-*`, and the contaminated report are audit material only.
 
-A separate source/build copy at `/Users/louis/Projects/bomberman64/BM64Recomp-preparation`
+A separate source/build copy (a sibling checkout, `BM64Recomp-preparation`)
 freezes the original experiment's gameplay/input/patch baseline. The imported controller
 work remains intact in the main checkout. App copies are made after builds complete
 and checked against the source executable hash. Each process verifies its executable

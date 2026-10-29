@@ -32,7 +32,7 @@
 > sources. Online audio now uses a virtual AI clock with first-simulation output
 > (commit `f8fee66`), and online rumble is silent by construction.
 
-Continue the work in `/Users/louis/Projects/bomberman64/BM64Recomp` toward a
+Continue the work in this checkout toward a
 playable four-player rollback Battle on Apple Silicon Mac and Windows x64.
 Read `AGENTS.md`, `experiments/online-lobby-plan.md` (especially the current
 remaining-work list and newest implementation entries), and
@@ -45,7 +45,7 @@ proposal. Do not start by rewriting the working lobby or relaxing determinism.
 
 ## Scope and working agreements
 
-- Branch at handoff: `netbattle-development`. Never put `codex` in a branch name.
+- Branch at handoff: `netbattle-development` (now `netbattle`). Never put `codex` in a branch name.
 - Battle only. Fixed player colors; P1 advances shared game menus. The lobby locks
   human/CPU assignments. Preserve four-player controller support, calibration,
   personal input preferences, and normal offline play.
@@ -97,15 +97,9 @@ the SSH timeout as a renderer crash or repeatedly poll an offline machine. Check
 availability when appropriate; useful local audio/controller work can continue
 while waiting.
 
-Authorized access and private workspace:
-
-```text
-ssh dosktep2025 'whoami'
-Windows root: C:\Users\ldeme\Dev\bomberman64\online-port
-Source:       <root>\game\source
-ROM:          <root>\rom\bm64_us.z64
-scp local-file dosktep2025:Dev/bomberman64/online-port/
-```
+Authorized access and the private workspace (SSH alias, Windows root, source and
+ROM locations) are in the Windows test PC section of `LOCAL.md`, which is
+machine-specific and not in Git. `<root>` below is that Windows root.
 
 The user explicitly authorized copying their local US ROM to this PC; it is
 already there. Do not ask again or copy it elsewhere. The machine is Windows 11

@@ -5,7 +5,8 @@
 
 # Working guidelines
 
-- Keep `master` aligned with upstream. Put our changes on `netbattle-development` or descriptive feature branches; never include `codex` in branch names.
+- Keep `master` aligned with upstream. Put our changes on `netbattle` or descriptive feature branches; never include `codex` in branch names.
+- Machine-specific notes (local paths, the ROM location, the Windows test PC and how to reach it, local helper scripts) are in `LOCAL.md` at the repository root when it exists. It is git-ignored; read it before running builds or remote tests, and keep personal paths and hostnames there, not in tracked files.
 - Other chats may edit this checkout concurrently. Preserve unrelated work and stage explicit files.
 - Advance simulation at the game-loop boundary, not on controller reads or rendering. Repeated reads use the same frame's inputs; replay uses historical inputs.
 - Preserve dependency edits in `experiments/patches/` and keep the build recipe reproducible; avoid submodule references to unpublished commits.

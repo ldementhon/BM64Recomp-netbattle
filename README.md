@@ -3,6 +3,8 @@
 
 ### **This repository and its releases do not contain game assets. The original game is required to build or run this project.**
 
+> **Online Battle fork.** The `netbattle` branch adds four-player online Battle with rollback netcode for Apple Silicon Mac and Windows x64. See [Online Battle development](#online-battle-development) for building, testing, running a server and making releases. `master` mirrors upstream.
+
 ## Table of Contents
 * [System Requirements](#system-requirements)
 * [Features](#features)
@@ -19,6 +21,7 @@
 * [FAQ](#faq)
 * [Known Issues](#known-issues)
 * [Building](#building)
+* [Online Battle development](#online-battle-development)
 * [Libraries Used and Projects Referenced](#libraries-used-and-projects-referenced)
 
 ## System Requirements
@@ -105,6 +108,126 @@ Yes, if you place a file named `portable.txt` in the same folder as the executab
 Building instructions on how to build this project can be found in the [BUILDING.md](BUILDING.md) file.
 
 Controller regression checks on macOS/Linux: after configuring a build with `CMAKE_EXPORT_COMPILE_COMMANDS=ON`, run `python3 tests/run_controller_tests.py build` (replace `build` with your build directory). The tests use SDL virtual gamepads and temporary settings; no physical controllers or ROM are required. Set `SDL2_CONFIG` if `sdl2-config` is installed outside the configured SDL2 prefix.
+
+## Online Battle development
+
+This fork adds online Battle: a lobby server, rollback netcode, and an **Online Battle** screen in the launcher. It targets Apple Silicon Macs and Windows x64; Linux builds are not set up for online play. The design, status and test history are in [experiments/online-lobby-plan.md](experiments/online-lobby-plan.md); the server and protocol are described in [server/README.md](server/README.md); [AGENTS.md](AGENTS.md) lists the working rules.
+
+### Branches
+
+- `master` mirrors [upstream](https://github.com/RevoSucks/BM64Recomp). Don't commit to it; fast-forward it from upstream instead.
+- `netbattle` is the shared branch for online work. Branch from it for each change and merge back into it, for example through a pull request.
+- To pick up upstream fixes:
+  ```bash
+  git fetch upstream
+  git switch master
+  git merge --ff-only upstream/master
+  git push origin master
+  git switch netbattle
+  git merge master
+  ```
+
+### Dependencies are patched, not forked
+
+The submodules stay pinned to their upstream commits. This fork's changes to them live in [experiments/patches/](experiments/patches/), and the Mac build script applies them; patched submodules then show as modified in `git status`. Never commit a submodule pointer change. If you change dependency code, update the matching patch file (or add a new one and apply it in `experiments/build-macos.sh`). [experiments/STATE_REPLAY.md](experiments/STATE_REPLAY.md) lists what each patch does.
+
+### Building on a Mac
+
+Requirements: an Apple Silicon Mac, Xcode with its Metal toolchain, CMake, Ninja, LLVM 18 (`brew install llvm@18`), and your own US 1.0 ROM in `.z64` format (SHA-256 `e6da7c26127788cd894b88b71cc055ff9dec0d0f4f8e10d9b15b40153af2b52a`). Never commit or share the ROM, or anything generated from it.
+
+1. Clone with submodules, then put the pinned tools next to the repository in `../tools` (or set `BM64_TOOLS_ROOT`):
+   ```bash
+   git clone --recurse-submodules -b netbattle https://github.com/ldementhon/BM64Recomp-netbattle.git BM64Recomp
+   mkdir tools && cd tools
+   git clone --recurse-submodules https://github.com/N64Recomp/N64Recomp
+   git -C N64Recomp checkout 98bf104b1b5ed83126af8bcab0cc964782617dbf && git -C N64Recomp submodule update --init --recursive
+   git clone https://github.com/bomberhackers/bm64
+   git -C bm64 checkout c7c5fd5a73a9d5969673535030fc4f1df956fa5f
+   git clone https://github.com/libsdl-org/SDL SDL2
+   git -C SDL2 checkout fb1497566c5a05e2babdcf45ef0ab5c7cca2c4ae
+   cd ../BM64Recomp
+   ```
+2. Build everything (dependency patches, SDL2, N64Recomp, ROM decompression, code generation, the game):
+   ```bash
+   sh experiments/build-macos.sh "/path/to/Bomberman 64 (USA).z64"
+   ```
+   If `xcrun metal` can't be found, set `TOOLCHAINS` to your Metal toolchain's identifier (shown by `xcrun --find metal` errors, or under `/Library/Developer/Toolchains`).
+3. After that, rebuild the game with:
+   ```bash
+   cmake --build build --target BM64Recompiled -j 8
+   ```
+   The app is `build/BM64Recompiled.app`. Choose the ROM on first launch.
+4. Build and test the lobby server and network code:
+   ```bash
+   cmake -S server -B build/lobby -DCMAKE_BUILD_TYPE=Release
+   cmake --build build/lobby -j 8
+   ctest --test-dir build/lobby --output-on-failure
+   ```
+
+### Building on Windows
+
+The Windows game is built from a source bundle that a Mac exports after its own build. The bundle carries the guest code generated on the Mac, so both platforms of a release run identical game code; building it separately on each machine could make online matches drift apart. The bundle is generated from the ROM, so keep it private.
+
+1. On the Mac, after building:
+   ```bash
+   python3 experiments/export-online-source.py build/share/windows-source.tar.gz
+   ```
+2. Copy the file to the PC and extract it there (`tar -xzf windows-source.tar.gz` creates `source/`).
+3. Install Visual Studio 2022 with Desktop development with C++, plus CMake, Ninja and LLVM (clang-cl; 19.1.3 is what has been tested). In an **x64 Native Tools Command Prompt for VS 2022** with those on `PATH`:
+   ```bat
+   cd source
+   powershell -ExecutionPolicy Bypass -File experiments\build-windows.ps1
+   cmake -S server -B build-lobby -G Ninja -DCMAKE_BUILD_TYPE=Release
+   cmake --build build-lobby
+   ctest --test-dir build-lobby --output-on-failure
+   ```
+   The script checks every file against the bundle's manifest, then leaves `build\BM64Recompiled.exe` with its DLLs, `assets` and `recompcontrollerdb.txt`.
+
+### Checks
+
+Run these on the Mac before sharing a change, from the repository root (the game checks need the ROM at `../Bomberman 64 (USA).z64`):
+
+```bash
+ctest --test-dir build/lobby --output-on-failure
+python3 tests/run_controller_tests.py
+sh tests/run_replay_input_tests.sh
+sh tests/run_game_session_tests.sh
+python3 tests/run_fingerprint.py
+python3 tests/run_network_game.py baseline
+python3 tests/run_network_game.py pause
+```
+
+`run_network_game.py` with no argument runs every network mode: four real game processes through a local server, with delay, packet loss and rollbacks, checking that their states agree. Changes to gameplay, input or timing also need a Mac/Windows match; `experiments/online-lobby-plan.md` records how those were run.
+
+### Running a server
+
+```bash
+build/lobby/bm64-lobby 0.0.0.0 6464 build/share/release-v2.txt
+```
+
+Players need UDP port 6464 forwarded to the host, or a shared network such as Tailscale. On Windows, allow the port in Windows Firewall. Details are in [server/README.md](server/README.md).
+
+### Releases and version numbers
+
+Each Mac + Windows pair sent to players is one numbered online release (v1, v2, ...). The number is `BM64_ONLINE_RELEASE` in [src/online/release.hpp](src/online/release.hpp). The launcher shows it, and players and servers on different numbers are told which download to get.
+
+- **When to bump:** for every new pair of downloads, even if the code barely changed. A number must never be reused for different files.
+- **When to also bump the protocol:** if you change what the lobby server and clients send each other, also bump `protocol_version` in `src/online/lobby_protocol.hpp` and the `BM64 online vN` text in `src/online/fingerprint.hpp`, `tests/run_fingerprint.py` and `tests/run_windows_fingerprint.ps1`, and update the expected values in `tests/fingerprint.cpp`.
+- **Who picks numbers:** agree on who makes releases. Tag the commit each release was built from (`git tag online-v3 && git push origin online-v3`), so two people never ship the same number.
+
+To make a release:
+
+1. Bump `BM64_ONLINE_RELEASE` and commit.
+2. Build the Mac game and server, export the source bundle, build Windows from it, and run the checks on both.
+3. Stage the builds:
+   - `build/share/staging-mac/BM64Recompiled/`: `BM64Recompiled.app` (from `build/`), plus [server/player-readme/mac.txt](server/player-readme/mac.txt) saved as `README.txt`.
+   - `build/share/staging-windows/BM64Recompiled/`: `BM64Recompiled.exe`, `SDL2.dll`, `dxcompiler.dll`, `dxil.dll`, `assets/` and `recompcontrollerdb.txt` from the Windows `build` folder, plus [server/player-readme/windows.txt](server/player-readme/windows.txt) saved as `README.txt`.
+4. Package them on the Mac:
+   ```bash
+   python3 server/make_release.py --rom "/path/to/Bomberman 64 (USA).z64"
+   ```
+   It refuses a staged ROM or a build made with another release number, then writes `build/share/BM64Recompiled-vN-mac.zip`, `BM64Recompiled-vN-windows.zip` and `release-vN.txt`, and prints the server command.
+5. Restart the server with the new `release-vN.txt` and send players the two zips.
 
 ## Libraries Used and Projects Referenced
 * [RT64](https://github.com/rt64/rt64) for the project's rendering engine

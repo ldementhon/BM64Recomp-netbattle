@@ -243,7 +243,7 @@ current build.
   (`f1c4f2c3…`, fingerprint `d3d988bf…`).
 
   After explicit user approval, the source delta was hash-checked and applied
-  to `dosktep2025`. The Windows full game and relay/test targets build; all ten
+  to the Windows test PC. The Windows full game and relay/test targets build; all ten
   CTests pass. The real-game lifecycle test cancels one launch and finishes two
   matches at frame 5401, using Unicode temporary folders and launching outside
   the executable's directory. Settings are cleaned and ready digests agree.
@@ -1298,7 +1298,7 @@ current build.
 - Windows desktop validation (2026-10-25): the user explicitly approved copying
   their ROM to their Windows PC. Its SHA-256 is
   `e6da7c26127788cd894b88b71cc055ff9dec0d0f4f8e10d9b15b40153af2b52a`;
-  it is stored privately under `online-port/rom/bm64_us.z64`, never in Git.
+  it is stored privately in the PC's test workspace, never in Git.
   Direct SSH starts the game in Session 0: DirectX swap-chain creation fails
   with `0x887A0022`, followed by a renderer crash. Launching the unchanged image
   in the same signed-in user's interactive desktop resolves that environment
@@ -1455,9 +1455,9 @@ current build.
   at O0/O2. Windows process creation and
   handle inheritance are the next step; this channel test uses both endpoints
   within one process and does not yet certify an owned Windows game session.
-- Windows foundation (2026-10-25): SSH access to `dosktep2025` is verified.
+- Windows foundation (2026-10-25): SSH access to the Windows test PC is verified.
   Its original workspace contained only `access-check`; all new files are isolated
-  under `C:\Users\ldeme\Dev\bomberman64\online-port`. The host is Windows 11 x64,
+  in a private test workspace (see `LOCAL.md`). The host is Windows 11 x64,
   Ryzen 7 9800X3D, 64 GB RAM, Radeon RX 9070 XT, with Visual Studio 2022 17.14
   and Windows SDK 10.0.26100.0. Portable CMake 3.31.6, Ninja 1.12.1, and LLVM
   19.1.3 were downloaded from their official releases into that workspace.
@@ -1525,8 +1525,8 @@ current build.
   Windows backend is the next platform task.
 - Scope decision (2026-10-25): the user wants the first remote-play version to
   support both Apple Silicon macOS and an Intel/AMD Windows PC. Remote access to
-  the Windows PC is available through SSH alias `dosktep2025`, with work under
-  `C:\Users\ldeme\Dev\bomberman64`. Inspect existing files before uploading. This
+  the Windows PC is available through SSH (alias and workspace in `LOCAL.md`).
+  Inspect existing files before uploading. This
   replaces the initial same-platform-only target, not the determinism gate.
   Port and test the process/IPC, snapshot/runtime, build, and fingerprint paths;
   compare the exact Mac/Windows build pair through the same startup, battle,

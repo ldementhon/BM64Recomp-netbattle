@@ -1,0 +1,17 @@
+Bomberman 64 Recompiled - online Battle test build (Windows)
+
+1. Unzip this folder anywhere. Start BM64Recompiled.exe from inside this folder.
+   If SmartScreen warns about an unknown publisher: More info -> Run anyway.
+   If it complains about MSVCP140.dll or VCRUNTIME140.dll, install the
+   Microsoft Visual C++ Redistributable (x64): https://aka.ms/vs/17/release/vc_redist.x64.exe
+2. The first time, select your own Bomberman 64 (USA) ROM in .z64 format.
+   Its SHA-256 must be:
+   e6da7c26127788cd894b88b71cc055ff9dec0d0f4f8e10d9b15b40153af2b52a
+   (check it in PowerShell with: Get-FileHash "path\to\rom.z64")
+3. Online Battle -> enter the server address and port you were given, a name,
+   pick your controls, then Ready.
+
+Don't replace or rebuild any file here: the server only accepts this exact build.
+
+The launcher shows this download's online version in its bottom-left corner
+(for example "Online v1"). Everyone in a match needs the same version as the server.

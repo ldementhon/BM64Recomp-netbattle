@@ -74,6 +74,9 @@ gamecontrollerdb.txt
 # RSP Microcode recompiled output
 aspMain.cpp
 
+# Machine-specific notes (paths, hosts, local helpers); see AGENTS.md
+/LOCAL.md
+
 # Generated diagnostic output (keep fixtures and test sources)
 /experiments/results/
 __pycache__/
