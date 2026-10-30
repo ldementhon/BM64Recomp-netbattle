@@ -177,7 +177,7 @@ The Windows game is built from a source bundle that a Mac exports after its own 
    ```bat
    cd source
    powershell -ExecutionPolicy Bypass -File experiments\build-windows.ps1
-   cmake -S server -B build-lobby -G Ninja -DCMAKE_BUILD_TYPE=Release
+   cmake -S server -B build-lobby -G Ninja -DCMAKE_BUILD_TYPE=Release -DCMAKE_C_COMPILER=cl -DCMAKE_CXX_COMPILER=cl
    cmake --build build-lobby
    ctest --test-dir build-lobby --output-on-failure
    ```
